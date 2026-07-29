@@ -13,8 +13,8 @@ import (
 	"github.com/sarchlab/akita/v5/simulation"
 	"github.com/sarchlab/akita/v5/timing"
 	"github.com/sarchlab/mgpusim/v5/amd/driver"
-	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/gpubuilder"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/gfx90c"
+	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/gpubuilder"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/mi300x"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/polaris10"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/r9nano"
@@ -320,10 +320,15 @@ func (b *Builder) createGPU(
 		WithRDMAAddressMapper(b.rdmaAddressMapper).
 		Build(name)
 
+	cuCount := b.numCUPerSA * b.numSAPerGPU
+	if b.gpuType == "gfx90c" {
+		cuCount = gfx90c.ActiveCUCount
+	}
+
 	gpuDriver.RegisterGPU(
 		gpu.CommandProcessorPort.AsRemote(),
 		driver.DeviceProperties{
-			CUCount:  b.numCUPerSA * b.numSAPerGPU,
+			CUCount:  cuCount,
 			DRAMSize: b.gpuMemSize,
 		},
 	)

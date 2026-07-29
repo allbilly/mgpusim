@@ -77,9 +77,18 @@ type Builder struct {
 	l1vBankLatency            int
 	memPipelineBufferSize     int
 	maxCoalescingPenalty      int
+	maxWriteCoalescingPenalty int
+	maxWideWriteStridePenalty int
 	registerScoreboard        bool
 	scoreboardVALULatency     int
+	valuTiming                cu.VALUTiming
 	ldsPipelineLatency        int
+	ldsIssueInterval          int
+	ldsMaxInFlight            int
+	ldsBankCount              int
+	ldsBankWidth              int
+	ldsBankConflictPenalty    int
+	barrierLatency            int
 	l1AddressMapper           mem.AddressToPortMapper
 	l1TLBAddressMapper        mem.AddressToPortMapper
 	aluBuilder                func() emu.ALU
@@ -239,10 +248,22 @@ func (b Builder) WithMemPipelineBufferSize(size int) Builder {
 	return b
 }
 
-// WithMaxCoalescingPenalty sets the maximum coalescing penalty in cycles
-// for poorly-coalesced read transactions in each CU.
+// WithMaxCoalescingPenalty sets the maximum low-utilization cache-line
+// transaction penalty in cycles for each CU.
 func (b Builder) WithMaxCoalescingPenalty(n int) Builder {
 	b.maxCoalescingPenalty = n
+	return b
+}
+
+// WithMaxWriteCoalescingPenalty sets the maximum partial-line write penalty.
+func (b Builder) WithMaxWriteCoalescingPenalty(n int) Builder {
+	b.maxWriteCoalescingPenalty = n
+	return b
+}
+
+// WithMaxWideWriteStridePenalty sets the penalty for non-local wide stores.
+func (b Builder) WithMaxWideWriteStridePenalty(n int) Builder {
+	b.maxWideWriteStridePenalty = n
 	return b
 }
 
@@ -260,9 +281,36 @@ func (b Builder) WithScoreboardVALULatency(latency int) Builder {
 	return b
 }
 
+// WithVALUTiming configures class-specific VALU issue and result timing.
+func (b Builder) WithVALUTiming(timingSpec cu.VALUTiming) Builder {
+	b.valuTiming = timingSpec
+	return b
+}
+
 // WithLDSPipelineLatency sets LDS instruction execution latency in cycles.
 func (b Builder) WithLDSPipelineLatency(latency int) Builder {
 	b.ldsPipelineLatency = latency
+	return b
+}
+
+// WithLDSThroughput separates LDS issue throughput from result latency.
+func (b Builder) WithLDSThroughput(issueInterval, maxInFlight int) Builder {
+	b.ldsIssueInterval = issueInterval
+	b.ldsMaxInFlight = maxInFlight
+	return b
+}
+
+// WithLDSBanking enables bank-conflict timing for LDS instructions.
+func (b Builder) WithLDSBanking(bankCount, bankWidth, penalty int) Builder {
+	b.ldsBankCount = bankCount
+	b.ldsBankWidth = bankWidth
+	b.ldsBankConflictPenalty = penalty
+	return b
+}
+
+// WithBarrierLatency sets work-group barrier release latency in cycles.
+func (b Builder) WithBarrierLatency(latency int) Builder {
+	b.barrierLatency = latency
 	return b
 }
 
@@ -450,15 +498,34 @@ func (b *Builder) cuSpec() cu.Spec {
 	if b.maxCoalescingPenalty > 0 {
 		spec.MaxCoalescingPenalty = b.maxCoalescingPenalty
 	}
+	if b.maxWriteCoalescingPenalty > 0 {
+		spec.MaxWriteCoalescingPenalty = b.maxWriteCoalescingPenalty
+	}
+	if b.maxWideWriteStridePenalty > 0 {
+		spec.MaxWideWriteStridePenalty = b.maxWideWriteStridePenalty
+	}
 
 	spec.RegisterScoreboard = b.registerScoreboard
 
 	if b.scoreboardVALULatency > 0 {
 		spec.ScoreboardVALULatency = b.scoreboardVALULatency
 	}
+	spec.SetVALUTiming(b.valuTiming)
 
 	if b.ldsPipelineLatency > 0 {
 		spec.LDSPipelineLatency = b.ldsPipelineLatency
+	}
+	if b.ldsIssueInterval > 0 {
+		spec.LDSIssueInterval = b.ldsIssueInterval
+		spec.LDSMaxInFlight = b.ldsMaxInFlight
+	}
+	if b.ldsBankCount > 0 {
+		spec.LDSBankCount = b.ldsBankCount
+		spec.LDSBankWidth = b.ldsBankWidth
+		spec.LDSBankConflictPenalty = b.ldsBankConflictPenalty
+	}
+	if b.barrierLatency > 0 {
+		spec.BarrierLatency = b.barrierLatency
 	}
 
 	return spec

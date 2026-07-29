@@ -132,9 +132,9 @@ func (b Builder) WithSubsequentKernelLaunchOverhead(overhead int) Builder {
 	return b
 }
 
-// WithWGScalingThreshold sets the threshold for WG-count-based scaling of
-// subsequent kernel launch overhead. When the previous kernel had more WGs
-// than this threshold, the overhead is scaled down proportionally.
+// WithWGScalingThreshold sets the threshold for WG-count-based launch
+// amortization. The first launch uses the current kernel's WG count; later
+// launches use the previous kernel's WG count to model queue overlap.
 func (b Builder) WithWGScalingThreshold(n int) Builder {
 	b.wgScalingThreshold = n
 	return b

@@ -29,10 +29,10 @@ import (
 // buffers (v4 used 40M for DMA ToCP; 4096 is plenty). The other sizes mirror
 // the v4 component builders' internal port sizes.
 const (
-	cpPortBufSize      = 4096
-	dmaToCPBufSize     = 4096
-	dmaToMemBufSize    = 64
-	rdmaPortBufSize    = 128
+	cpPortBufSize           = 4096
+	dmaToCPBufSize          = 4096
+	dmaToMemBufSize         = 64
+	rdmaPortBufSize         = 128
 	memCtrlPortBufSize      = 16
 	detailedDRAMPortBufSize = 1024 // v4 dram: WithTopPortBufferSize(1024)
 	l2TLBPortBufSize        = 1024
@@ -56,76 +56,94 @@ const unsetCPInt = -1
 type Builder struct {
 	simulation *simulation.Simulation
 
-	gpuID                          uint64
-	name                           string
-	freq                           timing.Freq
-	numCUPerShaderArray            int
-	numShaderArray                 int
-	l2CacheSize                    uint64
-	numMemoryBank                  int
-	log2CacheLineSize              uint64
-	log2PageSize                   uint64
-	log2MemoryBankInterleavingSize uint64
-	memAddrOffset                  uint64
-	dramSize                       uint64
-	memoryLatency                  int
-	memoryWidth                    int
-	l2BankLatency                  int
-	l1vCacheSize                   uint64
-	l1vBankLatency                 int
-	dramBackend                    dramBackendKind
-	dramMemFreq                    timing.Freq
-	dramNumInternalBanks           int
-	dramBankPipelineWidth          int
-	dramBankPipelineDepth          int
-	dramStageLatency               int
-	cpAlg                          string
-	cpNumDies                      int
-	cpWavefrontDispatchCycles      int
-	cpConstantKernelOverhead       int
-	registerScoreboard             bool
-	scoreboardVALULatency          int
-	ldsPipelineLatency             int
-	numSinglePrecisionUnits      int
-	dmaThroughL2                   bool
-	dmaThroughL2MaxBytes           uint64
-	aluBuilder                     func() emu.ALU
-	decoderBuilder                 func() emu.Decoder
-	globalStorage                  *mem.Storage
-	mmu                            *mmu.Comp
-	rdmaAddressMapper              mem.AddressToPortMapper
-	driverPort                     messaging.RemotePort
+	gpuID                            uint64
+	name                             string
+	freq                             timing.Freq
+	numCUPerShaderArray              int
+	numShaderArray                   int
+	l2CacheSize                      uint64
+	numMemoryBank                    int
+	log2CacheLineSize                uint64
+	log2PageSize                     uint64
+	log2MemoryBankInterleavingSize   uint64
+	memAddrOffset                    uint64
+	dramSize                         uint64
+	memoryLatency                    int
+	memoryWidth                      int
+	l2BankLatency                    int
+	l1vCacheSize                     uint64
+	l1vBankLatency                   int
+	dramBackend                      dramBackendKind
+	dramMemFreq                      timing.Freq
+	dramNumInternalBanks             int
+	dramBankPipelineWidth            int
+	dramBankPipelineDepth            int
+	dramStageLatency                 int
+	cpAlg                            string
+	cpNumDies                        int
+	cpWavefrontDispatchCycles        int
+	cpConstantKernelOverhead         int
+	cpConstantKernelLaunchOverhead   int
+	cpSubsequentKernelLaunchOverhead int
+	cpWGScalingThreshold             int
+	activeCUCount                    int
+	registerScoreboard               bool
+	scoreboardVALULatency            int
+	valuTiming                       cu.VALUTiming
+	ldsPipelineLatency               int
+	ldsIssueInterval                 int
+	ldsMaxInFlight                   int
+	ldsBankCount                     int
+	ldsBankWidth                     int
+	ldsBankConflictPenalty           int
+	barrierLatency                   int
+	maxCoalescingPenalty             int
+	maxWriteCoalescingPenalty        int
+	maxWideWriteStridePenalty        int
+	vecMemTransPipelineWidth         int
+	numSinglePrecisionUnits          int
+	dmaThroughL2                     bool
+	dmaThroughL2MaxBytes             uint64
+	aluBuilder                       func() emu.ALU
+	decoderBuilder                   func() emu.Decoder
+	globalStorage                    *mem.Storage
+	mmu                              *mmu.Comp
+	rdmaAddressMapper                mem.AddressToPortMapper
+	driverPort                       messaging.RemotePort
 
-	gpu                *gpubuilder.GPU
-	cp                 *cp.Comp
-	rdmaEngine         *rdma.Comp
-	dmaEngine          *cp.DMAComp
-	sas                []*shaderarray.ShaderArray
-	l2Caches           []*writeback.Comp
-	l2TLBs             []*tlb.Comp
-	drams              []messaging.Component
-	internalConn       *directconnection.Comp
-	l2ToDramConnection *directconnection.Comp
-	l1AddressMapper    *mem.InterleavedAddressPortMapper
-	l1TLBAddressMapper *mem.SinglePortMapper
-	dmaLocalDataSource     *mem.InterleavedAddressPortMapper
-	dmaDirectDRAMSource    *mem.InterleavedAddressPortMapper
+	gpu                 *gpubuilder.GPU
+	cp                  *cp.Comp
+	rdmaEngine          *rdma.Comp
+	dmaEngine           *cp.DMAComp
+	sas                 []*shaderarray.ShaderArray
+	l2Caches            []*writeback.Comp
+	l2TLBs              []*tlb.Comp
+	drams               []messaging.Component
+	internalConn        *directconnection.Comp
+	l2ToDramConnection  *directconnection.Comp
+	l1AddressMapper     *mem.InterleavedAddressPortMapper
+	l1TLBAddressMapper  *mem.SinglePortMapper
+	dmaLocalDataSource  *mem.InterleavedAddressPortMapper
+	dmaDirectDRAMSource *mem.InterleavedAddressPortMapper
 }
 
 // MakeBuilder creates a new builder.
 func MakeBuilder() Builder {
 	return Builder{
-		freq:                           1 * timing.GHz,
-		numCUPerShaderArray:            4,
-		numShaderArray:                 16,
-		l2CacheSize:                    2 * mem.MB,
-		numMemoryBank:                  16,
-		log2CacheLineSize:              6,
-		log2PageSize:                   12,
-		log2MemoryBankInterleavingSize: 7,
-		memAddrOffset:                  0,
-		dramSize:                       4 * mem.GB,
-		cpConstantKernelOverhead:       unsetCPInt,
+		freq:                             1 * timing.GHz,
+		numCUPerShaderArray:              4,
+		numShaderArray:                   16,
+		l2CacheSize:                      2 * mem.MB,
+		numMemoryBank:                    16,
+		log2CacheLineSize:                6,
+		log2PageSize:                     12,
+		log2MemoryBankInterleavingSize:   7,
+		memAddrOffset:                    0,
+		dramSize:                         4 * mem.GB,
+		cpConstantKernelOverhead:         unsetCPInt,
+		cpConstantKernelLaunchOverhead:   unsetCPInt,
+		cpSubsequentKernelLaunchOverhead: unsetCPInt,
+		cpWGScalingThreshold:             unsetCPInt,
 	}
 }
 
@@ -319,6 +337,35 @@ func (b Builder) WithCPConstantKernelOverhead(overhead int) Builder {
 	return b
 }
 
+// WithCPConstantKernelLaunchOverhead sets the delay before the first kernel
+// begins dispatching, in GPU cycles.
+func (b Builder) WithCPConstantKernelLaunchOverhead(overhead int) Builder {
+	b.cpConstantKernelLaunchOverhead = overhead
+	return b
+}
+
+// WithCPSubsequentKernelLaunchOverhead sets the launch delay for kernels after
+// the first one, in GPU cycles.
+func (b Builder) WithCPSubsequentKernelLaunchOverhead(overhead int) Builder {
+	b.cpSubsequentKernelLaunchOverhead = overhead
+	return b
+}
+
+// WithCPWGScalingThreshold sets the WG count above which launch overhead is
+// amortized.
+func (b Builder) WithCPWGScalingThreshold(threshold int) Builder {
+	b.cpWGScalingThreshold = threshold
+	return b
+}
+
+// WithActiveCUCount limits work-group dispatch to the requested number of CUs
+// while retaining the full physical shader-array/cache topology. A value of
+// zero enables every built CU.
+func (b Builder) WithActiveCUCount(count int) Builder {
+	b.activeCUCount = count
+	return b
+}
+
 // WithRegisterScoreboard enables register RAW hazard stalls in each CU.
 func (b Builder) WithRegisterScoreboard(enabled bool) Builder {
 	b.registerScoreboard = enabled
@@ -332,9 +379,62 @@ func (b Builder) WithScoreboardVALULatency(latency int) Builder {
 	return b
 }
 
+// WithVALUTiming configures class-specific VALU issue and result timing.
+func (b Builder) WithVALUTiming(timingSpec cu.VALUTiming) Builder {
+	b.valuTiming = timingSpec
+	return b
+}
+
 // WithLDSPipelineLatency sets LDS instruction execution latency in cycles.
 func (b Builder) WithLDSPipelineLatency(latency int) Builder {
 	b.ldsPipelineLatency = latency
+	return b
+}
+
+// WithLDSThroughput separates LDS issue throughput from result latency.
+func (b Builder) WithLDSThroughput(issueInterval, maxInFlight int) Builder {
+	b.ldsIssueInterval = issueInterval
+	b.ldsMaxInFlight = maxInFlight
+	return b
+}
+
+// WithLDSBanking enables LDS bank-conflict timing.
+func (b Builder) WithLDSBanking(bankCount, bankWidth, penalty int) Builder {
+	b.ldsBankCount = bankCount
+	b.ldsBankWidth = bankWidth
+	b.ldsBankConflictPenalty = penalty
+	return b
+}
+
+// WithBarrierLatency sets work-group barrier release latency in cycles.
+func (b Builder) WithBarrierLatency(latency int) Builder {
+	b.barrierLatency = latency
+	return b
+}
+
+// WithMaxCoalescingPenalty sets the maximum per-transaction lane-utilization
+// penalty in cycles.
+func (b Builder) WithMaxCoalescingPenalty(penalty int) Builder {
+	b.maxCoalescingPenalty = penalty
+	return b
+}
+
+// WithMaxWriteCoalescingPenalty sets the maximum partial-line write penalty.
+func (b Builder) WithMaxWriteCoalescingPenalty(penalty int) Builder {
+	b.maxWriteCoalescingPenalty = penalty
+	return b
+}
+
+// WithMaxWideWriteStridePenalty sets the non-local wide-store penalty.
+func (b Builder) WithMaxWideWriteStridePenalty(penalty int) Builder {
+	b.maxWideWriteStridePenalty = penalty
+	return b
+}
+
+// WithVecMemTransPipelineWidth sets the number of vector-memory cache-line
+// transactions that a CU can inject per cycle.
+func (b Builder) WithVecMemTransPipelineWidth(width int) Builder {
+	b.vecMemTransPipelineWidth = width
 	return b
 }
 
@@ -504,12 +604,18 @@ func (b *Builder) connectCP() {
 }
 
 func (b *Builder) connectCPWithCUs() {
+	registered := 0
 	for _, sa := range b.sas {
 		for _, cuComp := range sa.CUs {
-			cp.RegisterCU(b.cp, cu.DispatcherView{CU: cuComp})
-
 			b.internalConn.PlugIn(cuComp.GetPortByName(cu.DispatchPortName))
 			b.internalConn.PlugIn(cuComp.GetPortByName(cu.CtrlPortName))
+
+			if b.activeCUCount > 0 && registered >= b.activeCUCount {
+				continue
+			}
+
+			cp.RegisterCU(b.cp, cu.DispatcherView{CU: cuComp})
+			registered++
 		}
 	}
 }
@@ -713,8 +819,45 @@ func (b *Builder) buildSAs() {
 	if b.scoreboardVALULatency > 0 {
 		saBuilder = saBuilder.WithScoreboardVALULatency(b.scoreboardVALULatency)
 	}
+	saBuilder = saBuilder.WithVALUTiming(b.valuTiming)
 	if b.ldsPipelineLatency > 0 {
 		saBuilder = saBuilder.WithLDSPipelineLatency(b.ldsPipelineLatency)
+	}
+	if b.ldsIssueInterval > 0 {
+		saBuilder = saBuilder.WithLDSThroughput(
+			b.ldsIssueInterval,
+			b.ldsMaxInFlight,
+		)
+	}
+	if b.ldsBankCount > 0 {
+		saBuilder = saBuilder.WithLDSBanking(
+			b.ldsBankCount,
+			b.ldsBankWidth,
+			b.ldsBankConflictPenalty,
+		)
+	}
+	if b.barrierLatency > 0 {
+		saBuilder = saBuilder.WithBarrierLatency(b.barrierLatency)
+	}
+	if b.maxCoalescingPenalty > 0 {
+		saBuilder = saBuilder.WithMaxCoalescingPenalty(
+			b.maxCoalescingPenalty,
+		)
+	}
+	if b.maxWriteCoalescingPenalty > 0 {
+		saBuilder = saBuilder.WithMaxWriteCoalescingPenalty(
+			b.maxWriteCoalescingPenalty,
+		)
+	}
+	if b.maxWideWriteStridePenalty > 0 {
+		saBuilder = saBuilder.WithMaxWideWriteStridePenalty(
+			b.maxWideWriteStridePenalty,
+		)
+	}
+	if b.vecMemTransPipelineWidth > 0 {
+		saBuilder = saBuilder.WithVecMemTransPipelineWidth(
+			b.vecMemTransPipelineWidth,
+		)
 	}
 	if b.numSinglePrecisionUnits > 0 {
 		saBuilder = saBuilder.WithNumSinglePrecisionUnits(b.numSinglePrecisionUnits)
@@ -1082,6 +1225,17 @@ func (b *Builder) buildCP() {
 	}
 	if b.cpConstantKernelOverhead != unsetCPInt {
 		spec.ConstantKernelOverhead = b.cpConstantKernelOverhead
+	}
+	if b.cpConstantKernelLaunchOverhead != unsetCPInt {
+		spec.ConstantKernelLaunchOverhead =
+			b.cpConstantKernelLaunchOverhead
+	}
+	if b.cpSubsequentKernelLaunchOverhead != unsetCPInt {
+		spec.SubsequentKernelLaunchOverhead =
+			b.cpSubsequentKernelLaunchOverhead
+	}
+	if b.cpWGScalingThreshold != unsetCPInt {
+		spec.WGScalingThreshold = b.cpWGScalingThreshold
 	}
 
 	b.cp = cp.MakeBuilder().

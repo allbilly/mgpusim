@@ -131,17 +131,30 @@ func (d *DispatcherImpl) StartDispatching(req protocol.LaunchKernelReq) {
 	}
 	if !d.firstKernelLaunched {
 		d.cycleLeft = d.constantKernelLaunchOverhead
+		if d.constantKernelLaunchOverhead > 0 &&
+			d.wgScalingThreshold > 0 {
+			d.cycleLeft = d.scaledLaunchOverhead(
+				d.constantKernelLaunchOverhead,
+				d.alg.NumWG(),
+			)
+		}
 		d.firstKernelLaunched = true
 	} else {
-		if d.prevKernelWGCount > 0 && d.wgScalingThreshold > 0 {
-			scale := float64(d.wgScalingThreshold) / float64(d.prevKernelWGCount)
-			d.cycleLeft = int(float64(d.subsequentKernelLaunchOverhead) * scale)
-		} else {
-			d.cycleLeft = d.subsequentKernelLaunchOverhead
-		}
+		d.cycleLeft = d.scaledLaunchOverhead(
+			d.subsequentKernelLaunchOverhead,
+			d.prevKernelWGCount,
+		)
 	}
 
 	d.initializeProgressBar(req.ID)
+}
+
+func (d *DispatcherImpl) scaledLaunchOverhead(overhead, wgCount int) int {
+	if wgCount <= d.wgScalingThreshold || d.wgScalingThreshold <= 0 {
+		return overhead
+	}
+	scale := float64(d.wgScalingThreshold) / float64(wgCount)
+	return int(float64(overhead) * scale)
 }
 
 func (d *DispatcherImpl) initializeProgressBar(kernelID uint64) {

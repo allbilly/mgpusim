@@ -27,8 +27,8 @@ type Spec struct {
 	// kernels launched after the first one.
 	SubsequentKernelLaunchOverhead int `json:"subsequent_kernel_launch_overhead"`
 
-	// WGScalingThreshold is the threshold for WG-count-based scaling of the
-	// subsequent kernel launch overhead.
+	// WGScalingThreshold is the threshold for WG-count-based launch-overhead
+	// amortization.
 	WGScalingThreshold int `json:"wg_scaling_threshold"`
 
 	// Alg selects the work-group dispatching algorithm: "round-robin",

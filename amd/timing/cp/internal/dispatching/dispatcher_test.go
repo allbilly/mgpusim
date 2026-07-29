@@ -101,6 +101,44 @@ var _ = Describe("Dispatcher", func() {
 		Expect(dispatcher.dispatching.ID).To(Equal(req.ID))
 	})
 
+	It("should use unscaled subsequent overhead below the WG threshold", func() {
+		req := makeLaunchReq()
+		dispatcher.firstKernelLaunched = true
+		dispatcher.prevKernelWGCount = 32
+		dispatcher.subsequentKernelLaunchOverhead = 10000
+		dispatcher.wgScalingThreshold = 128
+		alg.EXPECT().StartNewKernel(gomock.Any())
+
+		dispatcher.StartDispatching(req)
+
+		Expect(dispatcher.cycleLeft).To(Equal(10000))
+	})
+
+	It("should amortize first-launch overhead for a large grid", func() {
+		req := makeLaunchReq()
+		dispatcher.constantKernelLaunchOverhead = 10000
+		dispatcher.wgScalingThreshold = 128
+		alg.EXPECT().StartNewKernel(gomock.Any())
+		alg.EXPECT().NumWG().Return(512)
+
+		dispatcher.StartDispatching(req)
+
+		Expect(dispatcher.cycleLeft).To(Equal(2500))
+	})
+
+	It("should amortize subsequent overhead above the WG threshold", func() {
+		req := makeLaunchReq()
+		dispatcher.firstKernelLaunched = true
+		dispatcher.prevKernelWGCount = 512
+		dispatcher.subsequentKernelLaunchOverhead = 10000
+		dispatcher.wgScalingThreshold = 128
+		alg.EXPECT().StartNewKernel(gomock.Any())
+
+		dispatcher.StartDispatching(req)
+
+		Expect(dispatcher.cycleLeft).To(Equal(2500))
+	})
+
 	It("should panic if the dispatcher is dispatching another kernel", func() {
 		req := makeLaunchReq()
 		dispatcher.dispatching = req
