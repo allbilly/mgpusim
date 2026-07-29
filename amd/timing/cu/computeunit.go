@@ -648,22 +648,14 @@ func (cu *ComputeUnit) handleScalarDataLoadReturn(
 
 	tracing.TraceReqFinalize(cu.comp, req)
 
-	if cu.isLastRead(req) {
-		wf.OutstandingScalarMemAccess--
-	}
-
-	// Coalesced responses can return out of order, so isLastRead (the last
-	// request generated) is not necessarily the last received. End the inst
-	// task and mark the data wait only once no access for this instruction is
-	// still in flight.
+	// Coalesced scalar-memory responses can return out of order. The request
+	// generated last is therefore not necessarily the last response received;
+	// retire lgkmcnt only after every sibling for this instruction is gone.
 	if !cu.hasInFlightScalarMemFor(info.Inst) {
+		wf.OutstandingScalarMemAccess--
 		cu.markInstDataReturned(info.Inst, "smem")
 		cu.logInstTask(wf, info.Inst, true)
 	}
-}
-
-func (cu *ComputeUnit) isLastRead(req memprotocol.ReadReq) bool {
-	return !req.CanWaitForCoalesce
 }
 
 // markInstDataReturned records a "data" milestone on a memory instruction's

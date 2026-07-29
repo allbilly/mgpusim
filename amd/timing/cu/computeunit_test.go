@@ -313,6 +313,70 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(wf.OutstandingScalarMemAccess).To(Equal(0))
 			Expect(cu.InFlightScalarMemAccess).To(HaveLen(0))
 		})
+
+		It("does not retire lgkmcnt when the last-generated scalar request "+
+			"returns before a sibling", func() {
+			inst := wavefront.NewInst(insts.NewInst())
+			lastGenerated := memprotocol.ReadReq{
+				MsgMeta: messaging.MsgMeta{
+					ID:  timing.GetIDGenerator().Generate(),
+					Src: cu.ToScalarMem.AsRemote(),
+				},
+				Address:            0x100,
+				AccessByteSize:     4,
+				CanWaitForCoalesce: false,
+			}
+			sibling := memprotocol.ReadReq{
+				MsgMeta: messaging.MsgMeta{
+					ID:  timing.GetIDGenerator().Generate(),
+					Src: cu.ToScalarMem.AsRemote(),
+				},
+				Address:            0x140,
+				AccessByteSize:     4,
+				CanWaitForCoalesce: true,
+			}
+			for _, read := range []memprotocol.ReadReq{lastGenerated, sibling} {
+				cu.InFlightScalarMemAccess = append(
+					cu.InFlightScalarMemAccess,
+					&ScalarMemAccessInfo{
+						Inst:      inst,
+						Wavefront: wf,
+						DstSGPR:   insts.SReg(0),
+						Req:       read,
+					},
+				)
+			}
+
+			toScalarMem.incoming = append(
+				toScalarMem.incoming,
+				memprotocol.DataReadyRsp{
+					MsgMeta: messaging.MsgMeta{
+						ID:    timing.GetIDGenerator().Generate(),
+						RspTo: lastGenerated.ID,
+					},
+					Data: insts.Uint32ToBytes(32),
+				},
+			)
+			cu.processInputFromScalarMem()
+
+			Expect(wf.OutstandingScalarMemAccess).To(Equal(1))
+			Expect(cu.InFlightScalarMemAccess).To(HaveLen(1))
+
+			toScalarMem.incoming = append(
+				toScalarMem.incoming,
+				memprotocol.DataReadyRsp{
+					MsgMeta: messaging.MsgMeta{
+						ID:    timing.GetIDGenerator().Generate(),
+						RspTo: sibling.ID,
+					},
+					Data: insts.Uint32ToBytes(64),
+				},
+			)
+			cu.processInputFromScalarMem()
+
+			Expect(wf.OutstandingScalarMemAccess).To(Equal(0))
+			Expect(cu.InFlightScalarMemAccess).To(BeEmpty())
+		})
 	})
 
 	Context("should handle DataReady from ToVectorMem", func() {
