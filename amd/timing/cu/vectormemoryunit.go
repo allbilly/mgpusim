@@ -181,7 +181,12 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 	txn VectorMemAccessInfo,
 ) int {
 	penaltyCap := u.maxCoalescingPenalty
-	if txn.Write != nil && u.maxWriteCoalescingPenalty > 0 {
+	// Private-segment MUBUF traffic is lane-swizzled by the scratch path and
+	// does not incur the FLAT path's partial-line write-combine/RMW cost.
+	// It still pays the ordinary cache-line utilization cost.
+	if txn.Write != nil &&
+		u.maxWriteCoalescingPenalty > 0 &&
+		(txn.Inst == nil || txn.Inst.FormatType != insts.MUBUF) {
 		penaltyCap = u.maxWriteCoalescingPenalty
 	}
 	cacheLineBytes, usefulBytes := transactionByteUtilization(txn)

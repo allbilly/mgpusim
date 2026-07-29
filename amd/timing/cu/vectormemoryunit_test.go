@@ -90,6 +90,22 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(24))
 	})
 
+	It("uses ordinary utilization cost for MUBUF scratch writes", func() {
+		vecMemUnit.maxCoalescingPenalty = 16
+		vecMemUnit.maxWriteCoalescingPenalty = 32
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.MUBUF
+		writeTxn := VectorMemAccessInfo{
+			Write: &memprotocol.WriteReq{DirtyMask: make([]bool, 64)},
+			Inst:  inst,
+		}
+		for i := 0; i < 16; i++ {
+			writeTxn.Write.DirtyMask[i] = true
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(12))
+	})
+
 	It("does not penalize same-word broadcasts across lanes", func() {
 		vecMemUnit.maxCoalescingPenalty = 16
 		readTxn := VectorMemAccessInfo{
