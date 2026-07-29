@@ -69,9 +69,10 @@ func MakeBuilder() r9nano.Builder {
 		// Partial-line stores pay write-combine/read-modify-write cost.
 		WithMaxWriteCoalescingPenalty(103).
 		// Wide non-local stores can exceed the write-combine window.
-		WithMaxWideWriteStridePenalty(146).
-		// Match the eight-request/cycle L1V front end.
-		WithVecMemTransPipelineWidth(8).
+		WithMaxWideWriteStridePenalty(161).
+		// The CU-to-cache issue path is shared and admits one coalesced
+		// transaction group per cycle.
+		WithVecMemTransPipelineWidth(1).
 		// Dispatch: 4 shader arrays; ~1.25 µs post-kernel tax per launch.
 		WithCPAlg("per-die").
 		WithCPNumDies(NumShaderArray).
@@ -81,7 +82,7 @@ func MakeBuilder() r9nano.Builder {
 		// Keep launch and completion costs separate so single- and
 		// multi-kernel workloads scale consistently.
 		WithCPConstantKernelLaunchOverhead(3750).
-		WithCPSubsequentKernelLaunchOverhead(10000).
+		WithCPSubsequentKernelLaunchOverhead(7000).
 		WithCPWGScalingThreshold(128).
 		WithCPConstantKernelOverhead(2000).
 		// APU: small H2D transfers warm L2. Keep the two 64 KiB matrix

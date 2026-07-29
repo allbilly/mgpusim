@@ -83,7 +83,7 @@ The gfx90c platform configuration models:
 - pipelined LDS issue, 32 four-byte banks, bank conflicts, and barrier release;
 - cache-line utilization penalties for sparse loads/stores and a separate
   locality penalty for non-adjacent wide stores;
-- a shared, eight-transaction-per-cycle vector-memory request pipeline;
+- a shared vector-memory transaction-group issue path;
 - the calibrated L1/L2 and dual-channel banked-DDR hierarchy.
 
 Keep one variable family per sweep. Re-run the complete suite before accepting
