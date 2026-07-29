@@ -187,7 +187,7 @@ var _ = Describe("GCN3 Disassembler", func() {
 
 		Expect(err).To(BeNil())
 		Expect(printer.Print(inst)).
-			To(Equal("v_subrev_u32_e64 v6, s[0:1], s13, v3"))
+			To(Equal("v_subrev_co_u32_e64 v6, s[0:1], s13, v3"))
 	})
 
 	It("should decode D11A0222 00020081", func() {
@@ -197,7 +197,7 @@ var _ = Describe("GCN3 Disassembler", func() {
 
 		Expect(err).To(BeNil())
 		Expect(printer.Print(inst)).
-			To(Equal("v_sub_u32_e64 v34, s[2:3], 1, v0"))
+			To(Equal("v_sub_co_u32_e64 v34, s[2:3], 1, v0"))
 	})
 
 	It("should decode D1CC0002 041A0504", func() {
@@ -310,6 +310,28 @@ var _ = Describe("CDNA3 Disassembler", func() {
 
 		Expect(err).To(BeNil())
 		Expect(printer.Print(inst)).To(Equal("v_add_u32_e32 v1, s3, v1"))
+	})
+
+	It("should decode 32020000 as v_add_co_u32_e32", func() {
+		// v_add_co_u32_e32 v1, vcc, s0, v0
+		buf := []byte{0x00, 0x00, 0x02, 0x32}
+
+		inst, err := disassembler.Decode(buf)
+
+		Expect(err).To(BeNil())
+		Expect(inst.Opcode).To(Equal(insts.Opcode(25)))
+		Expect(printer.Print(inst)).To(Equal("v_add_co_u32_e32 v1, vcc, s0, v0"))
+	})
+
+	It("should decode 38060303 as v_addc_co_u32_e32", func() {
+		// v_addc_co_u32_e32 v3, vcc, v3, v1, vcc
+		buf := []byte{0x03, 0x03, 0x06, 0x38}
+
+		inst, err := disassembler.Decode(buf)
+
+		Expect(err).To(BeNil())
+		Expect(inst.Opcode).To(Equal(insts.Opcode(28)))
+		Expect(printer.Print(inst)).To(Equal("v_addc_co_u32_e32 v3, vcc, v3, v1, vcc"))
 	})
 
 	It("should decode D1FF0000 04060002 as v_add3_u32", func() {

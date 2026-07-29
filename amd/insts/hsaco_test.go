@@ -2,6 +2,7 @@ package insts
 
 import (
 	"encoding/binary"
+	"os"
 	"testing"
 )
 
@@ -144,6 +145,54 @@ func TestNewKernelCodeObjectFromEntireTextSection_NonV2V3(t *testing.T) {
 	}
 	if len(co.Data) != 512 {
 		t.Errorf("expected full 512 bytes as instruction data, got %d", len(co.Data))
+	}
+}
+
+func TestParseV5KernelDescriptor_Gfx90cVectorAdd(t *testing.T) {
+	data, err := os.ReadFile("/home/fedora/amdgpu/shaders/vectoradd_gfx90c_v3.hsaco")
+	if err != nil {
+		t.Skip("gfx90c test kernel not available:", err)
+	}
+	// vectoradd.kd is at file offset 0x740 in this HSACO
+	const kdOffset = 0x740
+	if len(data) < kdOffset+64 {
+		t.Fatal("hsaco file too small")
+	}
+	kdData := data[kdOffset : kdOffset+64]
+
+	meta := parseV5KernelDescriptor(kdData)
+
+	if meta.ComputePgmRsrc1 != 0x00af0041 {
+		t.Errorf("ComputePgmRsrc1: got 0x%x, want 0x00af0041", meta.ComputePgmRsrc1)
+	}
+	if meta.ComputePgmRsrc2 != 0x990 {
+		t.Errorf("ComputePgmRsrc2: got 0x%x, want 0x990", meta.ComputePgmRsrc2)
+	}
+	if !meta.EnableSgprPrivateSegmentBuffer {
+		t.Error("expected private segment buffer SGPRs enabled")
+	}
+	if !meta.EnableSgprDispatchPtr {
+		t.Error("expected dispatch pointer SGPRs enabled")
+	}
+	if !meta.EnableSgprKernargSegmentPtr {
+		t.Error("expected kernarg segment pointer SGPRs enabled")
+	}
+	if meta.UserSgprCount() != 8 {
+		t.Errorf("UserSgprCount: got %d, want 8", meta.UserSgprCount())
+	}
+
+	co := LoadKernelCodeObjectFromBytes(data, "vectoradd")
+	if co.KernelCodeEntryByteOffset != 0 {
+		t.Errorf("loaded KernelCodeEntryByteOffset: got 0x%x, want 0", co.KernelCodeEntryByteOffset)
+	}
+	if meta.KernargSegmentByteSize != 88 {
+		t.Errorf("KernargSegmentByteSize: got %d, want 88", meta.KernargSegmentByteSize)
+	}
+	if meta.WIVgprCount < 8 {
+		t.Errorf("WIVgprCount too small: %d", meta.WIVgprCount)
+	}
+	if meta.WFSgprCount < 16 {
+		t.Errorf("WFSgprCount too small: %d", meta.WFSgprCount)
 	}
 }
 

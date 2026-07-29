@@ -228,6 +228,14 @@ func loadKernelCodeObjectFromELF(executable *elf.File, kernelName string) *Kerne
 					v5Meta, kernelName, symbols,
 				)
 
+				// co.Data is the raw .text symbol bytes starting at the
+				// kernel entry. If the descriptor's entry offset points
+				// past the symbol (common for some gfx9 HIP objects), the
+				// hardware would fetch from the wrong address.
+				if v5Meta.KernelCodeEntryByteOffset >= uint64(len(kernelData)) {
+					v5Meta.KernelCodeEntryByteOffset = 0
+				}
+
 				co := new(KernelCodeObject)
 				co.Data = kernelData // V5: entire kernel data is instructions
 				co.KernelCodeObjectMeta = v5Meta
@@ -408,28 +416,29 @@ func parseV2V3Header(data []byte) *KernelCodeObjectMeta {
 func parseV5KernelDescriptor(data []byte) *KernelCodeObjectMeta {
 	meta := new(KernelCodeObjectMeta)
 
-	// V5 Kernel Descriptor layout (64 bytes):
+	// V5 Kernel Descriptor layout (64 bytes), per LLVM AMDHSAKernelDescriptor.h:
 	// 0:4   - group_segment_fixed_size
 	// 4:8   - private_segment_fixed_size
 	// 8:12  - kernarg_size
-	// 12:16 - reserved
+	// 12:16 - reserved0
 	// 16:24 - kernel_code_entry_byte_offset
-	// 24:32 - reserved
-	// 32:40 - reserved
-	// 40:44 - compute_pgm_rsrc3
-	// 44:48 - compute_pgm_rsrc1
-	// 48:52 - compute_pgm_rsrc2
-	// 52:54 - kernel_code_properties
-	// 54:56 - kernarg_preload
-	// 56:60 - reserved
+	// 24:32 - reserved1
+	// 32:40 - reserved2
+	// 40:44 - reserved3
+	// 44:48 - compute_pgm_rsrc3
+	// 48:52 - compute_pgm_rsrc1
+	// 52:56 - compute_pgm_rsrc2
+	// 56:58 - kernel_code_properties (16-bit)
+	// 58:60 - kernarg_preload (16-bit)
+	// 60:64 - reserved4
 
 	meta.GroupSegmentByteSize = binary.LittleEndian.Uint32(data[0:4])
 	meta.PrivateSegmentByteSize = binary.LittleEndian.Uint32(data[4:8])
 	meta.KernargSegmentByteSize = uint64(binary.LittleEndian.Uint32(data[8:12]))
 	meta.KernelCodeEntryByteOffset = binary.LittleEndian.Uint64(data[16:24])
-	meta.ComputePgmRsrc3 = binary.LittleEndian.Uint32(data[40:44])
-	meta.ComputePgmRsrc1 = binary.LittleEndian.Uint32(data[44:48])
-	meta.ComputePgmRsrc2 = binary.LittleEndian.Uint32(data[48:52])
+	meta.ComputePgmRsrc3 = binary.LittleEndian.Uint32(data[44:48])
+	meta.ComputePgmRsrc1 = binary.LittleEndian.Uint32(data[48:52])
+	meta.ComputePgmRsrc2 = binary.LittleEndian.Uint32(data[52:56])
 
 	// Derive WIVgprCount and WFSgprCount from ComputePgmRsrc1.
 	// These are "granulated" counts in the hardware register:
@@ -442,50 +451,31 @@ func parseV5KernelDescriptor(data []byte) *KernelCodeObjectMeta {
 	meta.WIVgprCount = uint16((granulatedVgpr + 1) * 4)
 	meta.WFSgprCount = uint16((granulatedSgpr + 1) * 8)
 
-	// For V5 (AMDHSA Code Object V4+) kernel descriptors:
-	// The kernel_code_properties field and compute_pgm_rsrc2 may not
-	// accurately reflect all SGPR setup requirements, especially for
-	// kernels compiled with extern "C". Instead of relying solely on
-	// the property flags, we use a practical approach:
-	//
-	// 1. If kernarg_size > 0, the kernel needs a kernarg segment pointer
-	// 2. Workgroup ID and work-item ID enables come from compute_pgm_rsrc2
-	// 3. We disable unused/deprecated SGPR features (dispatch ptr, queue ptr, etc.)
-	//
-	// The SGPR layout for V5 kernels is always:
-	//   s[0:1] = kernarg segment pointer (if kernel has kernargs)
-	//   s2     = workgroup ID X (if enabled in rsrc2)
-	//   s3     = workgroup ID Y (if enabled in rsrc2)
-	//   s4     = workgroup ID Z (if enabled in rsrc2)
+	kernelCodeProperties := binary.LittleEndian.Uint16(data[56:58])
+	applyKernelCodeProperties(meta, kernelCodeProperties)
 
-	meta.EnableSgprPrivateSegmentBuffer = false // Deprecated in V5
-
-	// For V5 code objects, always enable kernarg ptr if there are kernel arguments
-	meta.EnableSgprKernargSegmentPtr = meta.KernargSegmentByteSize > 0
-
-	// Disable features we don't support / that may have incorrect flags
-	meta.EnableSgprDispatchPtr = false
-	meta.EnableSgprQueuePtr = false
-	meta.EnableSgprDispatchID = false
-	meta.EnableSgprFlatScratchInit = false
-	meta.EnableSgprPrivateSegmentSize = false
-
-	// Fix compute_pgm_rsrc2: Some extern "C" kernels have incorrect
-	// enable_sgpr_workgroup_id and enable_vgpr_workitem_id bits.
-	// For V5 code objects, we ensure these are always enabled since
-	// all HIP kernels use workgroup and work-item IDs.
-	// Bit 1-5:  user_sgpr_count → set to 2 (for kernarg ptr s[0:1])
-	// Bit 7:    enable_sgpr_workgroup_id_x → force enable
-	// Bit 8:    enable_sgpr_workgroup_id_y → force enable
-	// Bit 9:    enable_sgpr_workgroup_id_z → leave as-is
-	// Bit 11-12: enable_vgpr_workitem_id → force to at least 1 (X+Y)
-	rsrc2 := meta.ComputePgmRsrc2
-	// Clear bit 0 (enable_sgpr_private_segment_wave_byte_offset) — deprecated in V5
-	rsrc2 &^= 1
-	if meta.EnableSgprKernargSegmentPtr {
-		// Set user_sgpr_count to 2 (kernarg ptr uses 2 SGPRs)
-		rsrc2 = (rsrc2 &^ (0x1F << 1)) | (2 << 1)
+	// Fallback for descriptors with no property flags but a kernarg segment.
+	if kernelCodeProperties == 0 && meta.KernargSegmentByteSize > 0 {
+		meta.EnableSgprKernargSegmentPtr = true
 	}
+
+	// Fix compute_pgm_rsrc2: extern "C" kernels may have incorrect
+	// enable_sgpr_workgroup_id and enable_vgpr_workitem_id bits.
+	rsrc2 := meta.ComputePgmRsrc2
+	// Clear bit 0 (enable_sgpr_private_segment_wave_byte_offset) — deprecated
+	// in V5. Emitting it would insert s6=wave_off and shift workgroup IDs;
+	// gfx90c matrixmult expects s6=wg_x, s7=wg_y (s8 is later reloaded as
+	// MatrixC). Scratch uses the PSB V# with ADD_TID_ENABLE instead.
+	rsrc2 &^= 1
+
+	expectedUserSgprs := userSgprCountFromKernelCodeProperties(kernelCodeProperties)
+	if kernelCodeProperties == 0 && meta.EnableSgprKernargSegmentPtr {
+		expectedUserSgprs = 2
+	}
+	if expectedUserSgprs > 0 {
+		rsrc2 = (rsrc2 &^ (0x1F << 1)) | (expectedUserSgprs << 1)
+	}
+
 	rsrc2 |= (1 << 7) // enable_sgpr_workgroup_id_x
 	rsrc2 |= (1 << 8) // enable_sgpr_workgroup_id_y
 	// Set enable_vgpr_workitem_id to at least 1 (enable X and Y)
@@ -495,6 +485,54 @@ func parseV5KernelDescriptor(data []byte) *KernelCodeObjectMeta {
 	meta.ComputePgmRsrc2 = rsrc2
 
 	return meta
+}
+
+func applyKernelCodeProperties(meta *KernelCodeObjectMeta, flags uint16) {
+	meta.EnableSgprPrivateSegmentBuffer = (flags & (1 << 0)) != 0
+	meta.EnableSgprDispatchPtr = (flags & (1 << 1)) != 0
+	meta.EnableSgprQueuePtr = (flags & (1 << 2)) != 0
+	meta.EnableSgprKernargSegmentPtr = (flags & (1 << 3)) != 0
+	meta.EnableSgprDispatchID = (flags & (1 << 4)) != 0
+	meta.EnableSgprFlatScratchInit = (flags & (1 << 5)) != 0
+	meta.EnableSgprPrivateSegmentSize = (flags & (1 << 6)) != 0
+	meta.EnableSgprGridWorkgroupCountX = (flags & (1 << 7)) != 0
+	meta.EnableSgprGridWorkgroupCountY = (flags & (1 << 8)) != 0
+	meta.EnableSgprGridWorkgroupCountZ = (flags & (1 << 9)) != 0
+}
+
+func userSgprCountFromKernelCodeProperties(flags uint16) uint32 {
+	var count uint32
+	if flags&(1<<0) != 0 {
+		count += 4 // private segment buffer
+	}
+	if flags&(1<<1) != 0 {
+		count += 2 // dispatch pointer
+	}
+	if flags&(1<<2) != 0 {
+		count += 2 // queue pointer
+	}
+	if flags&(1<<3) != 0 {
+		count += 2 // kernarg segment pointer
+	}
+	if flags&(1<<4) != 0 {
+		count += 2 // dispatch id
+	}
+	if flags&(1<<5) != 0 {
+		count += 2 // flat scratch init
+	}
+	if flags&(1<<6) != 0 {
+		count += 1 // private segment size
+	}
+	if flags&(1<<7) != 0 {
+		count += 1 // grid workgroup count X
+	}
+	if flags&(1<<8) != 0 {
+		count += 1 // grid workgroup count Y
+	}
+	if flags&(1<<9) != 0 {
+		count += 1 // grid workgroup count Z
+	}
+	return count
 }
 
 // InstructionData returns the instruction binaries in the KernelCodeObject

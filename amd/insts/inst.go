@@ -63,6 +63,8 @@ type Inst struct {
 	Imm                 bool
 	Clamp               bool
 	GDS                 bool
+	Offen               bool // MUBUF: VGPR offset enable
+	Idxen               bool // MUBUF: VGPR index enable
 	VMCNT               int
 	LKGMCNT             int
 

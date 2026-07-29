@@ -326,23 +326,25 @@ func (d *Disassembler) decodeVOP2(inst *Inst, buf []byte) error {
 
 	bits := int(extractBits(bytes, 9, 16))
 	if inst.IsSdwa {
-		// In GFX9+ VOP_SDWA_B, bit 31 of the SDWA dword indicates whether
-		// VSRC1 is an SGPR (1) or VGPR (0). Bit 30 indicates whether SRC0
-		// is an SGPR (1) or VGPR (0).
+		// GFX9+ VOP_SDWA9: Inst{55}=src0_sgpr (SDWA dword bit 23),
+		// Inst{63}=src1_sgpr (SDWA dword bit 31). VI/GCN3 SDWA has no SGPR sources.
 		sdwaBytes := binary.LittleEndian.Uint32(buf[4:8])
-		src1IsSgpr := extractBits(sdwaBytes, 31, 31) != 0
-		src0IsSgpr := extractBits(sdwaBytes, 30, 30) != 0
+		if d.IsCDNA3 {
+			src1IsSgpr := extractBits(sdwaBytes, 31, 31) != 0
+			src0IsSgpr := extractBits(sdwaBytes, 23, 23) != 0
 
-		if src1IsSgpr {
-			inst.Src1 = NewSRegOperand(bits, bits, 0)
+			if src1IsSgpr {
+				inst.Src1 = NewSRegOperand(bits, bits, 0)
+			} else {
+				inst.Src1 = NewVRegOperand(bits, bits, 0)
+			}
+
+			if src0IsSgpr {
+				src0Bits := int(extractBits(sdwaBytes, 0, 7))
+				inst.Src0 = NewSRegOperand(src0Bits, src0Bits, 0)
+			}
 		} else {
 			inst.Src1 = NewVRegOperand(bits, bits, 0)
-		}
-
-		// Also fix SRC0 if it's an SGPR
-		if src0IsSgpr {
-			src0Bits := int(extractBits(sdwaBytes, 0, 7))
-			inst.Src0 = NewSRegOperand(src0Bits, src0Bits, 0)
 		}
 	} else {
 		inst.Src1 = NewVRegOperand(bits, bits, 0)
@@ -435,6 +437,51 @@ func (d *Disassembler) decodeFLAT(inst *Inst, buf []byte) error {
 
 	switch inst.Opcode {
 	case 21, 29, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93:
+		inst.Data.RegCount = 2
+		inst.Dst.RegCount = 2
+	case 22, 30:
+		inst.Data.RegCount = 3
+		inst.Dst.RegCount = 3
+	case 23, 31:
+		inst.Data.RegCount = 4
+		inst.Dst.RegCount = 4
+	}
+	return nil
+}
+
+// decodeMUBUF decodes GFX8+/GFX9 MUBUF instructions.
+// Layout (GCN 1.2+): OFFSET[11:0], OFFEN, IDXEN, GLC, LDS, SLC, OP[24:18],
+// then VADDR, VDATA, SRSRC(×4), SOFFSET in the second dword.
+func (d *Disassembler) decodeMUBUF(inst *Inst, buf []byte) error {
+	bytesLo := binary.LittleEndian.Uint32(buf)
+	bytesHi := binary.LittleEndian.Uint32(buf[4:])
+
+	inst.Offset0 = extractBits(bytesLo, 0, 11)
+	inst.Offen = extractBits(bytesLo, 12, 12) != 0
+	inst.Idxen = extractBits(bytesLo, 13, 13) != 0
+	if extractBits(bytesLo, 14, 14) != 0 {
+		inst.GlobalLevelCoherent = true
+	}
+	if extractBits(bytesLo, 17, 17) != 0 {
+		inst.SystemLevelCoherent = true
+	}
+
+	vaddr := int(extractBits(bytesHi, 0, 7))
+	vdata := int(extractBits(bytesHi, 8, 15))
+	srsrc := int(extractBits(bytesHi, 16, 20)) << 2 // SRSRC encodes SGPR#/4
+	soffset := int(extractBits(bytesHi, 24, 31))
+
+	inst.Addr = NewVRegOperand(vaddr, vaddr, 1)
+	if inst.Offen && inst.Idxen {
+		inst.Addr.RegCount = 2
+	}
+	inst.Data = NewVRegOperand(vdata, vdata, 1)
+	inst.Dst = NewVRegOperand(vdata, vdata, 1)
+	inst.Base = NewSRegOperand(srsrc, srsrc, 4)
+	inst.Offset, _ = getOperand(uint16(soffset))
+
+	switch inst.Opcode {
+	case 21, 29:
 		inst.Data.RegCount = 2
 		inst.Dst.RegCount = 2
 	case 22, 30:
@@ -813,6 +860,8 @@ func (d *Disassembler) Decode(buf []byte) (*Inst, error) {
 		err = d.decodeVOP1(inst, buf)
 	case FLAT:
 		err = d.decodeFLAT(inst, buf)
+	case MUBUF:
+		err = d.decodeMUBUF(inst, buf)
 	case SOPP:
 		err = d.decodeSOPP(inst, buf)
 	case VOPC:
