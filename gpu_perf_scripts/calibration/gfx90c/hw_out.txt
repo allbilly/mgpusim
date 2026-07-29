@@ -1,0 +1,13 @@
+== building isca10_bench for gfx90c ==
+== running ==
+device=AMD Radeon Graphics arch=9.0 CUs=7 clock=1600MHz
+vectoradd 26.517
+relu 10.606
+matrixmult 38.936
+matrixtranspose 121.302
+bitonicsort 2524.242
+aes 16.646
+fir 11.377
+kmeans 38.887
+pagerank 120.074
+nw 122.840

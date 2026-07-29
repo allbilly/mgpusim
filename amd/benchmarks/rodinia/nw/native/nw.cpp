@@ -23,10 +23,13 @@ extern "C" __global__ void nw_kernel1(
     int bx = hipBlockIdx_x;
     int tx = hipThreadIdx_x;
 
-    int base = offset_r * cols + offset_c;
     int b_index_x = bx;
     int b_index_y = blk - 1 - bx;
+    if (b_index_y < 0 || b_index_x < 0 || bx >= blk) {
+        return;
+    }
 
+    int base = offset_r * cols + offset_c;
     int index    = base + cols * block_size * b_index_y + block_size * b_index_x + tx + (cols + 1);
     int index_n  = base + cols * block_size * b_index_y + block_size * b_index_x + tx + (1);
     int index_w  = base + cols * block_size * b_index_y + block_size * b_index_x + (cols);
@@ -89,16 +92,20 @@ extern "C" __global__ void nw_kernel2(
     int bx = hipBlockIdx_x;
     int tx = hipThreadIdx_x;
 
-    int base = offset_r * cols + offset_c;
     int b_index_x = bx + block_width - blk;
     int b_index_y = block_width - bx - 1;
+    if (b_index_y < 0 || b_index_x < 0 || bx >= blk || bx < blk - block_width) {
+        return;
+    }
 
+    int base = offset_r * cols + offset_c;
     int index    = base + cols * block_size * b_index_y + block_size * b_index_x + tx + (cols + 1);
     int index_n  = base + cols * block_size * b_index_y + block_size * b_index_x + tx + (1);
     int index_w  = base + cols * block_size * b_index_y + block_size * b_index_x + (cols);
     int index_nw = base + cols * block_size * b_index_y + block_size * b_index_x;
 
     if (tx == 0) SCORE(tx, 0, block_size) = input_itemsets_d[index_nw];
+    __syncthreads();
 
     for (int ty = 0; ty < block_size; ty++)
         REF(ty, tx, block_size) = reference_d[index + cols * ty];

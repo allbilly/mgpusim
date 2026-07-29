@@ -89,14 +89,20 @@ func NewBenchmark(driver *driver.Driver) *Benchmark {
 //go:embed kernels.hsaco
 var gcn3HSACOBytes []byte
 
+//go:embed kernels_gfx90c.hsaco
+var gcn5HSACOBytes []byte
+
 //go:embed kernels_gfx942.hsaco
 var cdna3HSACOBytes []byte
 
 func (b *Benchmark) loadProgram() {
 	var hsacoBytes []byte
-	if b.Arch == arch.CDNA3 {
+	switch b.Arch {
+	case arch.CDNA3:
 		hsacoBytes = cdna3HSACOBytes
-	} else {
+	case arch.GCN5:
+		hsacoBytes = gcn5HSACOBytes
+	default:
 		hsacoBytes = gcn3HSACOBytes
 	}
 
@@ -231,7 +237,7 @@ func (b *Benchmark) runPass(
 			numWi += remainder
 		}
 
-		if b.Arch == arch.CDNA3 {
+		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
 			kernArg := b.createCDNA3KernelArgs(stage, passOfStage, direction, numWi, wiPerQueue*i)
 			b.driver.EnqueueLaunchKernel(
 				q,
@@ -255,6 +261,10 @@ func (b *Benchmark) runPass(
 	for _, q := range queues {
 		b.driver.DrainCommandQueue(q)
 	}
+
+	// In-place bitonic passes read/write the same buffer; flush L1/L2 between
+	// launches so timing mode sees the previous pass's writes.
+	b.driver.FlushCaches(b.context)
 
 	if doPerPassVerify {
 		b.driver.MemCopyD2H(b.context, b.perPassOut, b.gInputData)

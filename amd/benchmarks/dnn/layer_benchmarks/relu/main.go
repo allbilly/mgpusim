@@ -67,6 +67,9 @@ type Benchmark struct {
 //go:embed kernels.hsaco
 var gcn3HSACOBytes []byte
 
+//go:embed kernels_gfx90c.hsaco
+var gcn5HSACOBytes []byte
+
 //go:embed kernels_gfx942.hsaco
 var cdna3HSACOBytes []byte
 
@@ -82,9 +85,12 @@ func NewBenchmark(driver *driver.Driver) *Benchmark {
 
 func (b *Benchmark) loadProgram() {
 	var hsacoBytes []byte
-	if b.Arch == arch.CDNA3 {
+	switch b.Arch {
+	case arch.CDNA3:
 		hsacoBytes = cdna3HSACOBytes
-	} else {
+	case arch.GCN5:
+		hsacoBytes = gcn5HSACOBytes
+	default:
 		hsacoBytes = gcn3HSACOBytes
 	}
 	b.hsaco = insts.LoadKernelCodeObjectFromBytes(hsacoBytes, "ReLUForward")
@@ -140,8 +146,8 @@ func (b *Benchmark) createKernelArgs(
 	localSize [3]uint16,
 	globalOffsetX int64,
 ) interface{} {
-	if b.Arch == arch.CDNA3 {
-		// Calculate grid dimensions for CDNA3
+	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
+		// Calculate grid dimensions for CDNA3/GCN5 HIP ABI
 		gridDimX := (globalSize[0] + uint32(localSize[0]) - 1) / uint32(localSize[0])
 		gridDimY := (globalSize[1] + uint32(localSize[1]) - 1) / uint32(localSize[1])
 		gridDimZ := (globalSize[2] + uint32(localSize[2]) - 1) / uint32(localSize[2])

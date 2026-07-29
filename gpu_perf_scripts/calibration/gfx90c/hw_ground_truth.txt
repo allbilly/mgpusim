@@ -1,0 +1,12 @@
+# gfx90c Renoir 4700U, ROCm 7.1.1, power_dpm=high (pre-set), clock=1600MHz
+# hipEvent avg, no sudo. bitonicsort: no per-pass host sync.
+vectoradd 29.364
+relu 13.123
+matrixmult 39.107
+matrixtranspose 140.773
+bitonicsort 811.360
+aes 16.962
+fir 12.003
+kmeans 39.220
+pagerank 130.638
+nw 123.052

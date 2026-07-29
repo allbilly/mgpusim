@@ -15,9 +15,9 @@
 extern "C" __global__ void mmmKernel_local(float4 *matrixA,
                               float4 *matrixB,
                               float4* matrixC,
-                              int widthA,
-                              float4 *blockA)
+                              int widthA)
 {
+    __shared__ float4 blockA[8 * 8 * 4];
     int lIdX = hipThreadIdx_x;
     int lIdY = hipThreadIdx_y;
     int lSizeX = hipBlockDim_x;

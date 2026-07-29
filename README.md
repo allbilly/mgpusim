@@ -50,6 +50,88 @@ This line will direct the go compiler to use your local version of Akita rather 
 | NBody                 |            |            |           |                  |           |
 | Simple Covolution     |            |            |           |                  |           |
 
+## ISCA 2019 Application Suite: Sim vs Hardware (gfx90c)
+
+Calibration against the host **Renoir gfx90c APU** (Ryzen 7 4700U: 7 CU, 1600 MHz max, 2 GiB VRAM) using ROCm 7.1.1 in podman (no root). Ten application benchmarks from the [ISCA 2019 MGPUSim paper](https://doi.org/10.1145/3307650.3322230) suite. Geometric mean **HW/Sim ≈ 1.18×**.
+
+### Configuration
+
+| Setting | Simulator | Hardware |
+|---------|-----------|----------|
+| Architecture | `-arch gcn5 -gpu gfx90c` | gfx90c (Renoir iGPU, 7 CU @ 1600 MHz) |
+| Mode | `-timing -disable-rtm -verify` | `hipEvent` kernel timing |
+| ROCm | — | `docker.io/rocm/dev-ubuntu-24.04:7.1.1` |
+| Iterations | 1 run (Driver `kernel_time`) | 100 averaged (`bitonicsort`: 20) |
+| Power | — | `power_dpm_force_performance_level=high` (if already set) |
+
+### Problem sizes
+
+| Benchmark | Flags |
+|-----------|-------|
+| vectoradd | `-width 65536 -height 1` |
+| relu | `-length 65536` |
+| matrixmult | `-x 128 -y 128 -z 128` |
+| matrixtranspose | `-width 512` |
+| bitonicsort | `-length 4096` |
+| aes | `-length 4096` |
+| fir | `-length 8192 -taps 16` |
+| kmeans | `-points 4096 -features 16 -clusters 5 -max-iter 1` |
+| pagerank | `-node 512 -sparsity 0.5 -iterations 2` |
+| nw | `-length 128` |
+
+### Results (kernel time, µs)
+
+| Benchmark | Sim (µs) | HW (µs) | HW / Sim |
+|-----------|----------|---------|----------|
+| vectoradd | 28.4 | 29.4 | 1.03× |
+| relu | 15.8 | 13.1 | 0.83× |
+| matrixmult | 77.1 | 39.1 | 0.51× |
+| matrixtranspose | 60.3 | 140.8 | 2.34× |
+| bitonicsort | 329.2 | 811.4 | 2.46× |
+| aes | 14.3 | 17.0 | 1.18× |
+| fir | 5.3 | 12.0 | 2.28× |
+| kmeans | 52.6 | 39.2 | 0.75× |
+| pagerank | 108.3 | 130.6 | 1.21× |
+| nw | 137.9 | 123.1 | 0.89× |
+
+**Sim metric:** total `kernel_time` reported by the driver (all kernel launches in the benchmark).
+
+**HW metric:** average GPU kernel time per iteration via `hipEvent`, using HIP kernels compiled from MGPUSim `native/*.cpp` sources (see notes below).
+
+### Reproduce
+
+```bash
+# Simulator (all 10 benchmarks)
+bash gpu_perf_scripts/calibration/gfx90c/run_sim.sh
+
+# Hardware (requires /dev/kfd and /dev/dri; ROCm via podman; no sudo)
+bash gpu_perf_scripts/calibration/gfx90c/build_and_run.sh
+
+# Compare
+python3 gpu_perf_scripts/calibration/gfx90c/compare.py
+```
+
+Harness: `gpu_perf_scripts/calibration/gfx90c/` (`isca10_bench.cpp`, `build_and_run.sh`, `run_sim.sh`).
+
+### Methodology notes
+
+**Timing model (GCN5 / gfx90c):** 8-CU floorplan (4 SA × 2 CU; host reports 7 fused CUs), 1600 MHz, banked DDR4 (`DRAMBankPipelineDepth=40`), LDS latency 12, VALU scoreboard 8, CP post-kernel tax 2000 cycles, DMA-through-L2 only for transfers < 64 KB. Platform: `amd/samples/runner/timingconfig/gfx90c/builder.go`.
+
+Knob sweeps (LDS 12–24, L1V 19–48, scoreboard 8–32) barely move FIR/transpose; remaining gaps need model work, not more DRAM/LDS knobs.
+
+**Known comparison gaps:**
+
+- **matrixtranspose / bitonicsort / fir** sim is fast (HW/Sim ~2.3–2.5×): LDS bank conflicts and multi-launch CPU/GPU sync on hardware are under-modeled. Bitonic is 78 launches; a global CP tax large enough to close that gap over-penalizes single-launch kernels.
+- **matrixmult** sim is slow (HW/Sim 0.51×) after switching to gfx90c HSACO with VGPR spill (MUBUF scratch); spill traffic is modeled but still over-costly vs the APU.
+- **relu / kmeans** sim is slow (HW/Sim ~0.75–0.83×): short kernels pay more banked-DRAM cost than the APU.
+- **nw** uses ROCm-compiled `kernels_gfx90c.hsaco` for `-arch gcn5` (legacy GCN3 HSACO for `-arch gcn3`); Rodinia still launches `block_size × blk` work-groups.
+
+**Kernel / harness notes:**
+
+- All 10 benches use gfx90c HSACO under `-arch gcn5`. **matrixmult** needs MUBUF `buffer_load/store_dword` + private-segment scratch (VGPR spill).
+- **bitonicsort** HW adds an OOB guard (sim tolerates invalid pairs; gfx90c faults without it).
+- GCN3-era `kernels.hsaco` objects **cannot** be loaded on gfx90c via `hipModuleLoad`; hardware must use `--offload-arch=gfx90c`.
+
 ## Default Performance Metrics Supported
 
 You can run a simulation with the `--report-all` argument to enable all the performance metrics.

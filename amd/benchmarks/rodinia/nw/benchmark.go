@@ -115,14 +115,20 @@ func NewBenchmark(driver *driver.Driver) *Benchmark {
 //go:embed kernels.hsaco
 var gcn3HSACOBytes []byte
 
+//go:embed kernels_gfx90c.hsaco
+var gcn5HSACOBytes []byte
+
 //go:embed kernels_gfx942.hsaco
 var cdna3HSACOBytes []byte
 
 func (b *Benchmark) loadProgram() {
 	var hsacoBytes []byte
-	if b.Arch == arch.CDNA3 {
+	switch b.Arch {
+	case arch.CDNA3:
 		hsacoBytes = cdna3HSACOBytes
-	} else {
+	case arch.GCN5:
+		hsacoBytes = gcn5HSACOBytes
+	default:
 		hsacoBytes = gcn3HSACOBytes
 	}
 
@@ -249,7 +255,7 @@ func (b *Benchmark) runKernel1() {
 		globalSize := [3]uint32{uint32(b.blockSize * blk), 1, 1}
 		localSize := [3]uint16{uint16(b.blockSize), 1, 1}
 
-		if b.Arch == arch.CDNA3 {
+		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
 			cdna3Args := CDNA3KernelArgs{
 				Reference:      b.dReference,
 				InputItemSets:  b.dInputItemSets,
@@ -295,7 +301,7 @@ func (b *Benchmark) runKernel2() {
 		globalSize := [3]uint32{uint32(b.blockSize * blk), 1, 1}
 		localSize := [3]uint16{uint16(b.blockSize), 1, 1}
 
-		if b.Arch == arch.CDNA3 {
+		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
 			cdna3Args := CDNA3KernelArgs{
 				Reference:      b.dReference,
 				InputItemSets:  b.dInputItemSets,

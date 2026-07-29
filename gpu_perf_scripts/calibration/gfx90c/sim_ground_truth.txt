@@ -1,0 +1,10 @@
+vectoradd 28.420
+relu 15.822
+matrixmult 77.102
+matrixtranspose 60.258
+bitonicsort 329.166
+aes 14.331
+fir 5.263
+kmeans 52.565
+pagerank 108.328
+nw 137.944

@@ -1,0 +1,8 @@
+build/
+sim_out*/
+*.bin
+*.sqlite3
+*.sqlite3-*
+*.log
+*.err
+sim_results*.txt

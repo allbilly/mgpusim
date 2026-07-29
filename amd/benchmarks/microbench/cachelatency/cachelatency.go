@@ -8,8 +8,8 @@
 // overlap, directly exposing per-access memory latency rather than bandwidth.
 // The thread writes its final index to result[0].
 //
-// The kernel binary is compiled for gfx942 only (see native/), so the
-// benchmark must be run with `-arch cdna3` (the MI300X configuration).
+// The kernel binary is compiled for gfx942 (CDNA3), gfx804 (GCN4), and gfx90c
+// (GCN5); see native/ and the embedded kernels_gfx*.hsaco files.
 package cachelatency
 
 import (
@@ -79,6 +79,12 @@ type Benchmark struct {
 //go:embed kernels_gfx942.hsaco
 var cdna3HSACOBytes []byte
 
+//go:embed kernels_gfx804.hsaco
+var gcn4HSACOBytes []byte
+
+//go:embed kernels_gfx90c.hsaco
+var gcn5HSACOBytes []byte
+
 // NewBenchmark returns a new cache_latency benchmark.
 func NewBenchmark(driver *driver.Driver) *Benchmark {
 	b := new(Benchmark)
@@ -91,8 +97,20 @@ func NewBenchmark(driver *driver.Driver) *Benchmark {
 }
 
 func (b *Benchmark) loadProgram() {
+	var hsacoBytes []byte
+	switch b.Arch {
+	case arch.CDNA3:
+		hsacoBytes = cdna3HSACOBytes
+	case arch.GCN4:
+		hsacoBytes = gcn4HSACOBytes
+	case arch.GCN5:
+		hsacoBytes = gcn5HSACOBytes
+	default:
+		log.Panic("the cache_latency benchmark requires -arch cdna3, gcn4, or gcn5")
+	}
+
 	b.hsaco = insts.LoadKernelCodeObjectFromBytes(
-		cdna3HSACOBytes, "pointer_chase_kernel")
+		hsacoBytes, "pointer_chase_kernel")
 	if b.hsaco == nil {
 		log.Panic("Failed to load kernel binary")
 	}
@@ -110,9 +128,8 @@ func (b *Benchmark) SetUnifiedMemory() {
 
 // Run runs the benchmark.
 func (b *Benchmark) Run() {
-	if b.Arch != arch.CDNA3 {
-		log.Panic("the cache_latency benchmark ships only a gfx942 " +
-			"kernel; run with -arch cdna3 -gpu mi300x")
+	if b.Arch != arch.CDNA3 && b.Arch != arch.GCN4 && b.Arch != arch.GCN5 {
+		log.Panic("the cache_latency benchmark requires -arch cdna3, gcn4, or gcn5")
 	}
 
 	b.loadProgram()

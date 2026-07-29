@@ -6,8 +6,8 @@
 // register-resident floats using four independent accumulators. The kernel
 // is memory-traffic free except for a single checksum write from work-item
 // (0,0), which is what Verify() reproduces on the CPU. The kernel binary is
-// compiled for gfx942 only (see native/), so the benchmark must be run with
-// `-arch cdna3` (the MI300X configuration).
+// compiled for gfx942 (CDNA3) and gfx90c (GCN5); see the embedded
+// `kernels_gfx*.hsaco` files.
 package fp32throughput
 
 import (
@@ -29,7 +29,7 @@ const (
 	fmaAdd float32 = 0.0000001
 )
 
-// KernelArgs defines the kernel arguments for the gfx942 (CDNA3) kernel.
+// KernelArgs defines the kernel arguments for the gfx942/gfx90c kernels.
 //
 // One 8-byte global_buffer pointer followed by two 4-byte by_value scalars,
 // packed with no padding (mgpusim serializes args with binary.Write, which does
@@ -72,6 +72,9 @@ type Benchmark struct {
 //go:embed kernels_gfx942.hsaco
 var cdna3HSACOBytes []byte
 
+//go:embed kernels_gfx90c.hsaco
+var gcn5HSACOBytes []byte
+
 // NewBenchmark returns a new fp32_throughput benchmark.
 func NewBenchmark(driver *driver.Driver) *Benchmark {
 	b := new(Benchmark)
@@ -84,8 +87,18 @@ func NewBenchmark(driver *driver.Driver) *Benchmark {
 }
 
 func (b *Benchmark) loadProgram() {
+	var hsacoBytes []byte
+	switch b.Arch {
+	case arch.CDNA3:
+		hsacoBytes = cdna3HSACOBytes
+	case arch.GCN5:
+		hsacoBytes = gcn5HSACOBytes
+	default:
+		log.Panic("the fp32_throughput benchmark requires -arch cdna3 or gcn5")
+	}
+
 	b.hsaco = insts.LoadKernelCodeObjectFromBytes(
-		cdna3HSACOBytes, "fp32_fma_kernel")
+		hsacoBytes, "fp32_fma_kernel")
 	if b.hsaco == nil {
 		log.Panic("Failed to load kernel binary")
 	}
@@ -103,9 +116,8 @@ func (b *Benchmark) SetUnifiedMemory() {
 
 // Run runs the benchmark.
 func (b *Benchmark) Run() {
-	if b.Arch != arch.CDNA3 {
-		log.Panic("the fp32_throughput benchmark ships only a gfx942 " +
-			"kernel; run with -arch cdna3 -gpu mi300x")
+	if b.Arch != arch.CDNA3 && b.Arch != arch.GCN5 {
+		log.Panic("the fp32_throughput benchmark requires -arch cdna3 or gcn5")
 	}
 
 	b.loadProgram()

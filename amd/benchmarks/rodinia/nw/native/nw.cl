@@ -29,11 +29,14 @@ __kernel void nw_kernel1(__global int* reference_d,
   // Thread index
   int tx = get_local_id(0);
 
-  // Base elements
-  int base = offset_r * cols + offset_c;
-
   int b_index_x = bx;
   int b_index_y = blk - 1 - bx;
+  if (b_index_y < 0 || b_index_x < 0 || bx >= blk) {
+    return;
+  }
+
+  // Base elements
+  int base = offset_r * cols + offset_c;
 
   int index = base + cols * block_size * b_index_y + block_size * b_index_x +
               tx + (cols + 1);
@@ -112,11 +115,14 @@ __kernel void nw_kernel2(__global int* reference_d,
   // Thread index
   int tx = get_local_id(0);
 
-  // Base elements
-  int base = offset_r * cols + offset_c;
-
   int b_index_x = bx + block_width - blk;
   int b_index_y = block_width - bx - 1;
+  if (b_index_y < 0 || b_index_x < 0 || bx >= blk || bx < blk - block_width) {
+    return;
+  }
+
+  // Base elements
+  int base = offset_r * cols + offset_c;
 
   int index = base + cols * block_size * b_index_y + block_size * b_index_x +
               tx + (cols + 1);
@@ -127,6 +133,8 @@ __kernel void nw_kernel2(__global int* reference_d,
   int index_nw = base + cols * block_size * b_index_y + block_size * b_index_x;
 
   if (tx == 0) SCORE(tx, 0, block_size) = input_itemsets_d[index_nw];
+
+  barrier(CLK_LOCAL_MEM_FENCE);
 
   for (int ty = 0; ty < block_size; ty++)
     REF(ty, tx, block_size) = reference_d[index + cols * ty];

@@ -7,6 +7,7 @@ import (
 	// embed hsaco files
 	_ "embed"
 
+	"github.com/sarchlab/mgpusim/v5/amd/arch"
 	"github.com/sarchlab/mgpusim/v5/amd/driver"
 	"github.com/sarchlab/mgpusim/v5/amd/insts"
 )
@@ -43,6 +44,7 @@ type Benchmark struct {
 	kernel  *insts.KernelCodeObject
 	gpus    []int
 
+	Arch   arch.Type
 	Width  uint32
 	Height uint32
 
@@ -62,7 +64,6 @@ func NewBenchmark(driver *driver.Driver) *Benchmark {
 	b := new(Benchmark)
 	b.driver = driver
 	b.context = driver.Init()
-	b.loadProgram()
 	return b
 }
 
@@ -77,9 +78,16 @@ func (b *Benchmark) SetUnifiedMemory() {
 }
 
 //go:embed kernels.hsaco
-var hsacoBytes []byte
+var gcn3HSACOBytes []byte
+
+//go:embed kernels_gfx90c.hsaco
+var gcn5HSACOBytes []byte
 
 func (b *Benchmark) loadProgram() {
+	hsacoBytes := gcn3HSACOBytes
+	if b.Arch == arch.GCN5 {
+		hsacoBytes = gcn5HSACOBytes
+	}
 	b.kernel = insts.LoadKernelCodeObjectFromBytes(
 		hsacoBytes, "_Z15vectoradd_floatPfPKfS1_ii")
 	if b.kernel == nil {
@@ -89,6 +97,7 @@ func (b *Benchmark) loadProgram() {
 
 // Run runs
 func (b *Benchmark) Run() {
+	b.loadProgram()
 	b.driver.SelectGPU(b.context, b.gpus[0])
 	b.initMem()
 	b.exec()

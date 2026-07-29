@@ -26,7 +26,6 @@ type GPUMatrixMultiplier struct {
 	kernel           *insts.KernelCodeObject
 	Arch             arch.Type
 	useUnifiedMemory bool
-	blockABuf        driver.Ptr
 }
 
 // NewGPUMatrixMultiplier creates a new GPUMatrixMultiplier, injecting the
@@ -59,14 +58,15 @@ type KernelArgs struct {
 	HiddenGlobalOffsetZ int64
 }
 
-// CDNA3KernelArgs defines kernel arguments for CDNA3 architecture (GFX942)
+// CDNA3KernelArgs matches the gfx90c/gfx942 HIP kernarg layout for
+// mmmKernel_local: three global buffers, widthA, then hidden launch args.
+// LDS is static (__shared__ float4[8*8*4]) and comes from the KD group size.
 type CDNA3KernelArgs struct {
 	MatrixA             driver.Ptr
 	MatrixB             driver.Ptr
 	MatrixC             driver.Ptr
 	WidthA              uint32
 	Padding1            uint32
-	BlockA              driver.Ptr
 	HiddenBlockCountX   uint32
 	HiddenBlockCountY   uint32
 	HiddenBlockCountZ   uint32
@@ -119,17 +119,12 @@ func (m *GPUMatrixMultiplier) launchKernel( //nolint:funlen
 		localSizeX := uint16(8)
 		localSizeY := uint16(8)
 
-		if m.Arch == arch.CDNA3 {
-			if m.blockABuf == 0 {
-				m.blockABuf = m.driver.AllocateMemory(m.context,
-					uint64(32*32*4))
-			}
+		if m.Arch == arch.CDNA3 || m.Arch == arch.GCN5 {
 			kernArgs := &CDNA3KernelArgs{
 				MatrixA:             gA,
 				MatrixB:             gB,
 				MatrixC:             gC,
 				WidthA:              mA.Width,
-				BlockA:              m.blockABuf,
 				HiddenBlockCountX:   globalSizeX / uint32(localSizeX),
 				HiddenBlockCountY:   globalSizeY / uint32(localSizeY),
 				HiddenBlockCountZ:   1,
@@ -209,14 +204,20 @@ func (m *GPUMatrixMultiplier) copyDataBackFromGPU(
 //go:embed kernels.hsaco
 var hsacoBytes []byte
 
+//go:embed kernels_gfx90c.hsaco
+var gcn5HSACOBytes []byte
+
 //go:embed kernels_gfx942.hsaco
 var cdna3HSACOBytes []byte
 
 func (m *GPUMatrixMultiplier) loadKernel() {
 	var kernelBytes []byte
-	if m.Arch == arch.CDNA3 {
+	switch m.Arch {
+	case arch.CDNA3:
 		kernelBytes = cdna3HSACOBytes
-	} else {
+	case arch.GCN5:
+		kernelBytes = gcn5HSACOBytes
+	default:
 		kernelBytes = hsacoBytes
 	}
 
