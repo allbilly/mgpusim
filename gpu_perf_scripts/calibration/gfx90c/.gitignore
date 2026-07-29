@@ -5,4 +5,4 @@ sim_out*/
 *.sqlite3-*
 *.log
 *.err
-sim_results*.txt
+sim_result*.txt

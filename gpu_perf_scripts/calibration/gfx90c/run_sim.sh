@@ -5,7 +5,10 @@ export PATH="${HOME}/.local/go/bin:${PATH}"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SAMPLES="$ROOT/amd/samples"
 OUT_DIR="${1:-$ROOT/gpu_perf_scripts/calibration/gfx90c/sim_out}"
+SIM_JOBS="${SIM_JOBS:-1}"
+ONLY="${ONLY:-}"
 mkdir -p "$OUT_DIR"
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
 COMMON=(-timing -arch gcn5 -gpu gfx90c -disable-rtm -verify)
 
@@ -41,13 +44,35 @@ run_one() {
   )
 }
 
-run_one vectoradd vectoradd -width 65536 -height 1
-run_one relu relu -length 65536
-run_one matrixmult matrixmultiplication -x 128 -y 128 -z 128
-run_one matrixtranspose matrixtranspose -width 512
-run_one bitonicsort bitonicsort -length 4096
-run_one aes aes -length 4096
-run_one fir fir -length 8192 -taps 16
-run_one kmeans kmeans -points 4096 -features 16 -clusters 5 -max-iter 1
-run_one pagerank pagerank -node 512 -sparsity 0.5 -iterations 2
-run_one nw nw -length 128
+selected() {
+  local name="$1"
+  [[ -z "$ONLY" || ",$ONLY," == *",$name,"* ]]
+}
+
+specs=(
+  "vectoradd|vectoradd|-width 65536 -height 1"
+  "relu|relu|-length 65536"
+  "matrixmult|matrixmultiplication|-x 128 -y 128 -z 128"
+  "matrixtranspose|matrixtranspose|-width 512"
+  "bitonicsort|bitonicsort|-length 4096"
+  "aes|aes|-length 4096"
+  "fir|fir|-length 8192 -taps 16"
+  "kmeans|kmeans|-points 4096 -features 16 -clusters 5 -max-iter 1"
+  "pagerank|pagerank|-node 512 -sparsity 0.5 -iterations 2"
+  "nw|nw|-length 128"
+)
+
+running=0
+for spec in "${specs[@]}"; do
+  IFS='|' read -r name dir args <<<"$spec"
+  selected "$name" || continue
+
+  # shellcheck disable=SC2086 # args are the benchmark's intentional argv.
+  run_one "$name" "$dir" $args &
+  ((running += 1))
+  if ((running >= SIM_JOBS)); then
+    wait -n
+    running=$((running - 1))
+  fi
+done
+wait

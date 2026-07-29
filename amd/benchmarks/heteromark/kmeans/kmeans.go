@@ -240,6 +240,11 @@ func (b *Benchmark) initMem() {
 
 func (b *Benchmark) exec() {
 	b.transposeFeatures()
+	if b.MaxIter == 0 {
+		// A zero-iteration run is useful for isolating transpose/swap timing.
+		// There are no clusters or memberships from which to calculate RMSE.
+		return
+	}
 	b.kmeansClustering()
 	b.gpuRMSE = b.calculateRMSE()
 }
@@ -482,6 +487,10 @@ func (b *Benchmark) calculateRMSE() float64 {
 
 // Verify verifies
 func (b *Benchmark) Verify() {
+	if b.MaxIter == 0 {
+		return
+	}
+
 	gpuCentroids := make([]float32, b.NumClusters*b.NumFeatures)
 	copy(gpuCentroids, b.hClusters)
 

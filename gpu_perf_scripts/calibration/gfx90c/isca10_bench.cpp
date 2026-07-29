@@ -1,6 +1,6 @@
 // gfx90c ISCA-10 hardware timing harness.
-// Compiles native HIP kernels from amd/benchmarks/*/native/ and reports
-// average hipEvent kernel time (µs) for the same problem sizes as the sim.
+// Loads the exact HSACO files embedded by the Go benchmarks and reports
+// average hipEvent kernel time (µs) for the same launch sequences as the sim.
 #include <hip/hip_runtime.h>
 
 #include <algorithm>
@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <random>
 #include <string>
 #include <vector>
@@ -25,20 +26,82 @@
     }                                                                          \
   } while (0)
 
+static std::string repo_path(const char *relative) {
+  const char *root = std::getenv("MGPUSIM_ROOT");
+  if (!root || !*root) {
+    fprintf(stderr, "MGPUSIM_ROOT must point to the repository root\n");
+    std::exit(2);
+  }
+  return std::string(root) + "/" + relative;
+}
+
+template <typename T>
+static std::vector<T> read_fixture(const char *relative, size_t count) {
+  std::string path = repo_path(relative);
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  if (!file) {
+    fprintf(stderr, "cannot open fixture %s\n", path.c_str());
+    std::exit(2);
+  }
+  const std::streamsize expected =
+      static_cast<std::streamsize>(count * sizeof(T));
+  if (file.tellg() != expected) {
+    fprintf(stderr, "fixture %s has the wrong size\n", path.c_str());
+    std::exit(2);
+  }
+  std::vector<T> values(count);
+  file.seekg(0);
+  if (!file.read(reinterpret_cast<char *>(values.data()), expected)) {
+    fprintf(stderr, "cannot read fixture %s\n", path.c_str());
+    std::exit(2);
+  }
+  return values;
+}
+
+class ModuleKernel {
+public:
+  ModuleKernel(const char *hsaco, const char *name) {
+    std::string path = repo_path(hsaco);
+    HIP_CHECK(hipModuleLoad(&module_, path.c_str()));
+    HIP_CHECK(hipModuleGetFunction(&function_, module_, name));
+  }
+
+  ModuleKernel(const ModuleKernel &) = delete;
+  ModuleKernel &operator=(const ModuleKernel &) = delete;
+
+  ~ModuleKernel() {
+    if (module_)
+      (void)hipModuleUnload(module_);
+  }
+
+  void launch(dim3 grid, dim3 block, unsigned shared_mem, void **args) const {
+    HIP_CHECK(hipModuleLaunchKernel(function_, grid.x, grid.y, grid.z, block.x,
+                                    block.y, block.z, shared_mem, nullptr, args,
+                                    nullptr));
+  }
+
+private:
+  hipModule_t module_ = nullptr;
+  hipFunction_t function_ = nullptr;
+};
+
 static float elapsed_us(hipEvent_t a, hipEvent_t b) {
   float ms = 0;
   HIP_CHECK(hipEventElapsedTime(&ms, a, b));
   return ms * 1000.0f;
 }
 
+static int warmup_iters = 0;
+
 template <typename F>
 static float time_iters(int iters, F &&launch) {
   hipEvent_t start, stop;
   HIP_CHECK(hipEventCreate(&start));
   HIP_CHECK(hipEventCreate(&stop));
-  // Warmup
-  launch();
-  HIP_CHECK(hipDeviceSynchronize());
+  for (int i = 0; i < warmup_iters; i++)
+    launch();
+  if (warmup_iters > 0)
+    HIP_CHECK(hipDeviceSynchronize());
   HIP_CHECK(hipEventRecord(start));
   for (int i = 0; i < iters; i++)
     launch();
@@ -50,93 +113,10 @@ static float time_iters(int iters, F &&launch) {
   return us;
 }
 
-// ---- kernels inlined / linked ----
-// vectoradd + relu ship a main() in native/; keep kernels here to avoid
-// hipcc treating .o as HIP source during the final link.
-__global__ void vectoradd_float(float *a, const float *b, const float *c,
-                                int width, int height) {
-  int x = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-  int y = hipBlockDim_y * hipBlockIdx_y + hipThreadIdx_y;
-  int i = y * width + x;
-  if (i < width * height)
-    a[i] = b[i] + c[i];
-}
-__global__ void ReLUForward(const int count, float *in, float *out) {
-  int index = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-  if (index < count)
-    out[index] = in[index] > 0 ? in[index] : 0;
-}
-extern "C" __global__ void mmmKernel_local(float4 *matrixA, float4 *matrixB,
-                                           float4 *matrixC, int widthA);
-extern "C" __global__ void
-matrixTranspose(float4 *__restrict__ output, float4 *__restrict__ input,
-                float4 *__restrict__ block, unsigned int wiWidth,
-                unsigned int wiHeight, unsigned int num_of_blocks_x,
-                unsigned int group_x_offset, unsigned int group_y_offset);
-extern "C" __global__ void Encrypt(unsigned char *input,
-                                   unsigned int *expanded_key,
-                                   unsigned char *s);
-extern "C" __global__ void FIR(float *output, float *coeff, float *input,
-                               float *history, unsigned int num_tap);
-extern "C" __global__ void kmeans_kernel_compute(float *feature,
-                                                 float *clusters,
-                                                 int *membership, int npoints,
-                                                 int nclusters, int nfeatures,
-                                                 int offset, int size);
-extern "C" __global__ void kmeans_kernel_swap(float *feature,
-                                              float *feature_swap, int npoints,
-                                              int nfeatures);
-extern "C" __global__ void PageRankUpdateGpu(unsigned int num_rows,
-                                             unsigned int *rowOffset,
-                                             unsigned int *col, float *val,
-                                             float *x, float *y);
-extern "C" __global__ void nw_kernel1(int *reference_d, int *input_itemsets_d,
-                                      int *output_itemsets_d, int cols,
-                                      int penalty, int blk, int block_size,
-                                      int block_width, int worksize,
-                                      int offset_r, int offset_c);
-extern "C" __global__ void nw_kernel2(int *reference_d, int *input_itemsets_d,
-                                      int *output_itemsets_d, int cols,
-                                      int penalty, int blk, int block_size,
-                                      int block_width, int worksize,
-                                      int offset_r, int offset_c);
-
-// Guarded bitonic: skip OOB pairs (sim tolerates; HW faults).
-__global__ void BitonicSortGuarded(unsigned int *array, unsigned int n,
-                                   unsigned int stage, unsigned int passOfStage,
-                                   unsigned int direction) {
-  unsigned int sortIncreasing = direction;
-  unsigned int threadId = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-  unsigned int pairDistance = 1u << (stage - passOfStage);
-  unsigned int blockWidth = 2u * pairDistance;
-  unsigned int leftId =
-      (threadId % pairDistance) + (threadId / pairDistance) * blockWidth;
-  unsigned int rightId = leftId + pairDistance;
-  if (rightId >= n)
-    return;
-  unsigned int leftElement = array[leftId];
-  unsigned int rightElement = array[rightId];
-  unsigned int sameDirectionBlockWidth = 1u << stage;
-  if ((threadId / sameDirectionBlockWidth) % 2 == 1)
-    sortIncreasing = 1 - sortIncreasing;
-  unsigned int greater, lesser;
-  if (leftElement > rightElement) {
-    greater = leftElement;
-    lesser = rightElement;
-  } else {
-    greater = rightElement;
-    lesser = leftElement;
-  }
-  if (sortIncreasing) {
-    array[leftId] = lesser;
-    array[rightId] = greater;
-  } else {
-    array[leftId] = greater;
-    array[rightId] = lesser;
-  }
-}
-
 static void bench_vectoradd(int iters) {
+  ModuleKernel kernel(
+      "amd/benchmarks/amdappsdk/vectoradd/kernels_gfx90c.hsaco",
+      "_Z15vectoradd_floatPfPKfS1_ii");
   const int width = 65536, height = 1;
   const int n = width * height;
   float *a, *b, *c;
@@ -149,8 +129,8 @@ static void bench_vectoradd(int iters) {
   dim3 block(64, 1, 1);
   dim3 grid((n + 63) / 64, 1, 1);
   float us = time_iters(iters, [&] {
-    hipLaunchKernelGGL(vectoradd_float, grid, block, 0, 0, a, b, c, width,
-                       height);
+    void *args[] = {&a, &b, &c, (void *)&width, (void *)&height};
+    kernel.launch(grid, block, 0, args);
   });
   printf("vectoradd %.3f\n", us);
   HIP_CHECK(hipFree(a));
@@ -159,6 +139,9 @@ static void bench_vectoradd(int iters) {
 }
 
 static void bench_relu(int iters) {
+  ModuleKernel kernel(
+      "amd/benchmarks/dnn/layer_benchmarks/relu/kernels_gfx90c.hsaco",
+      "ReLUForward");
   const int n = 65536;
   float *in, *out;
   HIP_CHECK(hipMalloc(&in, n * sizeof(float)));
@@ -167,7 +150,8 @@ static void bench_relu(int iters) {
   dim3 block(64);
   dim3 grid((n + 63) / 64);
   float us = time_iters(iters, [&] {
-    hipLaunchKernelGGL(ReLUForward, grid, block, 0, 0, n, in, out);
+    void *args[] = {(void *)&n, &in, &out};
+    kernel.launch(grid, block, 0, args);
   });
   printf("relu %.3f\n", us);
   HIP_CHECK(hipFree(in));
@@ -175,6 +159,9 @@ static void bench_relu(int iters) {
 }
 
 static void bench_matrixmult(int iters) {
+  ModuleKernel kernel(
+      "amd/benchmarks/amdappsdk/matrixmultiplication/kernels_gfx90c.hsaco",
+      "mmmKernel_local");
   const int N = 128;
   float4 *A, *B, *C;
   size_t bytes = size_t(N) * N * sizeof(float);
@@ -187,7 +174,8 @@ static void bench_matrixmult(int iters) {
   dim3 block(8, 8);
   dim3 grid(N / 4 / 8, N / 4 / 8);
   float us = time_iters(iters, [&] {
-    hipLaunchKernelGGL(mmmKernel_local, grid, block, 0, 0, A, B, C, N);
+    void *args[] = {&A, &B, &C, (void *)&N};
+    kernel.launch(grid, block, 0, args);
   });
   printf("matrixmult %.3f\n", us);
   HIP_CHECK(hipFree(A));
@@ -196,6 +184,9 @@ static void bench_matrixmult(int iters) {
 }
 
 static void bench_matrixtranspose(int iters) {
+  ModuleKernel kernel(
+      "amd/benchmarks/amdappsdk/matrixtranspose/kernels_gfx90c.hsaco",
+      "matrixTranspose");
   const int width = 512;
   const int blockSize = 16;
   const int elems = 4;
@@ -211,9 +202,13 @@ static void bench_matrixtranspose(int iters) {
   dim3 grid(numBlocks, numBlocks);
   size_t lds = size_t(blockSize) * blockSize * elems * sizeof(float4);
   float us = time_iters(iters, [&] {
-    hipLaunchKernelGGL(matrixTranspose, grid, block, lds, 0, out, in,
-                       (float4 *)nullptr, (unsigned)wiWidth, (unsigned)wiHeight,
-                       (unsigned)numBlocks, 0u, 0u);
+    float4 *block_ptr = nullptr;
+    unsigned width_arg = wiWidth, height_arg = wiHeight;
+    unsigned blocks_arg = numBlocks, zero = 0;
+    void *args[] = {&out,       &in,         &block_ptr,
+                    &width_arg, &height_arg, &blocks_arg,
+                    &zero,      &zero};
+    kernel.launch(grid, block, lds, args);
   });
   printf("matrixtranspose %.3f\n", us);
   HIP_CHECK(hipFree(in));
@@ -221,6 +216,9 @@ static void bench_matrixtranspose(int iters) {
 }
 
 static void bench_bitonicsort(int iters) {
+  ModuleKernel kernel(
+      "amd/benchmarks/amdappsdk/bitonicsort/kernels_gfx90c.hsaco",
+      "BitonicSort");
   const int length = 4096;
   unsigned *d;
   HIP_CHECK(hipMalloc(&d, length * sizeof(unsigned)));
@@ -238,9 +236,9 @@ static void bench_bitonicsort(int iters) {
   float us = time_iters(iters, [&] {
     for (int stage = 0; stage < numStages; stage++) {
       for (int pass = 0; pass < stage + 1; pass++) {
-        hipLaunchKernelGGL(BitonicSortGuarded, grid, block, 0, 0, d,
-                           (unsigned)length, (unsigned)stage, (unsigned)pass,
-                           1u);
+        unsigned stage_arg = stage, pass_arg = pass, direction = 1;
+        void *args[] = {&d, &stage_arg, &pass_arg, &direction};
+        kernel.launch(grid, block, 0, args);
       }
     }
   });
@@ -249,6 +247,8 @@ static void bench_bitonicsort(int iters) {
 }
 
 static void bench_aes(int iters) {
+  ModuleKernel kernel("amd/benchmarks/heteromark/aes/kernels_gfx90c.hsaco",
+                      "Encrypt");
   const int length = 4096; // bytes
   unsigned char *input, *sdev;
   unsigned int *ek;
@@ -263,7 +263,8 @@ static void bench_aes(int iters) {
   dim3 block(64);
   dim3 grid((numWi + 63) / 64);
   float us = time_iters(iters, [&] {
-    hipLaunchKernelGGL(Encrypt, grid, block, 0, 0, input, ek, sdev);
+    void *args[] = {&input, &ek, &sdev};
+    kernel.launch(grid, block, 0, args);
   });
   printf("aes %.3f\n", us);
   HIP_CHECK(hipFree(input));
@@ -272,6 +273,8 @@ static void bench_aes(int iters) {
 }
 
 static void bench_fir(int iters) {
+  ModuleKernel kernel("amd/benchmarks/heteromark/fir/kernels_gfx90c.hsaco",
+                      "FIR");
   const int length = 8192;
   const unsigned taps = 16;
   float *out, *coeff, *in, *hist;
@@ -285,7 +288,8 @@ static void bench_fir(int iters) {
   dim3 block(256);
   dim3 grid(length / 256);
   float us = time_iters(iters, [&] {
-    hipLaunchKernelGGL(FIR, grid, block, 0, 0, out, coeff, in, hist, taps);
+    void *args[] = {&out, &coeff, &in, &hist, (void *)&taps};
+    kernel.launch(grid, block, 0, args);
   });
   printf("fir %.3f\n", us);
   HIP_CHECK(hipFree(out));
@@ -295,6 +299,12 @@ static void bench_fir(int iters) {
 }
 
 static void bench_kmeans(int iters) {
+  ModuleKernel swap_kernel(
+      "amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco",
+      "kmeans_kernel_swap");
+  ModuleKernel compute_kernel(
+      "amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco",
+      "kmeans_kernel_compute");
   const int npoints = 4096, nfeatures = 16, nclusters = 5;
   float *feat, *feat_swap, *clusters;
   int *membership;
@@ -302,17 +312,30 @@ static void bench_kmeans(int iters) {
   HIP_CHECK(hipMalloc(&feat_swap, npoints * nfeatures * sizeof(float)));
   HIP_CHECK(hipMalloc(&clusters, nclusters * nfeatures * sizeof(float)));
   HIP_CHECK(hipMalloc(&membership, npoints * sizeof(int)));
-  HIP_CHECK(hipMemset(feat, 1, npoints * nfeatures * sizeof(float)));
-  HIP_CHECK(hipMemset(clusters, 1, nclusters * nfeatures * sizeof(float)));
+  std::vector<float> host_features = read_fixture<float>(
+      "gpu_perf_scripts/calibration/gfx90c/build/kmeans_features.f32",
+      npoints * nfeatures);
+  HIP_CHECK(hipMemcpy(feat, host_features.data(),
+                      host_features.size() * sizeof(float),
+                      hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemcpy(clusters, host_features.data(),
+                      nclusters * nfeatures * sizeof(float),
+                      hipMemcpyHostToDevice));
   dim3 block(64);
   dim3 grid((npoints + 63) / 64);
   // max-iter=1: one swap + one compute (matches sim).
   float us = time_iters(iters, [&] {
-    hipLaunchKernelGGL(kmeans_kernel_swap, grid, block, 0, 0, feat, feat_swap,
-                       npoints, nfeatures);
-    hipLaunchKernelGGL(kmeans_kernel_compute, grid, block, 0, 0, feat_swap,
-                       clusters, membership, npoints, nclusters, nfeatures, 0,
-                       0);
+    void *swap_args[] = {&feat, &feat_swap, (void *)&npoints,
+                         (void *)&nfeatures};
+    swap_kernel.launch(grid, block, 0, swap_args);
+
+    int offset = 0, size = 0;
+    void *compute_args[] = {
+        &feat_swap,      &clusters,         &membership,
+        (void *)&npoints, (void *)&nclusters, (void *)&nfeatures,
+        &offset,         &size,
+    };
+    compute_kernel.launch(grid, block, 0, compute_args);
   });
   printf("kmeans %.3f\n", us);
   HIP_CHECK(hipFree(feat));
@@ -322,20 +345,21 @@ static void bench_kmeans(int iters) {
 }
 
 static void bench_pagerank(int iters) {
+  ModuleKernel kernel(
+      "amd/benchmarks/heteromark/pagerank/kernels_gfx90c.hsaco",
+      "PageRankUpdateGpu");
   const unsigned num_nodes = 512;
-  const float sparsity = 0.5f;
-  unsigned num_conn =
-      std::max(num_nodes, (unsigned)(num_nodes * num_nodes * sparsity));
-  // Simple CSR: each row has num_conn/num_nodes edges (approx).
-  unsigned edges_per = num_conn / num_nodes;
-  num_conn = edges_per * num_nodes;
-  std::vector<unsigned> row(num_nodes + 1), col(num_conn);
-  std::vector<float> val(num_conn, 1.0f / edges_per), x(num_nodes, 1.0f),
-      y(num_nodes, 0);
-  for (unsigned r = 0; r <= num_nodes; r++)
-    row[r] = r * edges_per;
-  for (unsigned e = 0; e < num_conn; e++)
-    col[e] = e % num_nodes;
+  const unsigned num_conn = 131072;
+  std::vector<unsigned> row = read_fixture<unsigned>(
+      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_row_offsets.u32",
+      num_nodes + 1);
+  std::vector<unsigned> col = read_fixture<unsigned>(
+      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_columns.u32",
+      num_conn);
+  std::vector<float> val = read_fixture<float>(
+      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_values.f32",
+      num_conn);
+  std::vector<float> x(num_nodes, 1.0f / num_nodes), y(num_nodes, 0);
   unsigned *drow, *dcol;
   float *dval, *dx, *dy;
   HIP_CHECK(hipMalloc(&drow, row.size() * sizeof(unsigned)));
@@ -356,8 +380,8 @@ static void bench_pagerank(int iters) {
   dim3 grid(num_nodes); // one WG per row (64 lanes)
   float us = time_iters(iters, [&] {
     for (int it = 0; it < iterations; it++) {
-      hipLaunchKernelGGL(PageRankUpdateGpu, grid, block, 0, 0, num_nodes, drow,
-                         dcol, dval, dx, dy);
+      void *args[] = {(void *)&num_nodes, &drow, &dcol, &dval, &dx, &dy};
+      kernel.launch(grid, block, 0, args);
       std::swap(dx, dy);
     }
   });
@@ -370,6 +394,10 @@ static void bench_pagerank(int iters) {
 }
 
 static void bench_nw(int iters) {
+  ModuleKernel kernel1("amd/benchmarks/rodinia/nw/kernels_gfx90c.hsaco",
+                       "nw_kernel1");
+  ModuleKernel kernel2("amd/benchmarks/rodinia/nw/kernels_gfx90c.hsaco",
+                       "nw_kernel2");
   // Match amd/benchmarks/rodinia/nw: blockSize=64, length=128.
   const int length = 128;
   const int B = 64;
@@ -388,15 +416,39 @@ static void bench_nw(int iters) {
   float us = time_iters(iters, [&] {
     for (int blk = 1; blk <= workSize / B; blk++) {
       dim3 block(B);
-      dim3 grid(B * blk); // match sim: block_size * blk
-      hipLaunchKernelGGL(nw_kernel1, grid, block, 0, 0, ref, in, out, cols,
-                         penalty, blk, B, blockWidth, workSize, 0, 0);
+      dim3 grid(blk); // Go gridSize is B*blk work-items with a B-lane WG.
+      int zero = 0;
+      void *args[] = {&ref,
+                      &in,
+                      &out,
+                      (void *)&cols,
+                      (void *)&penalty,
+                      &blk,
+                      (void *)&B,
+                      (void *)&blockWidth,
+                      (void *)&workSize,
+                      &zero,
+                      &zero};
+      kernel1.launch(grid, block, 0, args);
     }
-    for (int blk = workSize / B - 1; blk >= 1; blk--) {
+    // The Go gfx90c benchmark currently launches kernel2 for the same blk
+    // range as kernel1.
+    for (int blk = 1; blk <= workSize / B; blk++) {
       dim3 block(B);
-      dim3 grid(B * blk);
-      hipLaunchKernelGGL(nw_kernel2, grid, block, 0, 0, ref, in, out, cols,
-                         penalty, blk, B, blockWidth, workSize, 0, 0);
+      dim3 grid(blk);
+      int zero = 0;
+      void *args[] = {&ref,
+                      &in,
+                      &out,
+                      (void *)&cols,
+                      (void *)&penalty,
+                      &blk,
+                      (void *)&B,
+                      (void *)&blockWidth,
+                      (void *)&workSize,
+                      &zero,
+                      &zero};
+      kernel2.launch(grid, block, 0, args);
     }
   });
   printf("nw %.3f\n", us);
@@ -406,15 +458,21 @@ static void bench_nw(int iters) {
 }
 
 int main(int argc, char **argv) {
-  int iters = 100;
-  int bitonic_iters = 20;
+  // MGPUSim samples execute one cold launch sequence, so cold single-shot
+  // measurement is the comparable default. Use --warmup and --iters
+  // explicitly for a steady-state experiment.
+  int iters = 1;
+  int bitonic_iters = 1;
   std::string only;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--iters") && i + 1 < argc)
       iters = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--warmup") && i + 1 < argc)
+      warmup_iters = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--only") && i + 1 < argc)
       only = argv[++i];
   }
+  bitonic_iters = iters;
   hipDeviceProp_t prop;
   HIP_CHECK(hipGetDeviceProperties(&prop, 0));
   fprintf(stderr, "device=%s arch=%d.%d CUs=%d clock=%dMHz\n", prop.name,

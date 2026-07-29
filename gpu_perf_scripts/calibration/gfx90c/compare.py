@@ -26,13 +26,15 @@ def main():
     names = list(hw.keys())
     print(f"{'Benchmark':<18} {'Sim(µs)':>10} {'HW(µs)':>10} {'HW/Sim':>8} {'err%':>8}")
     ratios = []
+    absolute_errors = []
     for k in names:
         if k not in sim:
             print(f"{k:<18} {'—':>10} {hw[k]:10.1f} {'—':>8} {'—':>8}")
             continue
         r = hw[k] / sim[k]
-        err = (sim[k] - hw[k]) / hw[k] * 100
+        err = (r - 1.0) * 100
         ratios.append(r)
+        absolute_errors.append(abs(err))
         print(f"{k:<18} {sim[k]:10.1f} {hw[k]:10.1f} {r:8.2f} {err:7.1f}%")
     if ratios:
         geo = 1.0
@@ -40,6 +42,7 @@ def main():
             geo *= r
         geo **= 1 / len(ratios)
         print(f"\ngeometric mean HW/Sim = {geo:.2f}x  (n={len(ratios)})")
+        print(f"mean absolute relative error = {sum(absolute_errors) / len(absolute_errors):.1f}%")
 
 
 if __name__ == "__main__":
