@@ -42,6 +42,12 @@ Steady-state behavior can be measured explicitly:
 ./build_and_run.sh --warmup 1 --iters 100
 ```
 
+K-means can additionally report its swap and compute kernels separately:
+
+```bash
+./build_and_run.sh --only kmeans --components --warmup 1 --iters 100
+```
+
 Set `ALLOW_UNPINNED_CLOCK=1` only for diagnostics; do not compare that output
 with `hw_ground_truth.txt`.
 

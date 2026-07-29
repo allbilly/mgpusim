@@ -92,6 +92,7 @@ static float elapsed_us(hipEvent_t a, hipEvent_t b) {
 }
 
 static int warmup_iters = 0;
+static bool report_components = false;
 
 template <typename F>
 static float time_iters(int iters, F &&launch) {
@@ -323,12 +324,12 @@ static void bench_kmeans(int iters) {
                       hipMemcpyHostToDevice));
   dim3 block(64);
   dim3 grid((npoints + 63) / 64);
-  // max-iter=1: one swap + one compute (matches sim).
-  float us = time_iters(iters, [&] {
+  auto launch_swap = [&] {
     void *swap_args[] = {&feat, &feat_swap, (void *)&npoints,
                          (void *)&nfeatures};
     swap_kernel.launch(grid, block, 0, swap_args);
-
+  };
+  auto launch_compute = [&] {
     int offset = 0, size = 0;
     void *compute_args[] = {
         &feat_swap,      &clusters,         &membership,
@@ -336,8 +337,17 @@ static void bench_kmeans(int iters) {
         &offset,         &size,
     };
     compute_kernel.launch(grid, block, 0, compute_args);
+  };
+  // max-iter=1: one swap + one compute (matches sim).
+  float us = time_iters(iters, [&] {
+    launch_swap();
+    launch_compute();
   });
   printf("kmeans %.3f\n", us);
+  if (report_components) {
+    printf("kmeans_swap %.3f\n", time_iters(iters, launch_swap));
+    printf("kmeans_compute %.3f\n", time_iters(iters, launch_compute));
+  }
   HIP_CHECK(hipFree(feat));
   HIP_CHECK(hipFree(feat_swap));
   HIP_CHECK(hipFree(clusters));
@@ -471,6 +481,8 @@ int main(int argc, char **argv) {
       warmup_iters = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--only") && i + 1 < argc)
       only = argv[++i];
+    else if (!strcmp(argv[i], "--components"))
+      report_components = true;
   }
   bitonic_iters = iters;
   hipDeviceProp_t prop;
