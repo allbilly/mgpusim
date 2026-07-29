@@ -20,12 +20,14 @@ type Wavefront struct {
 	AtBarrier bool
 	inst      *insts.Inst
 
-	pc       uint64
-	exec     uint64
-	scc      byte
-	vcc      uint64
-	M0       uint32
-	SRegFile []byte
+	pc            uint64
+	exec          uint64
+	scc           byte
+	vcc           uint64
+	M0            uint32
+	flatScratchLo uint32
+	flatScratchHi uint32
+	SRegFile      []byte
 	VRegFile []byte
 	LDS      []byte
 }
@@ -144,6 +146,12 @@ func (wf *Wavefront) readRegOperand(
 		return uint64(uint32(wf.exec))
 	case insts.M0:
 		return uint64(wf.M0)
+	case insts.FlatSratchLo:
+		return uint64(wf.flatScratchLo)
+	case insts.FlatSratchHi:
+		return uint64(wf.flatScratchHi)
+	case insts.FlatSratch:
+		return uint64(wf.flatScratchHi)<<32 | uint64(wf.flatScratchLo)
 	}
 
 	// Fall back to ReadReg for any unhandled register types
@@ -266,6 +274,13 @@ func (wf *Wavefront) ReadReg(reg *insts.Reg, regCount int, laneID int) []byte {
 		copy(value, insts.Uint64ToBytes(wf.exec))
 	} else if reg.RegType == insts.M0 {
 		copy(value, insts.Uint32ToBytes(wf.M0))
+	} else if reg.RegType == insts.FlatSratchLo {
+		copy(value, insts.Uint32ToBytes(wf.flatScratchLo))
+	} else if reg.RegType == insts.FlatSratchHi {
+		copy(value, insts.Uint32ToBytes(wf.flatScratchHi))
+	} else if reg.RegType == insts.FlatSratch {
+		copy(value, insts.Uint64ToBytes(uint64(wf.flatScratchHi)<<32|
+			uint64(wf.flatScratchLo)))
 	} else if reg.Name == "vcclo" {
 		// Fallback for vcclo when RegType is not properly set
 		if regCount == 1 {
@@ -325,6 +340,14 @@ func (wf *Wavefront) WriteReg(
 		wf.exec = insts.BytesToUint64(data)
 	} else if reg.RegType == insts.M0 {
 		wf.M0 = insts.BytesToUint32(data)
+	} else if reg.RegType == insts.FlatSratchLo {
+		wf.flatScratchLo = insts.BytesToUint32(data)
+	} else if reg.RegType == insts.FlatSratchHi {
+		wf.flatScratchHi = insts.BytesToUint32(data)
+	} else if reg.RegType == insts.FlatSratch {
+		v := insts.BytesToUint64(data)
+		wf.flatScratchLo = uint32(v)
+		wf.flatScratchHi = uint32(v >> 32)
 	} else if reg.Name == "vcclo" {
 		// Fallback for vcclo when RegType is not properly set
 		if regCount <= 1 {

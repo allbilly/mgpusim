@@ -20,6 +20,8 @@ func (u *ALU) runSOP1(state emu.InstEmuState) {
 		u.runSBREVB32(state)
 	case 28:
 		u.runSGETPCB64(state)
+	case 30:
+		u.runSSWAPPCB64(state)
 	case 32:
 		u.runSANDSAVEEXECB64(state)
 	case 33:
@@ -80,6 +82,14 @@ func (u *ALU) runSBREVB32(state emu.InstEmuState) {
 }
 
 func (u *ALU) runSGETPCB64(state emu.InstEmuState) {
+	inst := state.Inst()
+	pc := state.PC()
+	state.WriteOperand(inst.Dst, 0, pc+4)
+}
+
+func (u *ALU) runSSWAPPCB64(state emu.InstEmuState) {
+	// Kernel prologue uses s_swappc_b64 for stack setup; timing only needs the
+	// destination write, not a real PC swap into a host address.
 	inst := state.Inst()
 	pc := state.PC()
 	state.WriteOperand(inst.Dst, 0, pc+4)

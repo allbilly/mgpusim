@@ -14,6 +14,13 @@ func (u *ALU) flatPrecomputeScalarBase(
 	state emu.InstEmuState,
 ) (bool, uint64) {
 	inst := state.Inst()
+	// GFX9+: use Addr.RegCount (set by decoder) — RegCount==1 means SAddr mode.
+	if inst.Addr != nil && inst.Addr.RegCount == 1 && inst.SAddr != nil && inst.SAddr.IntValue != 0x7F {
+		sAddrReg := int(inst.SAddr.IntValue)
+		sAddrOperand := insts.NewSRegOperand(sAddrReg, sAddrReg, 2)
+		scalarBase := state.ReadOperand(sAddrOperand, 0)
+		return true, scalarBase
+	}
 	if inst.SAddr != nil && inst.SAddr.IntValue != 0x7F && inst.SAddr.IntValue != 0 {
 		sAddrReg := int(inst.SAddr.IntValue)
 		sAddrOperand := insts.NewSRegOperand(sAddrReg, sAddrReg, 2)

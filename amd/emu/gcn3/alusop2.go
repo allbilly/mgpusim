@@ -34,10 +34,14 @@ func (u *ALU) runSOP2(state emu.InstEmuState) {
 		u.runSMAXU32(state)
 	case 10:
 		u.runSCSELECTB32(state)
+	case 11:
+		u.runSCSELECTB64(state)
 	case 12:
 		u.runSANDB32(state)
 	case 13:
 		u.runSANDB64(state)
+	case 14:
+		u.runSORB32(state)
 	case 15:
 		u.runSORB64(state)
 	case 16, 17:
@@ -58,8 +62,14 @@ func (u *ALU) runSOP2(state emu.InstEmuState) {
 		u.runSBFMB32(state)
 	case 36:
 		u.runSMULI32(state)
+	case 37:
+		u.runSBFEU32(state)
 	case 38:
 		u.runSBFEI32(state)
+	case 44:
+		u.runSMULHIU32(state)
+	case 45:
+		u.runSMULHII32(state)
 	default:
 		log.Panicf("Opcode %d for SOP2 format is not implemented", inst.Opcode)
 	}
@@ -231,6 +241,10 @@ func (u *ALU) runSCSELECTB32(state emu.InstEmuState) {
 	}
 }
 
+func (u *ALU) runSCSELECTB64(state emu.InstEmuState) {
+	u.runSCSELECTB32(state)
+}
+
 func (u *ALU) runSANDB32(state emu.InstEmuState) {
 	inst := state.Inst()
 	src0 := state.ReadOperand(inst.Src0, 0)
@@ -251,6 +265,20 @@ func (u *ALU) runSANDB64(state emu.InstEmuState) {
 	src1 := state.ReadOperand(inst.Src1, 0)
 
 	dst := src0 & src1
+	state.WriteOperand(inst.Dst, 0, dst)
+	if dst != 0 {
+		state.SetSCC(1)
+	} else {
+		state.SetSCC(0)
+	}
+}
+
+func (u *ALU) runSORB32(state emu.InstEmuState) {
+	inst := state.Inst()
+	src0 := state.ReadOperand(inst.Src0, 0)
+	src1 := state.ReadOperand(inst.Src1, 0)
+
+	dst := src0 | src1
 	state.WriteOperand(inst.Dst, 0, dst)
 	if dst != 0 {
 		state.SetSCC(1)
@@ -398,6 +426,26 @@ func (u *ALU) runSMULI32(state emu.InstEmuState) {
 	}
 }
 
+func (u *ALU) runSBFEU32(state emu.InstEmuState) {
+	inst := state.Inst()
+	src0 := state.ReadOperand(inst.Src0, 0)
+	src1 := state.ReadOperand(inst.Src1, 0)
+	offset := src1 & 0x1F
+	width := (src1 >> 16) & 0x7F
+	var dst uint64
+	if width == 0 {
+		dst = 0
+	} else {
+		dst = (src0 >> offset) & ((uint64(1) << width) - 1)
+	}
+	state.WriteOperand(inst.Dst, 0, dst)
+	if dst != 0 {
+		state.SetSCC(1)
+	} else {
+		state.SetSCC(0)
+	}
+}
+
 func (u *ALU) runSBFEI32(state emu.InstEmuState) {
 	inst := state.Inst()
 	src0 := asInt32(uint32(state.ReadOperand(inst.Src0, 0)))
@@ -414,4 +462,20 @@ func (u *ALU) runSBFEI32(state emu.InstEmuState) {
 	} else {
 		state.SetSCC(0)
 	}
+}
+
+// GFX9+: high 32 bits of unsigned 32x32 multiply. Does not update SCC.
+func (u *ALU) runSMULHIU32(state emu.InstEmuState) {
+	inst := state.Inst()
+	src0 := state.ReadOperand(inst.Src0, 0) & 0xffffffff
+	src1 := state.ReadOperand(inst.Src1, 0) & 0xffffffff
+	state.WriteOperand(inst.Dst, 0, (src0*src1)>>32)
+}
+
+// GFX9+: high 32 bits of signed 32x32 multiply. Does not update SCC.
+func (u *ALU) runSMULHII32(state emu.InstEmuState) {
+	inst := state.Inst()
+	src0 := int64(asInt32(uint32(state.ReadOperand(inst.Src0, 0))))
+	src1 := int64(asInt32(uint32(state.ReadOperand(inst.Src1, 0))))
+	state.WriteOperand(inst.Dst, 0, uint64(int32ToBits(int32((src0*src1)>>32))))
 }

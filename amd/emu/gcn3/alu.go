@@ -65,6 +65,8 @@ func (u *ALU) Run(state emu.InstEmuState) {
 		u.runVOPC(state)
 	case insts.FLAT:
 		u.runFlat(state)
+	case insts.MUBUF:
+		u.runMUBUF(state)
 	case insts.SOPP:
 		u.runSOPP(state)
 	case insts.SOPK:

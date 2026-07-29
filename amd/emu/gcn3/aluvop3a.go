@@ -93,6 +93,8 @@ func (u *ALU) runVOP3A(state emu.InstEmuState) {
 		u.runVBFEU32(state)
 	case 457:
 		u.runVBFEI32(state)
+	case 459:
+		u.runVFMAF32(state)
 	case 460:
 		u.runVFMAF64(state)
 	case 464:
@@ -131,6 +133,10 @@ func (u *ALU) runVOP3A(state emu.InstEmuState) {
 		u.runVASHRREVI64(state)
 	case 511:
 		u.runVADD3U32(state)
+	case 509:
+		u.runVLSHLADDU32(state)
+	case 510:
+		u.runVADDLSHLU32(state)
 	case 520:
 		u.runVLSHLADDU64(state)
 	default:
@@ -515,6 +521,21 @@ func (u *ALU) runVBFEI32(state emu.InstEmuState) {
 	}
 }
 
+func (u *ALU) runVFMAF32(state emu.InstEmuState) {
+	inst := state.Inst()
+	exec := state.EXEC()
+	for i := 0; i < 64; i++ {
+		if exec&(1<<uint(i)) == 0 {
+			continue
+		}
+		src0 := math.Float32frombits(uint32(applyF32Modifier(state.ReadOperand(inst.Src0, i), 0, inst)))
+		src1 := math.Float32frombits(uint32(applyF32Modifier(state.ReadOperand(inst.Src1, i), 1, inst)))
+		src2 := math.Float32frombits(uint32(applyF32Modifier(state.ReadOperand(inst.Src2, i), 2, inst)))
+		dst := src0*src1 + src2
+		state.WriteOperand(inst.Dst, i, uint64(math.Float32bits(dst)))
+	}
+}
+
 func (u *ALU) runVADD3U32(state emu.InstEmuState) {
 	inst := state.Inst()
 	exec := state.EXEC()
@@ -526,6 +547,35 @@ func (u *ALU) runVADD3U32(state emu.InstEmuState) {
 		src1 := uint32(state.ReadOperand(inst.Src1, i))
 		src2 := uint32(state.ReadOperand(inst.Src2, i))
 		state.WriteOperand(inst.Dst, i, uint64(src0+src1+src2))
+	}
+}
+
+func (u *ALU) runVADDLSHLU32(state emu.InstEmuState) {
+	inst := state.Inst()
+	exec := state.EXEC()
+	for i := 0; i < 64; i++ {
+		if exec&(1<<uint(i)) == 0 {
+			continue
+		}
+		src0 := uint32(state.ReadOperand(inst.Src0, i))
+		src1 := uint32(state.ReadOperand(inst.Src1, i))
+		shift := uint32(state.ReadOperand(inst.Src2, i)) & 0x1F
+		result := (src0 + src1) << shift
+		state.WriteOperand(inst.Dst, i, uint64(result))
+	}
+}
+
+func (u *ALU) runVLSHLADDU32(state emu.InstEmuState) {
+	inst := state.Inst()
+	exec := state.EXEC()
+	for i := 0; i < 64; i++ {
+		if exec&(1<<uint(i)) == 0 {
+			continue
+		}
+		src0 := uint32(state.ReadOperand(inst.Src0, i))
+		shift := uint32(state.ReadOperand(inst.Src1, i)) & 0x1F
+		src2 := uint32(state.ReadOperand(inst.Src2, i))
+		state.WriteOperand(inst.Dst, i, uint64((src0<<shift)+src2))
 	}
 }
 

@@ -35,6 +35,8 @@ func (u *ALU) runVOPC(state emu.InstEmuState) {
 		u.runVCmpNeqF32(state)
 	case 0x4E: // v_cmp_nlt_f32
 		u.runVCmpNltF32(state)
+	case 0xA4: // v_cmp_gt_i16 (GFX9+)
+		u.runVCmpGtI16(state)
 	case 0xC1: // v_cmp_lt_i32
 		u.runVCmpLtI32(state)
 	case 0xC3: // v_cmp_le_i32
@@ -312,6 +314,23 @@ func (u *ALU) runVCmpLeI32(state emu.InstEmuState) {
 		src0 := asInt32(uint32(state.ReadOperand(inst.Src0, i)))
 		src1 := asInt32(uint32(state.ReadOperand(inst.Src1, i)))
 		if src0 <= src1 {
+			vcc |= 1 << uint(i)
+		}
+	}
+	state.SetVCC(vcc)
+}
+
+func (u *ALU) runVCmpGtI16(state emu.InstEmuState) {
+	inst := state.Inst()
+	exec := state.EXEC()
+	var vcc uint64
+	for i := 0; i < 64; i++ {
+		if exec&(1<<uint(i)) == 0 {
+			continue
+		}
+		src0 := int16(state.ReadOperand(inst.Src0, i) & 0xFFFF)
+		src1 := int16(state.ReadOperand(inst.Src1, i) & 0xFFFF)
+		if src0 > src1 {
 			vcc |= 1 << uint(i)
 		}
 	}

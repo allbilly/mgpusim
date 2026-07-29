@@ -631,6 +631,44 @@ var _ = Describe("ALU", func() {
 		Expect(state.VCC()).To(Equal(uint64(1)))
 	})
 
+	It("should run V_ADD_CO_U32 and set VCC on carry", func() {
+		state.inst = insts.NewInst()
+		state.inst.FormatType = insts.VOP2
+		state.inst.Opcode = 25
+		state.inst.Src0 = insts.NewSRegOperand(0, 0, 1)
+		state.inst.Src1 = insts.NewVRegOperand(0, 0, 1)
+		state.inst.Dst = insts.NewVRegOperand(0, 1, 1)
+		state.exec = 1
+		state.vcc = 0
+
+		copy(state.sRegFile[0*4:], insts.Uint32ToBytes(0xfffffffe))
+		copy(state.vRegFile[0*256*4+0*4:], insts.Uint32ToBytes(2))
+
+		alu.Run(state)
+
+		Expect(uint32(state.ReadOperand(state.inst.Dst, 0))).To(Equal(uint32(0)))
+		Expect(state.VCC()).To(Equal(uint64(1)))
+	})
+
+	It("should run GCN3 V_ADD_U32 without updating VCC", func() {
+		state.inst = insts.NewInst()
+		state.inst.FormatType = insts.VOP2
+		state.inst.Opcode = 52
+		state.inst.Src0 = insts.NewSRegOperand(0, 8, 1)
+		state.inst.Src1 = insts.NewVRegOperand(0, 0, 1)
+		state.inst.Dst = insts.NewVRegOperand(0, 0, 1)
+		state.exec = 1
+		state.vcc = 0xdeadbeef
+
+		copy(state.sRegFile[8*4:], insts.Uint32ToBytes(1))
+		copy(state.vRegFile[0*256*4+0*4:], insts.Uint32ToBytes(2))
+
+		alu.Run(state)
+
+		Expect(uint32(state.ReadOperand(state.inst.Dst, 0))).To(Equal(uint32(3)))
+		Expect(state.VCC()).To(Equal(uint64(0xdeadbeef)))
+	})
+
 	It("should run V_ADDC_U32", func() {
 		state.inst = insts.NewInst()
 		state.inst.FormatType = insts.VOP2

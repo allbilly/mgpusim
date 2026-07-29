@@ -9,6 +9,19 @@ import (
 	"github.com/sarchlab/mgpusim/v5/amd/insts"
 )
 
+// vop2WritesVCC reports whether a VOP2 opcode updates VCC (carry/borrow out).
+// GFX9+ carry-out instructions (v_add_co_u32, v_addc_co_u32, etc.) use opcodes
+// 25-30. GCN3 alternate encodings at opcodes 52-54 perform the same arithmetic
+// but do not write VCC.
+func vop2WritesVCC(opcode insts.Opcode) bool {
+	switch opcode {
+	case 25, 26, 27, 28, 29, 30:
+		return true
+	default:
+		return false
+	}
+}
+
 //nolint:gocyclo,funlen
 func (u *ALU) runVOP2(state emu.InstEmuState) {
 	inst := state.Inst()
@@ -58,17 +71,24 @@ func (u *ALU) runVOP2(state emu.InstEmuState) {
 	case 24:
 		u.runVMADAKF32(state)
 	case 25:
+		// v_add_co_u32_e32 (GFX9+) / v_add_u32_e32 with carry out
 		u.runVADDI32(state)
 	case 26:
+		// v_sub_co_u32_e32
 		u.runVSUBI32(state)
 	case 27:
+		// v_subrev_co_u32_e32
 		u.runVSUBREVI32(state)
 	case 28:
+		// v_addc_co_u32_e32
 		u.runVADDCU32(state)
 	case 29:
 		u.runVSUBBU32(state)
 	case 30:
 		u.runVSUBBREVU32(state)
+	case 38:
+		// v_add_u16 (GFX9+)
+		u.runVADDU16(state)
 	case 42:
 		u.runVLSHLREVB16(state)
 	case 52:
@@ -557,16 +577,19 @@ func (u *ALU) runVADDI32SDWA(state emu.InstEmuState) {
 			continue
 		}
 
-		src0 := asInt32(uint32(state.ReadOperand(inst.Src0, i)) & uint32(inst.Src0Sel))
-		src1 := asInt32(uint32(state.ReadOperand(inst.Src1, i)) & uint32(inst.Src1Sel))
-		if (src1 > 0 && src0 > math.MaxInt32-src1) ||
-			(src1 < 0 && src0 < math.MinInt32+src1) {
+		src0 := u.sdwaSrcSelect(uint32(state.ReadOperand(inst.Src0, i)), inst.Src0Sel)
+		src1 := u.sdwaSrcSelect(uint32(state.ReadOperand(inst.Src1, i)), inst.Src1Sel)
+		sum := src0 + src1
+		if uint64(src0)+uint64(src1) > 0xffffffff {
 			vcc |= 1 << uint32(i)
 		}
-		result := int32ToBits((src0 + src1) & asInt32(uint32(inst.DstSel)))
-		state.WriteOperand(inst.Dst, i, uint64(result))
+		dst := u.sdwaDstSelect(uint32(state.ReadOperand(inst.Dst, i)), sum,
+			inst.DstSel, inst.DstUnused)
+		state.WriteOperand(inst.Dst, i, uint64(dst))
 	}
-	state.SetVCC(vcc)
+	if vop2WritesVCC(inst.Opcode) {
+		state.SetVCC(vcc)
+	}
 }
 
 func (u *ALU) runVADDI32Regular(state emu.InstEmuState) {
@@ -588,7 +611,9 @@ func (u *ALU) runVADDI32Regular(state emu.InstEmuState) {
 
 		state.WriteOperand(inst.Dst, i, uint64(src0+src1))
 	}
-	state.SetVCC(vcc)
+	if vop2WritesVCC(inst.Opcode) {
+		state.SetVCC(vcc)
+	}
 }
 
 func (u *ALU) runVSUBI32(state emu.InstEmuState) {
@@ -610,7 +635,9 @@ func (u *ALU) runVSUBI32(state emu.InstEmuState) {
 
 			state.WriteOperand(inst.Dst, i, uint64(src0-src1))
 		}
-		state.SetVCC(vcc)
+		if vop2WritesVCC(inst.Opcode) {
+			state.SetVCC(vcc)
+		}
 	} else {
 		log.Panicf("SDWA for VOP2 instruction opcode  %d not implemented \n", inst.Opcode)
 	}
@@ -635,7 +662,9 @@ func (u *ALU) runVSUBREVI32(state emu.InstEmuState) {
 
 			state.WriteOperand(inst.Dst, i, uint64(src1-src0))
 		}
-		state.SetVCC(vcc)
+		if vop2WritesVCC(inst.Opcode) {
+			state.SetVCC(vcc)
+		}
 	} else {
 		log.Panicf("SDWA for VOP2 instruction opcode  %d not implemented \n", inst.Opcode)
 	}
@@ -740,5 +769,22 @@ func (u *ALU) runVLSHLREVB16(state emu.InstEmuState) {
 		}
 	} else {
 		log.Panicf("SDWA for VOP2 instruction opcode %d not implemented\n", inst.Opcode)
+	}
+}
+
+// GFX9+: D.u16 = S0.u16 + S1.u16 (low 16 bits; high bits cleared).
+func (u *ALU) runVADDU16(state emu.InstEmuState) {
+	inst := state.Inst()
+	if inst.IsSdwa {
+		log.Panicf("SDWA for VOP2 instruction opcode %d not implemented\n", inst.Opcode)
+	}
+	exec := state.EXEC()
+	for i := 0; i < 64; i++ {
+		if exec&(1<<uint(i)) == 0 {
+			continue
+		}
+		src0 := uint16(state.ReadOperand(inst.Src0, i))
+		src1 := uint16(state.ReadOperand(inst.Src1, i))
+		state.WriteOperand(inst.Dst, i, uint64(src0+src1))
 	}
 }

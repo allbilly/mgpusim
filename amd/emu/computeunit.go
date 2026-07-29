@@ -114,9 +114,9 @@ func (p *cuProcessor) runWG(
 	now timing.VTimeInPicoSec,
 ) {
 	wg := req.WorkGroup
-	p.initWfs(wg, req)
-
 	alu := comp.Resources().ALU
+	p.initWfs(wg, req, alu)
+
 	for !p.isAllWfCompleted(wg) {
 		for _, wf := range p.wfs[wg] {
 			alu.SetLDS(wf.LDS)
@@ -138,6 +138,7 @@ func (p *cuProcessor) runWG(
 func (p *cuProcessor) initWfs(
 	wg *kernels.WorkGroup,
 	req protocol.MapWGReq,
+	alu ALU,
 ) {
 	lds := p.initLDS(req)
 
@@ -149,7 +150,7 @@ func (p *cuProcessor) initWfs(
 	}
 
 	for _, managedWf := range p.wfs[wg] {
-		p.initWfRegs(managedWf)
+		p.initWfRegs(managedWf, alu)
 	}
 }
 
@@ -160,7 +161,7 @@ func (p *cuProcessor) initLDS(req protocol.MapWGReq) []byte {
 }
 
 //nolint:funlen,gocyclo
-func (p *cuProcessor) initWfRegs(wf *Wavefront) {
+func (p *cuProcessor) initWfRegs(wf *Wavefront, alu ALU) {
 	co := wf.CodeObject
 	pkt := wf.Packet
 
@@ -169,6 +170,16 @@ func (p *cuProcessor) initWfRegs(wf *Wavefront) {
 
 	SGPRPtr := 0
 	if co.EnableSgprPrivateSegmentBuffer {
+		// Per-wave scratch: (wg_flat*wg_size + first_local)*stride; ADD_TID
+		// then adds lane*stride. FirstWiFlatID is WG-local (0 for wave 0).
+		base := pkt.ScratchAddress +
+			uint64(kernels.PrivateSegmentWaveByteOffset(
+				wf.WG, wf.FirstWiFlatID, co.PrivateSegmentByteSize))
+		kernels.WritePrivateSegmentBufferDesc(
+			wf.SRegFile[SGPRPtr:SGPRPtr+16],
+			base,
+			co.PrivateSegmentByteSize,
+		)
 		SGPRPtr += 16
 	}
 
@@ -195,8 +206,7 @@ func (p *cuProcessor) initWfRegs(wf *Wavefront) {
 	}
 
 	if co.EnableSgprFlatScratchInit {
-		log.Printf("EnableSgprFlatScratchInit is not supported")
-		//fmt.Printf("s%d SGPRFlatScratchInit\n", SGPRPtr/4)
+		binary.LittleEndian.PutUint64(wf.SRegFile[SGPRPtr:SGPRPtr+8], 0)
 		SGPRPtr += 8
 	}
 
@@ -251,13 +261,21 @@ func (p *cuProcessor) initWfRegs(wf *Wavefront) {
 		// SGPRPtr += 4
 	}
 
+	// gfx90c spill kernels may still read the next SGPR as a scratch wave
+	// offset even when the KD wave_byte_offset bit is cleared (V5 extern "C"
+	// flag noise). Zero it so prologue `s_add scratch, sN` is a no-op for
+	// single-wave work-groups.
+	if co.EnableSgprPrivateSegmentBuffer {
+		binary.LittleEndian.PutUint32(wf.SRegFile[SGPRPtr:SGPRPtr+4], 0)
+	}
+
 	if co.EnableSgprWorkGroupInfo() {
 		log.Printf("EnableSgprPrivateSegmentSize is not supported")
 		// SGPRPtr += 4
 	}
 
 	if co.EnableSgprPrivateSegmentWaveByteOffset() {
-		log.Printf("EnableSgprPrivateSegentWaveByteOffset is not supported")
+		log.Printf("EnableSgprPrivateSegmentWaveByteOffset is not supported")
 		// SGPRPtr += 4
 	}
 
@@ -268,20 +286,22 @@ func (p *cuProcessor) initWfRegs(wf *Wavefront) {
 		x = i % (wf.WG.SizeX * wf.WG.SizeY) % wf.WG.SizeX
 		laneID := i - wf.FirstWiFlatID
 
-		if co.Version == insts.CodeObjectV5 {
-			// For V5 code objects (gfx942/CDNA3), pack work-item IDs into v0
-			// as: v0 = (z << 20) | (y << 10) | x
+		if UsesPackedWorkItemIDs(co, alu) {
+			// For CDNA3 V5 code objects, pack work-item IDs into v0.
 			packed := uint32(x) | (uint32(y) << 10) | (uint32(z) << 20)
 			wf.WriteReg(insts.VReg(0), 1, laneID, insts.Uint32ToBytes(packed))
 		} else {
-			// For V2/V3 code objects (GCN3), use separate registers
+			// GCN3/GCN4/GCN5: separate v0=x, v1=y, v2=z (required for 64-bit
+			// address math that sign-extends v[0:1]).
 			wf.WriteReg(insts.VReg(0), 1, laneID, insts.Uint32ToBytes(uint32(x)))
 
-			if co.EnableVgprWorkItemID() > 0 {
+			// V5 extern "C" kernels may have unreliable rsrc2 enable bits;
+			// always initialize y/z VGPRs so v[0:1] sign extension is safe.
+			if co.Version == insts.CodeObjectV5 || co.EnableVgprWorkItemID() > 0 {
 				wf.WriteReg(insts.VReg(1), 1, laneID, insts.Uint32ToBytes(uint32(y)))
 			}
 
-			if co.EnableVgprWorkItemID() > 1 {
+			if co.Version == insts.CodeObjectV5 || co.EnableVgprWorkItemID() > 1 {
 				wf.WriteReg(insts.VReg(2), 1, laneID, insts.Uint32ToBytes(uint32(z)))
 			}
 		}
