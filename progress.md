@@ -2,7 +2,7 @@
 
 **Goal:** Run modern ROCm kernels and calibrate cycle-accurate timing against the host Renoir APU (Ryzen 7 4700U, gfx90c).
 
-**Last updated:** 2026-07-29
+**Last updated:** 2026-07-30
 
 ## Status
 
@@ -14,9 +14,9 @@
 | gfx90c HSACO for ISCA-10 benches | Done (all 10) |
 | MUBUF + private-segment scratch (VGPR spill) | Done |
 | DS b128, FLAT SADDR, missing SOP/VOP ops | Done |
-| Timing model `gfx90c/builder.go` | Done (knobs settled) |
-| ISCA-10 sim vs HW (gfx90c HSACO) | Done — geo mean HW/Sim ≈ **1.18×** |
-| Remaining timing gaps | Open (model, not ISA) |
+| Timing model `gfx90c/builder.go` | Done (validated preset) |
+| ISCA-10 sim vs HW (gfx90c HSACO) | Done — MARE **12.4%**, geo mean HW/Sim **0.88×** |
+| Remaining timing gaps | K-means, matrix multiplication, ReLU, NW |
 
 ## ISCA 2019 suite (2026-07-10)
 
@@ -85,6 +85,41 @@ The ~4× throttle factor is consistent (200 MHz / 1600 MHz = 8× clock ratio, pa
 
 **Conclusion: the sim implementation is stable and reproducible — all 10 sim numbers reproduce bit-for-bit across 19 days and a repo move. The 07-10 calibration at pinned 1600 MHz (geo mean HW/Sim ≈ 1.18×) remains the accuracy reference. To get a fresh HW comparison, the GPU clock must be pinned first (`echo high | sudo tee .../power_dpm_force_performance_level`), which needs root access.**
 
+## Timing-model improvement (2026-07-30)
+
+The calibration model now includes active-CU count, cold/subsequent dispatch
+costs, opcode-class VALU timing, dependency scoreboarding, pipelined/banked
+LDS timing, barrier release, correct out-of-order memory completion, and
+cache-line/write-locality costs. The hardware harness loads the exact HSACOs
+and deterministic PageRank/K-means fixtures used by the simulator.
+
+| Benchmark | Sim (µs) | HW (µs) | HW / Sim | Signed error |
+|-----------|----------|---------|----------|--------------|
+| vectoradd | 29.855 | 29.364 | 0.98× | -1.6% |
+| relu | 16.291 | 13.123 | 0.81× | -19.4% |
+| matrixmult | 50.728 | 39.107 | 0.77× | -22.9% |
+| matrixtranspose | 146.863 | 140.773 | 0.96× | -4.1% |
+| bitonicsort | 835.078 | 811.360 | 0.97× | -2.8% |
+| aes | 16.966 | 16.962 | 1.00× | -0.0% |
+| fir | 11.842 | 12.003 | 1.01× | +1.4% |
+| kmeans | 69.385 | 39.220 | 0.57× | -43.5% |
+| pagerank | 119.742 | 130.638 | 1.09× | +9.1% |
+| nw | 151.739 | 123.052 | 0.81× | -18.9% |
+
+Mean absolute relative error fell from **55.3% to 12.4%**. Eight of ten
+benchmarks are within 20%, and five are within 5%.
+
+The PageRank value includes the deterministic 750-cycle scaled reduction from
+the verified 120.211 µs run after the subsequent-launch parameter changed from
+10,000 to 7,000 cycles. All other final values were measured directly with the
+final parameter relevant to that workload.
+
+The existing pinned-clock hardware targets remain the reference. A diagnostic
+same-policy comparison showed the corrected K-means and PageRank inputs change
+warmed timing by only about 0.4% and 1.1%, respectively. A new authoritative
+hardware table still requires privileged `power_dpm=high`; the current host
+policy is `auto` at the 200 MHz state.
+
 ## Done (bring-up)
 
 ### Architecture / decode / ALU
@@ -106,14 +141,22 @@ The ~4× throttle factor is consistent (200 MHz / 1600 MHz = 8× clock ratio, pa
 
 ### Timing preset
 - `amd/samples/runner/timingconfig/gfx90c/builder.go`
-- 8 CU (4 SA × 2), 1600 MHz, L2 1 MB, banked DRAM depth 40
-- LDS 12, VALU scoreboard 8, CP tax 2000, DMA-through-L2 &lt; 64 KB
-- Knob sweeps (LDS/L1V/scoreboard) barely move FIR/transpose — remaining gaps need model work
+- 7 active CU in a 4 SA × 2 floorplan, 1600 MHz, L2 1 MB, banked DRAM depth 40
+- class-specific VALU issue/result timing and dependency scoreboarding
+- LDS latency 12, issue interval 4, 32 four-byte banks, barrier latency 16
+- cold/subsequent launch cost, per-kernel completion cost, and large-grid scaling
+- sparse cache-line, FLAT partial-write, MUBUF scratch, and wide-store locality timing
 
 ## Open (timing model)
 
-- **Fast (HW/Sim ~2.3–2.5×):** matrixtranspose, bitonicsort, fir — LDS bank conflicts / multi-launch sync under-modeled (bitonic ≈ 78 launches)
-- **Slow (HW/Sim ~0.5–0.8×):** matrixmult (spill traffic over-costly), relu / kmeans (short kernels vs banked DRAM)
+- **K-means:** simulator is 43.5% slow. Its 256 KiB strided swap input bypasses
+  L2, while globally warming that transfer makes vectoradd/ReLU about 2× too
+  fast. The next model needs reuse-sensitive residency, not a size-only knob.
+- **Matrix multiplication:** simulator is 22.9% slow after fixing premature
+  VMEM completion. Scratch writes now avoid the FLAT RMW heuristic, but private
+  MUBUF latency/coalescing remains conservative.
+- **ReLU and NW:** simulator is 19–23% slow; avoid changing the already accurate
+  vectoradd/AES/FIR paths to fit them.
 
 ## Earlier notes (superseded by docs)
 
@@ -125,6 +168,7 @@ Session log from 2026-06-15 (V2 HSACO, VOP3C blockers, Docker images) lived here
 
 ## Next
 
-1. Model LDS bank conflicts / multi-launch overhead without over-penalizing single-launch kernels
-2. Revisit scratch / MUBUF cost for matrixmult spill path
-3. Optional: tighten short-kernel DRAM path for relu/kmeans
+1. Re-run the exact-input hardware harness with the GPU pinned to `high`.
+2. Model reuse-sensitive DMA/L2 residency for K-means without warming streaming
+   vectoradd/ReLU inputs wholesale.
+3. Revisit private-segment MUBUF service latency for matrix multiplication.
