@@ -1,0 +1,16 @@
+# gfx90c calibration HSACO manifest
+architecture=gfx90c
+image=docker.io/rocm/dev-ubuntu-24.04:7.1.1
+optimization=-O3
+compiler=HIP version: 7.1.52802-26aae437f6
+# benchmark sha256 source destination exported-symbols
+vectoradd ebfc75bc722f34db0a70d090cb70eda3d874781c817b0101b9b63288b2de8f7d amd/benchmarks/amdappsdk/vectoradd/native/vectoradd.cpp amd/benchmarks/amdappsdk/vectoradd/kernels_gfx90c.hsaco _Z15vectoradd_floatPfPKfS1_ii
+relu 9a9a2c175b24939e2408b72051eed0a9e20daea5cd7ca79a1ca83c9de2a24cde amd/benchmarks/dnn/layer_benchmarks/relu/native/relu.cpp amd/benchmarks/dnn/layer_benchmarks/relu/kernels_gfx90c.hsaco ReLUForward
+matrixmult da74530bec01cb37ecbbd7caf6a901240d63d19ee2e6623f3374f90b444035fd amd/benchmarks/amdappsdk/matrixmultiplication/native/matrixmultiplication.cpp amd/benchmarks/amdappsdk/matrixmultiplication/kernels_gfx90c.hsaco mmmKernel_local
+matrixtranspose 92bfddf237bee1366e54b3b8e8080eaa7921e96e68a8c61cc35d5c775a7f3855 amd/benchmarks/amdappsdk/matrixtranspose/native/matrixtranspose_hip.cpp amd/benchmarks/amdappsdk/matrixtranspose/kernels_gfx90c.hsaco matrixTranspose
+bitonicsort f0c930a048818e9b6ac9b968dda05dbbc462d39e8ca878b4d8b0a02c3b0659f0 amd/benchmarks/amdappsdk/bitonicsort/native/bitonicsort.cpp amd/benchmarks/amdappsdk/bitonicsort/kernels_gfx90c.hsaco BitonicSort
+aes 06cf9e8ccdddb698b4dfad5f63bab5f3130996d635db78c896e6e837992ef941 amd/benchmarks/heteromark/aes/native/kernels.cpp amd/benchmarks/heteromark/aes/kernels_gfx90c.hsaco Encrypt
+fir 4093e1d2d843461ea651e93353fd69d4f6424478ca86aa01a3106d1990c5fbee amd/benchmarks/heteromark/fir/native/fir.cpp amd/benchmarks/heteromark/fir/kernels_gfx90c.hsaco FIR
+kmeans b57a3d953f01a45fddf11a63eb4f9e92f8bcc1accc6b51fa0507ae43966c1b0e amd/benchmarks/heteromark/kmeans/native/kmeans.cpp amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco kmeans_kernel_swap,kmeans_kernel_compute
+pagerank d31a49e073c5dc868a03239a9e88c5533667728b4d7603af533bb97eeef8350d amd/benchmarks/heteromark/pagerank/native/pagerank.cpp amd/benchmarks/heteromark/pagerank/kernels_gfx90c.hsaco PageRankUpdateGpu
+nw 706f592346dc873937b36daebfea3bd7d0a9a94d4441658e4eeda8413fbe8df1 amd/benchmarks/rodinia/nw/native/nw.cpp amd/benchmarks/rodinia/nw/kernels_gfx90c.hsaco nw_kernel1,nw_kernel2
