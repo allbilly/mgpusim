@@ -68,6 +68,122 @@ var _ = Describe("Vector Memory Unit", func() {
 			queueing.NewBuffer[VectorMemAccessInfo]("CU.PostTransBuf", 8)
 	})
 
+	It("calculates read and write penalties from cache-line utilization", func() {
+		vecMemUnit.maxCoalescingPenalty = 16
+		vecMemUnit.maxWriteCoalescingPenalty = 32
+
+		readTxn := VectorMemAccessInfo{
+			Read: &memprotocol.ReadReq{AccessByteSize: 64},
+			laneInfo: []vectorMemAccessLaneInfo{
+				{addrOffsetInCacheLine: 0},
+				{addrOffsetInCacheLine: 4},
+			},
+		}
+		Expect(vecMemUnit.computeCoalescingPenalty(readTxn)).To(Equal(14))
+
+		writeTxn := VectorMemAccessInfo{
+			Write: &memprotocol.WriteReq{DirtyMask: make([]bool, 64)},
+		}
+		for i := 0; i < 16; i++ {
+			writeTxn.Write.DirtyMask[i] = true
+		}
+		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(24))
+	})
+
+	It("does not penalize same-word broadcasts across lanes", func() {
+		vecMemUnit.maxCoalescingPenalty = 16
+		readTxn := VectorMemAccessInfo{
+			Read: &memprotocol.ReadReq{AccessByteSize: 64},
+			laneInfo: []vectorMemAccessLaneInfo{
+				{laneID: 0, addrOffsetInCacheLine: 4},
+				{laneID: 1, addrOffsetInCacheLine: 4},
+				{laneID: 2, addrOffsetInCacheLine: 4},
+			},
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(readTxn)).To(Equal(0))
+	})
+
+	It("does not double-count a single-lane cache-line transaction", func() {
+		vecMemUnit.maxCoalescingPenalty = 16
+		readTxn := VectorMemAccessInfo{
+			Read: &memprotocol.ReadReq{AccessByteSize: 64},
+			laneInfo: []vectorMemAccessLaneInfo{
+				{laneID: 7, addrOffsetInCacheLine: 12},
+			},
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(readTxn)).To(Equal(0))
+	})
+
+	It("penalizes non-local but not adjacent write cache lines", func() {
+		vecMemUnit.maxWideWriteStridePenalty = 20
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 31
+		fullLine := func(address uint64) VectorMemAccessInfo {
+			mask := make([]bool, 64)
+			for i := range mask {
+				mask[i] = true
+			}
+			return VectorMemAccessInfo{
+				Write: &memprotocol.WriteReq{
+					Address:   address,
+					DirtyMask: mask,
+				},
+				Inst: inst,
+			}
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			fullLine(0x1000))).To(Equal(0))
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			fullLine(0x1040))).To(Equal(0))
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			fullLine(0x1800))).To(Equal(20))
+	})
+
+	It("compares aligned cache lines for write locality", func() {
+		Expect(cacheLinesAreLocal(0x1004, 0x107c, 64)).To(BeTrue())
+		Expect(cacheLinesAreLocal(0x103c, 0x1804, 64)).To(BeFalse())
+	})
+
+	It("only recognizes opcode 31 stores in vector-memory formats", func() {
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.SOP2
+		inst.Opcode = 31
+
+		Expect(isWideVectorWrite(VectorMemAccessInfo{Inst: inst})).To(BeFalse())
+	})
+
+	It("does not apply the wide-store locality cost to dword stores", func() {
+		vecMemUnit.maxWideWriteStridePenalty = 20
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.Opcode = 28
+		fullMask := make([]bool, 64)
+		for i := range fullMask {
+			fullMask[i] = true
+		}
+
+		for _, address := range []uint64{0x1000, 0x1800} {
+			txn := VectorMemAccessInfo{
+				Write: &memprotocol.WriteReq{
+					Address:   address,
+					DirtyMask: fullMask,
+				},
+				Inst: inst,
+			}
+			Expect(vecMemUnit.computeCoalescingPenalty(txn)).To(Equal(0))
+		}
+	})
+
+	It("keeps ticking while a coalescing penalty drains", func() {
+		vecMemUnit.coalescingStallRemaining = 2
+
+		Expect(vecMemUnit.insertTransactionToPipeline()).To(BeTrue())
+		Expect(vecMemUnit.coalescingStallRemaining).To(Equal(1))
+	})
+
 	It("should allow accepting wavefront", func() {
 		Expect(vecMemUnit.CanAcceptWave()).To(BeTrue())
 	})

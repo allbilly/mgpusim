@@ -802,18 +802,16 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 		cu.VRegFile[wf.SIMDID].Write(access)
 	}
 
-	if !info.Read.CanWaitForCoalesce {
+	// Coalesced responses can return out of order, so CanWaitForCoalesce (the
+	// last request generated) is not necessarily the last received. Retire
+	// vmcnt/lgkmcnt, end the inst task, and mark the data wait only once no
+	// transaction for this instruction is still in flight.
+	if !cu.hasInFlightVectorMemFor(info.Inst) {
 		wf.OutstandingVectorMemAccess--
-		if info.Inst.FormatType == insts.FLAT || info.Inst.FormatType == insts.MUBUF {
+		if info.Inst.FormatType == insts.FLAT ||
+			info.Inst.FormatType == insts.MUBUF {
 			wf.OutstandingScalarMemAccess--
 		}
-	}
-
-	// Coalesced responses can return out of order, so CanWaitForCoalesce (the
-	// last request generated) is not necessarily the last received. End the
-	// inst task and mark the data wait only once no transaction for this
-	// instruction is still in flight.
-	if !cu.hasInFlightVectorMemFor(info.Inst) {
 		cu.markInstDataReturned(info.Inst, "vmem")
 		cu.logInstTask(wf, info.Inst, true)
 	}
@@ -840,17 +838,15 @@ func (cu *ComputeUnit) handleVectorDataStoreRsp(
 	tracing.TraceReqFinalize(cu.comp, *info.Write)
 
 	wf := info.Wavefront
-	if !info.Write.CanWaitForCoalesce {
+	// Coalesced responses can return out of order; retire vmcnt/lgkmcnt, end
+	// the inst task, and mark the data wait only once no transaction for this
+	// instruction remains in flight (see handleVectorDataLoadReturn).
+	if !cu.hasInFlightVectorMemFor(info.Inst) {
 		wf.OutstandingVectorMemAccess--
-		if info.Inst.FormatType == insts.FLAT || info.Inst.FormatType == insts.MUBUF {
+		if info.Inst.FormatType == insts.FLAT ||
+			info.Inst.FormatType == insts.MUBUF {
 			wf.OutstandingScalarMemAccess--
 		}
-	}
-
-	// Coalesced responses can return out of order; end the inst task and mark
-	// the data wait only once no transaction for this instruction remains in
-	// flight (see handleVectorDataLoadReturn).
-	if !cu.hasInFlightVectorMemFor(info.Inst) {
 		cu.markInstDataReturned(info.Inst, "vmem")
 		cu.logInstTask(wf, info.Inst, true)
 	}

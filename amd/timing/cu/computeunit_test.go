@@ -373,6 +373,17 @@ var _ = Describe("ComputeUnit", func() {
 
 		It("should handle vector data load return, and the return is not "+
 			"the last one for an instruction", func() {
+			// The request generated last can return before an older sibling.
+			read.CanWaitForCoalesce = false
+			sibling := info
+			sibling.Read = &memprotocol.ReadReq{
+				MsgMeta: messaging.MsgMeta{
+					ID: timing.GetIDGenerator().Generate(),
+				},
+			}
+			cu.InFlightVectorMemAccess = append(
+				cu.InFlightVectorMemAccess, sibling)
+
 			cu.processInputFromVectorMem()
 
 			for i := 0; i < 4; i++ {
@@ -388,7 +399,7 @@ var _ = Describe("ComputeUnit", func() {
 
 			Expect(wf.OutstandingVectorMemAccess).To(Equal(1))
 			Expect(wf.OutstandingScalarMemAccess).To(Equal(1))
-			Expect(cu.InFlightVectorMemAccess).To(HaveLen(0))
+			Expect(cu.InFlightVectorMemAccess).To(HaveLen(1))
 		})
 
 		It("should handle vector data load return, and the return is the "+
@@ -458,9 +469,22 @@ var _ = Describe("ComputeUnit", func() {
 
 		It("should handle vector data store return and the return is not "+
 			"the last one from an instruction", func() {
+			// The request generated last can return before an older sibling.
+			writeReq.CanWaitForCoalesce = false
+			sibling := info
+			sibling.Write = &memprotocol.WriteReq{
+				MsgMeta: messaging.MsgMeta{
+					ID: timing.GetIDGenerator().Generate(),
+				},
+			}
+			cu.InFlightVectorMemAccess = append(
+				cu.InFlightVectorMemAccess, sibling)
+
 			madeProgress := cu.processInputFromVectorMem()
 
-			Expect(cu.InFlightVectorMemAccess).To(HaveLen(0))
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(1))
+			Expect(wf.OutstandingScalarMemAccess).To(Equal(1))
+			Expect(cu.InFlightVectorMemAccess).To(HaveLen(1))
 			Expect(madeProgress).To(BeTrue())
 		})
 

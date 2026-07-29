@@ -11,12 +11,16 @@ type LDSUnit struct {
 
 	alu emu.ALU
 
-	toRead    *wavefront.Wavefront
-	toExec    *wavefront.Wavefront
-	toWrite   *wavefront.Wavefront
-	cycleLeft int
+	toRead            *wavefront.Wavefront
+	inFlight          []ldsPipelineEntry
+	issueIntervalLeft int
 
 	isIdle bool
+}
+
+type ldsPipelineEntry struct {
+	wave       *wavefront.Wavefront
+	cyclesLeft int
 }
 
 // NewLDSUnit creates a new Scalar unit, injecting the dependency of
@@ -38,7 +42,7 @@ func (u *LDSUnit) CanAcceptWave() bool {
 
 // IsIdle checks idleness
 func (u *LDSUnit) IsIdle() bool {
-	u.isIdle = (u.toRead == nil) && (u.toWrite == nil) && (u.toExec == nil)
+	u.isIdle = u.toRead == nil && len(u.inFlight) == 0
 	return u.isIdle
 }
 
@@ -50,66 +54,83 @@ func (u *LDSUnit) AcceptWave(wave *wavefront.Wavefront) {
 // Run executes three pipeline stages that are controlled by the LDSUnit
 func (u *LDSUnit) Run() bool {
 	madeProgress := false
-	madeProgress = u.runWriteStage() || madeProgress
-	madeProgress = u.runExecStage() || madeProgress
-	madeProgress = u.runReadStage() || madeProgress
+	madeProgress = u.advancePipeline() || madeProgress
+	madeProgress = u.issue() || madeProgress
 	return madeProgress
 }
 
-func (u *LDSUnit) runReadStage() bool {
-	if u.toRead == nil {
-		return false
+func (u *LDSUnit) advancePipeline() bool {
+	madeProgress := false
+	if u.issueIntervalLeft > 0 {
+		u.issueIntervalLeft--
+		madeProgress = true
 	}
 
-	if u.toExec == nil {
-		u.toExec = u.toRead
-		u.toRead = nil
-		return true
+	remaining := u.inFlight[:0]
+	for _, entry := range u.inFlight {
+		entry.cyclesLeft--
+		madeProgress = true
+		if entry.cyclesLeft > 0 {
+			remaining = append(remaining, entry)
+			continue
+		}
+
+		u.cu.logInstTask(entry.wave, entry.wave.DynamicInst(), true)
+		u.cu.UpdatePCAndSetReady(entry.wave)
 	}
-	return false
+	u.inFlight = remaining
+	return madeProgress
 }
 
-func (u *LDSUnit) runExecStage() bool {
-	if u.toExec == nil {
+func (u *LDSUnit) issue() bool {
+	if u.toRead == nil || u.issueIntervalLeft > 0 {
 		return false
 	}
 
-	if u.toWrite != nil {
+	spec := u.cu.comp.Spec()
+	maxInFlight := spec.LDSMaxInFlight
+	if maxInFlight <= 0 {
+		maxInFlight = 1
+	}
+	if len(u.inFlight) >= maxInFlight {
 		return false
 	}
 
-	if u.cycleLeft == 0 {
-		u.alu.SetLDS(u.toExec.WG.LDS)
-		u.alu.Run(u.toExec)
-		u.cycleLeft = u.cu.comp.Spec().LDSPipelineLatency
-		return true
+	wave := u.toRead
+	conflictCycles := LDSBankConflictCycles(
+		wave.Inst(),
+		wave.EXEC(),
+		func(lane int) uint32 {
+			return uint32(wave.ReadOperand(wave.Inst().Addr, lane))
+		},
+		spec.LDSBankCount,
+		spec.LDSBankWidth,
+		spec.LDSBankConflictPenalty,
+	)
+	u.alu.SetLDS(wave.WG.LDS)
+	u.alu.Run(wave)
+
+	resultLatency := spec.LDSPipelineLatency + conflictCycles
+	if resultLatency < 1 {
+		resultLatency = 1
 	}
+	u.inFlight = append(u.inFlight, ldsPipelineEntry{
+		wave:       wave,
+		cyclesLeft: resultLatency,
+	})
 
-	u.cycleLeft--
-	if u.cycleLeft == 0 {
-		u.toWrite = u.toExec
-		u.toExec = nil
+	issueInterval := spec.LDSIssueInterval
+	if issueInterval <= 0 {
+		issueInterval = spec.LDSPipelineLatency
 	}
-	return true
-}
-
-func (u *LDSUnit) runWriteStage() bool {
-	if u.toWrite == nil {
-		return false
-	}
-
-	u.cu.logInstTask(u.toWrite, u.toWrite.DynamicInst(), true)
-
-	u.cu.UpdatePCAndSetReady(u.toWrite)
-
-	u.toWrite = nil
+	u.issueIntervalLeft = issueInterval + conflictCycles
+	u.toRead = nil
 	return true
 }
 
 // Flush clears the unit
 func (u *LDSUnit) Flush() {
 	u.toRead = nil
-	u.toExec = nil
-	u.toWrite = nil
-	u.cycleLeft = 0
+	u.inFlight = nil
+	u.issueIntervalLeft = 0
 }

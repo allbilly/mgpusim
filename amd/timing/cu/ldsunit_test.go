@@ -40,11 +40,9 @@ var _ = Describe("LDS Unit", func() {
 	})
 
 	It("should run", func() {
-		wave1 := new(wavefront.Wavefront)
 		wave2 := new(wavefront.Wavefront)
 		wave2.WG = wavefront.NewWorkGroup(nil, protocol.MapWGReq{})
 		wave2.WG.LDS = make([]byte, 0)
-		wave3 := new(wavefront.Wavefront)
 		inst := wavefront.NewInst(insts.NewInst())
 		inst.FormatType = insts.DS
 		inst.Opcode = 0
@@ -52,48 +50,55 @@ var _ = Describe("LDS Unit", func() {
 		inst.Data = insts.NewVRegOperand(2, 2, 2)
 		inst.Data1 = insts.NewVRegOperand(4, 4, 2)
 		inst.ByteSize = 4
-		wave3.SetDynamicInst(inst)
-		wave3.SetPC(0x13C)
-		wave3.InstBuffer = make([]byte, 256)
-		wave3.InstBufferStartPC = 0x100
+		wave2.SetDynamicInst(inst)
+		wave2.SetPC(0x13C)
+		wave2.InstBuffer = make([]byte, 256)
+		wave2.InstBufferStartPC = 0x100
 
-		wave3.State = wavefront.WfRunning
+		wave2.State = wavefront.WfRunning
 
-		bu.toRead = wave1
-		bu.toExec = wave2
-		bu.toWrite = wave3
+		bu.toRead = wave2
 
 		bu.Run()
 
-		// wave3 completes write stage
-		Expect(wave3.State).To(Equal(wavefront.WfReady))
-		Expect(wave3.PC()).To(Equal(uint64(0x140)))
-		Expect(wave3.InstBuffer).To(HaveLen(192))
-
-		// wave2: ALU runs, cycleLeft set to 14, stays in toExec
-		Expect(bu.toExec).To(BeIdenticalTo(wave2))
-		Expect(bu.toWrite).To(BeNil())
+		Expect(bu.toRead).To(BeNil())
+		Expect(bu.inFlight).To(HaveLen(1))
 		Expect(alu.wfExecuted).To(BeIdenticalTo(wave2))
 
-		// wave1: can't move from toRead because toExec is occupied
-		Expect(bu.toRead).To(BeIdenticalTo(wave1))
-
-		// Run 14 more cycles to drain cycleLeft for wave2
+		// Run 14 cycles to drain the default result latency.
 		for i := 0; i < 13; i++ {
 			bu.Run()
 		}
-
-		// After 13 more runs, cycleLeft should be 1, wave2 still in toExec
-		Expect(bu.toExec).To(BeIdenticalTo(wave2))
-		Expect(bu.toWrite).To(BeNil())
-
-		// 14th run: cycleLeft reaches 0, wave2 moves to toWrite
+		Expect(bu.inFlight).To(HaveLen(1))
 		bu.Run()
-		Expect(bu.toWrite).To(BeIdenticalTo(wave2))
-		Expect(bu.toExec).To(BeIdenticalTo(wave1))
-		Expect(bu.toRead).To(BeNil())
-
+		Expect(bu.inFlight).To(BeEmpty())
+		Expect(wave2.State).To(Equal(wavefront.WfReady))
+		Expect(wave2.PC()).To(Equal(uint64(0x140)))
+		Expect(wave2.InstBuffer).To(HaveLen(192))
 	})
+
+	It("should pipeline independent LDS instructions", func() {
+		spec := DefaultSpec()
+		spec.LDSIssueInterval = 4
+		spec.LDSMaxInFlight = 4
+		cu = newTestComputeUnitWithSpec("PipelinedCU", nil, spec)
+		bu = NewLDSUnit(cu, alu)
+
+		first := new(wavefront.Wavefront)
+		first.WG = wavefront.NewWorkGroup(nil, protocol.MapWGReq{})
+		first.WG.LDS = make([]byte, 0)
+		bu.toRead = first
+		bu.Run()
+
+		second := new(wavefront.Wavefront)
+		second.WG = first.WG
+		bu.toRead = second
+		for i := 0; i < 4; i++ {
+			bu.Run()
+		}
+		Expect(bu.inFlight).To(HaveLen(2))
+	})
+
 	It("should flush the LDS", func() {
 
 		wave1 := new(wavefront.Wavefront)
@@ -116,15 +121,17 @@ var _ = Describe("LDS Unit", func() {
 		wave3.State = wavefront.WfRunning
 
 		bu.toRead = wave1
-		bu.toExec = wave2
-		bu.toWrite = wave3
+		bu.inFlight = []ldsPipelineEntry{
+			{wave: wave2, cyclesLeft: 5},
+			{wave: wave3, cyclesLeft: 3},
+		}
+		bu.issueIntervalLeft = 2
 
 		bu.Flush()
 
 		Expect(bu.toRead).To(BeNil())
-		Expect(bu.toWrite).To(BeNil())
-		Expect(bu.toExec).To(BeNil())
-		Expect(bu.cycleLeft).To(Equal(0))
+		Expect(bu.inFlight).To(BeEmpty())
+		Expect(bu.issueIntervalLeft).To(Equal(0))
 
 	})
 })

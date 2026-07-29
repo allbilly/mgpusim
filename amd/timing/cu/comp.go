@@ -8,6 +8,23 @@ import (
 	"github.com/sarchlab/mgpusim/v5/amd/emu"
 )
 
+// VALUTiming describes wave-level issue intervals and result latencies for
+// major VALU instruction classes. Zero values retain the legacy latency
+// derived from NumSinglePrecisionUnits.
+type VALUTiming struct {
+	DefaultIssueInterval         int `json:"default_issue_interval"`
+	DefaultResultLatency         int `json:"default_result_latency"`
+	FMAIssueInterval             int `json:"fma_issue_interval"`
+	FMAResultLatency             int `json:"fma_result_latency"`
+	IntegerMultiplyIssueInterval int `json:"integer_multiply_issue_interval"`
+	IntegerMultiplyResultLatency int `json:"integer_multiply_result_latency"`
+	TranscendentalIssueInterval  int `json:"transcendental_issue_interval"`
+	TranscendentalResultLatency  int `json:"transcendental_result_latency"`
+	FP64IssueInterval            int `json:"fp64_issue_interval"`
+	FP64ResultLatency            int `json:"fp64_result_latency"`
+	MaxInFlight                  int `json:"max_in_flight"`
+}
+
 // Port names of the ComputeUnit. The port instances are created externally
 // (by the platform configuration or the test setup) and supplied with
 // AssignPort after Build.
@@ -78,9 +95,14 @@ type Spec struct {
 	// vector memory transactions.
 	MemPipelineBufferSize int `json:"mem_pipeline_buffer_size"`
 
-	// MaxCoalescingPenalty is the maximum coalescing penalty in cycles for
-	// poorly-coalesced read transactions. 0 disables the penalty.
-	MaxCoalescingPenalty int `json:"max_coalescing_penalty"`
+	// MaxCoalescingPenalty is the maximum low-utilization penalty for reads.
+	// MaxWriteCoalescingPenalty optionally overrides it for partial-line
+	// writes, which can require write combining or read-modify-write traffic.
+	// MaxWideWriteStridePenalty models the loss of DRAM row locality and
+	// write-combiner capacity when wide stores jump between cache lines.
+	MaxCoalescingPenalty      int `json:"max_coalescing_penalty"`
+	MaxWriteCoalescingPenalty int `json:"max_write_coalescing_penalty"`
+	MaxWideWriteStridePenalty int `json:"max_wide_write_stride_penalty"`
 
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
@@ -91,9 +113,40 @@ type Spec struct {
 	// VALU instructions stall (e.g. GCN3-class GPUs at 4 cyc/instr).
 	ScoreboardVALULatency int `json:"scoreboard_valu_latency"`
 
+	// Flat VALU timing fields keep the Spec checkpoint-compatible while
+	// separating issue throughput from dependent-result latency.
+	VALUDefaultIssueInterval         int `json:"valu_default_issue_interval"`
+	VALUDefaultResultLatency         int `json:"valu_default_result_latency"`
+	VALUFMAIssueInterval             int `json:"valu_fma_issue_interval"`
+	VALUFMAResultLatency             int `json:"valu_fma_result_latency"`
+	VALUIntegerMultiplyIssueInterval int `json:"valu_integer_multiply_issue_interval"`
+	VALUIntegerMultiplyResultLatency int `json:"valu_integer_multiply_result_latency"`
+	VALUTranscendentalIssueInterval  int `json:"valu_transcendental_issue_interval"`
+	VALUTranscendentalResultLatency  int `json:"valu_transcendental_result_latency"`
+	VALUFP64IssueInterval            int `json:"valu_fp64_issue_interval"`
+	VALUFP64ResultLatency            int `json:"valu_fp64_result_latency"`
+	VALUMaxInFlight                  int `json:"valu_max_in_flight"`
+
 	// LDSPipelineLatency is the number of cycles the LDS execution stage holds
 	// a wavefront before writeback.
 	LDSPipelineLatency int `json:"lds_pipeline_latency"`
+
+	// LDSIssueInterval controls how often the LDS unit can accept a new
+	// wavefront instruction. LDSMaxInFlight separates this throughput from
+	// dependent-result latency. Zero values preserve legacy serialization.
+	LDSIssueInterval int `json:"lds_issue_interval"`
+	LDSMaxInFlight   int `json:"lds_max_in_flight"`
+
+	// LDSBankCount and LDSBankWidth describe the physical LDS banking.
+	// LDSBankConflictPenalty is charged for each additional distinct address
+	// mapped to the busiest bank in either half-wave.
+	LDSBankCount           int `json:"lds_bank_count"`
+	LDSBankWidth           int `json:"lds_bank_width"`
+	LDSBankConflictPenalty int `json:"lds_bank_conflict_penalty"`
+
+	// BarrierLatency is the release latency after the final wavefront in a
+	// work-group reaches S_BARRIER.
+	BarrierLatency int `json:"barrier_latency"`
 
 	// InFlightVectorMemAccessLimit caps the number of outstanding vector
 	// memory transactions.
@@ -149,6 +202,38 @@ type Resources struct {
 
 	// VectorMemModules maps addresses to the ports that serve them.
 	VectorMemModules mem.AddressToPortMapper
+}
+
+// SetVALUTiming copies a timing profile into the checkpointable flat fields.
+func (s *Spec) SetVALUTiming(t VALUTiming) {
+	s.VALUDefaultIssueInterval = t.DefaultIssueInterval
+	s.VALUDefaultResultLatency = t.DefaultResultLatency
+	s.VALUFMAIssueInterval = t.FMAIssueInterval
+	s.VALUFMAResultLatency = t.FMAResultLatency
+	s.VALUIntegerMultiplyIssueInterval = t.IntegerMultiplyIssueInterval
+	s.VALUIntegerMultiplyResultLatency = t.IntegerMultiplyResultLatency
+	s.VALUTranscendentalIssueInterval = t.TranscendentalIssueInterval
+	s.VALUTranscendentalResultLatency = t.TranscendentalResultLatency
+	s.VALUFP64IssueInterval = t.FP64IssueInterval
+	s.VALUFP64ResultLatency = t.FP64ResultLatency
+	s.VALUMaxInFlight = t.MaxInFlight
+}
+
+// VALUTimingSpec reconstructs the convenient timing profile view.
+func (s Spec) VALUTimingSpec() VALUTiming {
+	return VALUTiming{
+		DefaultIssueInterval:         s.VALUDefaultIssueInterval,
+		DefaultResultLatency:         s.VALUDefaultResultLatency,
+		FMAIssueInterval:             s.VALUFMAIssueInterval,
+		FMAResultLatency:             s.VALUFMAResultLatency,
+		IntegerMultiplyIssueInterval: s.VALUIntegerMultiplyIssueInterval,
+		IntegerMultiplyResultLatency: s.VALUIntegerMultiplyResultLatency,
+		TranscendentalIssueInterval:  s.VALUTranscendentalIssueInterval,
+		TranscendentalResultLatency:  s.VALUTranscendentalResultLatency,
+		FP64IssueInterval:            s.VALUFP64IssueInterval,
+		FP64ResultLatency:            s.VALUFP64ResultLatency,
+		MaxInFlight:                  s.VALUMaxInFlight,
+	}
 }
 
 // Comp is the timing ComputeUnit component.

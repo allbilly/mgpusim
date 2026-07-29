@@ -32,11 +32,12 @@ type SchedulerImpl struct {
 
 	barrierBuffer     []*wavefront.Wavefront
 	barrierBufferSize int
+	barrierRelease    map[*wavefront.WorkGroup]int
 
 	cyclesNoProgress                  int
 	stopTickingAfterNCyclesNoProgress int
 
-	scoreboardEnabled bool
+	scoreboardEnabled     bool
 	scoreboardVALULatency int
 
 	isPaused bool
@@ -56,6 +57,7 @@ func NewScheduler(
 
 	s.barrierBufferSize = 16
 	s.barrierBuffer = make([]*wavefront.Wavefront, 0, s.barrierBufferSize)
+	s.barrierRelease = make(map[*wavefront.WorkGroup]int)
 
 	s.stopTickingAfterNCyclesNoProgress = 4
 
@@ -69,6 +71,7 @@ func (s *SchedulerImpl) Run() bool {
 		if s.scoreboardEnabled {
 			madeProgress = s.tickScoreboards() || madeProgress
 		}
+		madeProgress = s.tickBarrierRelease() || madeProgress
 		madeProgress = s.EvaluateInternalInst() || madeProgress
 		madeProgress = s.DecodeNextInst() || madeProgress
 		madeProgress = s.DoIssue() || madeProgress
@@ -84,6 +87,22 @@ func (s *SchedulerImpl) Run() bool {
 		return false
 	}
 	return true
+}
+
+func (s *SchedulerImpl) tickBarrierRelease() bool {
+	madeProgress := false
+	for wg, cycles := range s.barrierRelease {
+		cycles--
+		if cycles <= 0 {
+			delete(s.barrierRelease, wg)
+			s.passBarrier(wg)
+			madeProgress = true
+			continue
+		}
+		s.barrierRelease[wg] = cycles
+		madeProgress = true
+	}
+	return madeProgress
 }
 
 func (s *SchedulerImpl) tickScoreboards() bool {
@@ -235,9 +254,17 @@ func (s *SchedulerImpl) DoIssue() bool {
 
 				if s.scoreboardEnabled && wf.ScoreboardData != nil {
 					latency := GetScoreboardLatency(wf.DynamicInst().Inst)
-					if s.scoreboardVALULatency > 0 &&
-						wf.DynamicInst().Inst.ExeUnit == insts.ExeUnitVALU {
-						latency = s.scoreboardVALULatency
+					if wf.DynamicInst().Inst.ExeUnit == insts.ExeUnitVALU {
+						_, valuLatency := GetVALUTiming(
+							wf.DynamicInst().Inst,
+							s.cu.comp.Spec().NumSinglePrecisionUnits,
+							s.cu.comp.Spec().VALUTimingSpec(),
+						)
+						if s.cu.comp.Spec().VALUDefaultResultLatency > 0 {
+							latency = valuLatency
+						} else if s.scoreboardVALULatency > 0 {
+							latency = s.scoreboardVALULatency
+						}
 					}
 					if latency > 0 {
 						wf.ScoreboardData.(*Scoreboard).MarkBusy(
@@ -503,6 +530,11 @@ func (s *SchedulerImpl) evalSBarrier(
 	allAtBarrier := s.areAllWfInWGAtBarrier(wg)
 
 	if allAtBarrier {
+		if latency := s.cu.comp.Spec().BarrierLatency; latency > 0 {
+			s.barrierBuffer = append(s.barrierBuffer, wf)
+			s.barrierRelease[wg] = latency
+			return true, true, false
+		}
 		s.passBarrier(wg)
 		return true, true, true
 	}
@@ -535,8 +567,6 @@ func (s *SchedulerImpl) setAllWfStateToReady(
 	wg *wavefront.WorkGroup,
 ) {
 	for _, wf := range wg.Wfs {
-		s.cu.logInstTask(wf, wf.DynamicInst(), true)
-
 		if wf.State == wavefront.WfCompleted {
 			continue
 		}
@@ -617,4 +647,5 @@ func (s *SchedulerImpl) Resume() {
 func (s *SchedulerImpl) Flush() {
 	s.barrierBuffer = nil
 	s.internalExecuting = nil
+	s.barrierRelease = make(map[*wavefront.WorkGroup]int)
 }

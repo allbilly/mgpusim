@@ -41,6 +41,33 @@ var _ = Describe("Scoreboard", func() {
 			Expect(sb.VGPRBusyUntil[0]).To(Equal(0))
 			Expect(sb.SCCBusyUntil).To(Equal(0))
 		})
+
+		It("should retire sparsely tracked registers", func() {
+			inst := insts.NewInst()
+			inst.Dst = insts.NewVRegOperand(0, 7, 1)
+			sb.MarkBusy(inst, 2)
+
+			sb.Tick()
+			Expect(sb.VGPRBusyUntil[7]).To(Equal(1))
+			Expect(sb.AnyBusy()).To(BeTrue())
+
+			sb.Tick()
+			Expect(sb.VGPRBusyUntil[7]).To(Equal(0))
+			Expect(sb.AnyBusy()).To(BeFalse())
+		})
+
+		It("should index busy registers restored before the first issue", func() {
+			sb.VGPRBusyUntil[11] = 3
+			inst := insts.NewInst()
+			inst.Dst = insts.NewSRegOperand(0, 4, 1)
+			sb.MarkBusy(inst, 2)
+
+			sb.Tick()
+
+			Expect(sb.VGPRBusyUntil[11]).To(Equal(2))
+			Expect(sb.SGPRBusyUntil[4]).To(Equal(1))
+			Expect(sb.AnyBusy()).To(BeTrue())
+		})
 	})
 
 	Describe("MarkBusy", func() {

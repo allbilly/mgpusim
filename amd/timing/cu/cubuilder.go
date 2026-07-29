@@ -25,8 +25,16 @@ var defaultSpec = Spec{
 	VecMemTransPipelineWidth:     1,
 	MemPipelineBufferSize:        8,
 	MaxCoalescingPenalty:         0,
+	MaxWriteCoalescingPenalty:    0,
+	MaxWideWriteStridePenalty:    0,
 	RegisterScoreboard:           false,
 	LDSPipelineLatency:           14,
+	LDSIssueInterval:             0,
+	LDSMaxInFlight:               1,
+	LDSBankCount:                 0,
+	LDSBankWidth:                 4,
+	LDSBankConflictPenalty:       0,
+	BarrierLatency:               0,
 	InFlightVectorMemAccessLimit: 512,
 	InstBufByteSize:              256,
 }
@@ -190,8 +198,13 @@ func (b *Builder) equipSIMDUnits(cu *ComputeUnit, name string) {
 		simdUnit.NumSinglePrecisionUnit = b.spec.NumSinglePrecisionUnits
 		simdUnit.scoreboardEnabled = b.spec.RegisterScoreboard
 		if b.spec.RegisterScoreboard {
-			simdUnit.pipelineCapacity = 1
-			simdUnit.pipelineSlots = make([]*simdPipelineSlot, 0, 1)
+			capacity := b.spec.VALUMaxInFlight
+			if capacity < 1 {
+				capacity = 1
+			}
+			simdUnit.pipelineCapacity = capacity
+			simdUnit.pipelineSlots =
+				make([]*simdPipelineSlot, 0, capacity)
 		}
 		vectorDecoder.AddExecutionUnit(simdUnit)
 		cu.SIMDUnit = append(cu.SIMDUnit, simdUnit)
@@ -221,6 +234,10 @@ func (b *Builder) equipVectorMemoryUnit(cu *ComputeUnit, name string) {
 	}
 	vectorMemoryUnit := NewVectorMemoryUnit(cu, coalescer)
 	vectorMemoryUnit.maxCoalescingPenalty = b.spec.MaxCoalescingPenalty
+	vectorMemoryUnit.maxWriteCoalescingPenalty =
+		b.spec.MaxWriteCoalescingPenalty
+	vectorMemoryUnit.maxWideWriteStridePenalty =
+		b.spec.MaxWideWriteStridePenalty
 	cu.VectorMemUnit = vectorMemoryUnit
 
 	vectorMemoryUnit.postInstructionPipelineBuffer =

@@ -1,8 +1,6 @@
 package cu
 
 import (
-	"strings"
-
 	"github.com/sarchlab/akita/v5/hooking"
 	"github.com/sarchlab/akita/v5/timing"
 	"github.com/sarchlab/akita/v5/tracing"
@@ -32,8 +30,9 @@ type SIMDUnit struct {
 	execTaskID uint64
 
 	// Pipeline mode fields (used when scoreboardEnabled)
-	pipelineSlots    []*simdPipelineSlot
-	pipelineCapacity int
+	pipelineSlots     []*simdPipelineSlot
+	pipelineCapacity  int
+	issueIntervalLeft int
 
 	scoreboardEnabled bool
 
@@ -62,7 +61,8 @@ func NewSIMDUnit(
 // CanAcceptWave checks if the buffer of the read stage is occupied or not
 func (u *SIMDUnit) CanAcceptWave() bool {
 	if u.scoreboardEnabled {
-		return len(u.pipelineSlots) < u.pipelineCapacity
+		return u.issueIntervalLeft == 0 &&
+			len(u.pipelineSlots) < u.pipelineCapacity
 	}
 	return u.toExec == nil
 }
@@ -79,23 +79,25 @@ func (u *SIMDUnit) IsIdle() bool {
 
 // AcceptWave moves one wavefront into the read buffer of the branch unit
 func (u *SIMDUnit) AcceptWave(wave *wavefront.Wavefront) {
-	cycleLeft := 64 / u.NumSinglePrecisionUnit
-	if strings.Contains(wave.Inst().InstName, "f64") {
-		cycleLeft = 64 / (u.NumSinglePrecisionUnit / 2)
-	}
+	issueInterval, resultLatency := GetVALUTiming(
+		wave.Inst(),
+		u.NumSinglePrecisionUnit,
+		u.cu.comp.Spec().VALUTimingSpec(),
+	)
 
 	if u.scoreboardEnabled {
 		slot := &simdPipelineSlot{
 			wf:        wave,
-			cycleLeft: cycleLeft,
+			cycleLeft: resultLatency,
 		}
 		u.pipelineSlots = append(u.pipelineSlots, slot)
+		u.issueIntervalLeft = issueInterval
 		slot.taskID = u.logPipelineTaskStart(wave.DynamicInst())
 		return
 	}
 
 	u.toExec = wave
-	u.cycleLeft = cycleLeft
+	u.cycleLeft = resultLatency
 	u.execTaskID = u.logPipelineTaskStart(u.toExec.DynamicInst())
 }
 
@@ -108,11 +110,16 @@ func (u *SIMDUnit) Run() bool {
 }
 
 func (u *SIMDUnit) runPipelined() bool {
-	if len(u.pipelineSlots) == 0 {
-		return false
+	madeProgress := false
+	if u.issueIntervalLeft > 0 {
+		u.issueIntervalLeft--
+		madeProgress = true
 	}
 
-	madeProgress := false
+	if len(u.pipelineSlots) == 0 {
+		return madeProgress
+	}
+
 	remaining := make([]*simdPipelineSlot, 0, len(u.pipelineSlots))
 
 	for _, slot := range u.pipelineSlots {
@@ -168,6 +175,7 @@ func (u *SIMDUnit) Flush() {
 
 	u.toExec = nil
 	u.pipelineSlots = u.pipelineSlots[:0]
+	u.issueIntervalLeft = 0
 }
 
 // logPipelineTaskStart starts the per-SIMD pipeline task for the given

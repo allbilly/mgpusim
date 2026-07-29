@@ -509,6 +509,50 @@ var _ = Describe("Scheduler", func() {
 
 	})
 
+	It("should delay barrier release by the configured latency", func() {
+		spec := DefaultSpec()
+		spec.BarrierLatency = 3
+		cu = newTestComputeUnitWithSpec("BarrierCU", engine, spec)
+		scheduler = NewScheduler(
+			cu,
+			newMockWfArbitor(),
+			newMockWfArbitor(),
+		)
+
+		wg := new(wavefront.WorkGroup)
+		for i := 0; i < 2; i++ {
+			wf := wavefront.NewWavefront(kernels.NewWavefront())
+			wf.SetDynamicInst(wavefront.NewInst(insts.NewInst()))
+			wf.DynamicInst().Format = insts.FormatTable[insts.SOPP]
+			wf.DynamicInst().Opcode = 10
+			wf.State = wavefront.WfAtBarrier
+			wf.WG = wg
+			wg.Wfs = append(wg.Wfs, wf)
+			scheduler.barrierBuffer = append(scheduler.barrierBuffer, wf)
+		}
+
+		last := wg.Wfs[1]
+		last.State = wavefront.WfRunning
+		last.InFlightInsts = 1
+		scheduler.barrierBuffer = scheduler.barrierBuffer[:1]
+		scheduler.internalExecuting = []*wavefront.Wavefront{last}
+		scheduler.EvaluateInternalInst()
+
+		Expect(scheduler.barrierRelease[wg]).To(Equal(3))
+		Expect(last.State).To(Equal(wavefront.WfAtBarrier))
+		Expect(last.InFlightInsts).To(Equal(0))
+
+		scheduler.tickBarrierRelease()
+		scheduler.tickBarrierRelease()
+		Expect(last.State).To(Equal(wavefront.WfAtBarrier))
+
+		scheduler.tickBarrierRelease()
+		for _, wf := range wg.Wfs {
+			Expect(wf.State).To(Equal(wavefront.WfReady))
+			Expect(wf.InFlightInsts).To(Equal(0))
+		}
+	})
+
 	It("should flush", func() {
 		wg := new(wavefront.WorkGroup)
 		for i := 0; i < 4; i++ {

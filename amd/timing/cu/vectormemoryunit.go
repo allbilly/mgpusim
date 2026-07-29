@@ -3,6 +3,7 @@ package cu
 import (
 	"log"
 
+	"github.com/sarchlab/akita/v5/mem/memprotocol"
 	"github.com/sarchlab/akita/v5/messaging"
 	"github.com/sarchlab/akita/v5/queueing"
 	"github.com/sarchlab/akita/v5/timing"
@@ -26,8 +27,12 @@ type VectorMemoryUnit struct {
 	numTransactionInFlight  uint64
 	maxInstructionsInFlight uint64
 
-	maxCoalescingPenalty     int
-	coalescingStallRemaining int
+	maxCoalescingPenalty      int
+	maxWriteCoalescingPenalty int
+	maxWideWriteStridePenalty int
+	coalescingStallRemaining  int
+	lastWriteCacheLine        uint64
+	hasLastWriteCacheLine     bool
 
 	instructionPipeline           queueing.Pipeline[vectorMemInst]
 	postInstructionPipelineBuffer queueing.Buffer[vectorMemInst]
@@ -147,7 +152,9 @@ func (u *VectorMemoryUnit) insertTransactionToPipeline() bool {
 
 	if u.coalescingStallRemaining > 0 {
 		u.coalescingStallRemaining--
-		return false
+		// The unit changed timing state and must keep the CU ticking until the
+		// modeled serialization delay drains.
+		return true
 	}
 
 	for len(u.transactionsWaiting) > 0 {
@@ -173,21 +180,110 @@ func (u *VectorMemoryUnit) insertTransactionToPipeline() bool {
 func (u *VectorMemoryUnit) computeCoalescingPenalty(
 	txn VectorMemAccessInfo,
 ) int {
-	if txn.Read == nil {
-		return 0
+	penaltyCap := u.maxCoalescingPenalty
+	if txn.Write != nil && u.maxWriteCoalescingPenalty > 0 {
+		penaltyCap = u.maxWriteCoalescingPenalty
+	}
+	cacheLineBytes, usefulBytes := transactionByteUtilization(txn)
+	penalty := 0
+	if penaltyCap > 0 && cacheLineBytes > 0 && usefulBytes < cacheLineBytes {
+		wastedFraction := float64(cacheLineBytes-usefulBytes) /
+			float64(cacheLineBytes)
+		penalty = int(wastedFraction * float64(penaltyCap))
 	}
 
-	maxLanes := 64 / 4 // 64B cacheline / 4B elements = 16
-	usedLanes := len(txn.laneInfo)
-
-	if usedLanes >= maxLanes {
-		return 0
+	if txn.Write != nil {
+		if isWideVectorWrite(txn) {
+			penalty += u.writeStridePenalty(txn.Write, cacheLineBytes)
+		} else {
+			u.hasLastWriteCacheLine = false
+		}
 	}
-
-	wastedFraction := float64(maxLanes-usedLanes) / float64(maxLanes)
-	penalty := int(wastedFraction * float64(u.maxCoalescingPenalty))
 
 	return penalty
+}
+
+func (u *VectorMemoryUnit) writeStridePenalty(
+	req *memprotocol.WriteReq,
+	cacheLineBytes int,
+) int {
+	current := req.Address
+	penalty := 0
+	if u.maxWideWriteStridePenalty > 0 &&
+		u.hasLastWriteCacheLine &&
+		!cacheLinesAreLocal(
+			u.lastWriteCacheLine,
+			current,
+			uint64(cacheLineBytes),
+		) {
+		penalty = u.maxWideWriteStridePenalty
+	}
+	u.lastWriteCacheLine = current
+	u.hasLastWriteCacheLine = true
+	return penalty
+}
+
+func isWideVectorWrite(txn VectorMemAccessInfo) bool {
+	// FLAT/MUBUF opcode 31 is a four-dword (16-byte-per-lane) store.
+	return txn.Inst != nil &&
+		txn.Inst.Inst != nil &&
+		(txn.Inst.FormatType == insts.FLAT ||
+			txn.Inst.FormatType == insts.MUBUF) &&
+		txn.Inst.Opcode == 31
+}
+
+func cacheLinesAreLocal(previous, current, lineBytes uint64) bool {
+	if lineBytes == 0 {
+		return true
+	}
+
+	previous -= previous % lineBytes
+	current -= current % lineBytes
+	if previous == current {
+		return true
+	}
+
+	return (current > previous && current-previous == lineBytes) ||
+		(previous > current && previous-current == lineBytes)
+}
+
+func transactionByteUtilization(txn VectorMemAccessInfo) (
+	cacheLineBytes, usefulBytes int,
+) {
+	if txn.Read != nil {
+		cacheLineBytes = int(txn.Read.AccessByteSize)
+		// A one-lane request already pays for poor coalescing by creating its
+		// own cache-line transaction. Adding a utilization stall here would
+		// count the same serialization twice.
+		if len(txn.laneInfo) <= 1 {
+			return cacheLineBytes, cacheLineBytes
+		}
+		usedWords := make(map[uint64]struct{}, len(txn.laneInfo))
+		for _, lane := range txn.laneInfo {
+			usedWords[lane.addrOffsetInCacheLine/4] = struct{}{}
+		}
+		// Multiple lanes reading the same word are served by one cache-line
+		// transaction and broadcast at the vector load return path. This is
+		// not a poorly coalesced access and must not be serialized.
+		if len(txn.laneInfo) > 1 && len(usedWords) == 1 {
+			return cacheLineBytes, cacheLineBytes
+		}
+		usefulBytes = len(usedWords) * 4
+		if usefulBytes > cacheLineBytes {
+			usefulBytes = cacheLineBytes
+		}
+		return cacheLineBytes, usefulBytes
+	}
+
+	if txn.Write != nil {
+		cacheLineBytes = len(txn.Write.DirtyMask)
+		for _, dirty := range txn.Write.DirtyMask {
+			if dirty {
+				usefulBytes++
+			}
+		}
+	}
+	return cacheLineBytes, usefulBytes
 }
 
 func (u *VectorMemoryUnit) execute() (madeProgress bool) {
@@ -417,4 +513,6 @@ func (u *VectorMemoryUnit) Flush() {
 	u.numInstInFlight = 0
 	u.numTransactionInFlight = 0
 	u.coalescingStallRemaining = 0
+	u.lastWriteCacheLine = 0
+	u.hasLastWriteCacheLine = false
 }

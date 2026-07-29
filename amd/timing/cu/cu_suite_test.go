@@ -127,10 +127,18 @@ func newTestComputeUnit(
 	name string,
 	engine timing.EventScheduler,
 ) *ComputeUnit {
+	return newTestComputeUnitWithSpec(name, engine, DefaultSpec())
+}
+
+func newTestComputeUnitWithSpec(
+	name string,
+	engine timing.EventScheduler,
+	spec Spec,
+) *ComputeUnit {
 	comp := modeling.NewBuilder[Spec, State, Resources]().
 		WithEngine(engine).
 		WithFreq(1 * timing.GHz).
-		WithSpec(DefaultSpec()).
+		WithSpec(spec).
 		Build(name)
 	comp.State = State{}
 

@@ -14,6 +14,15 @@ type Scoreboard struct {
 	SCCBusyUntil  int
 	VCCBusyUntil  int
 	EXECBusyUntil int
+
+	// Runtime-only sparse indexes avoid scanning all 358 registers for every
+	// resident wavefront on every cycle. Direct array mutation remains
+	// supported for tests and checkpoint restoration through managed=false.
+	activeVGPR  []int
+	activeSGPR  []int
+	vgprTracked [256]bool
+	sgprTracked [102]bool
+	managed     bool
 }
 
 // NewScoreboard creates a new Scoreboard with all counters at zero.
@@ -23,6 +32,12 @@ func NewScoreboard() *Scoreboard {
 
 // Tick decrements all non-zero counters by 1 each cycle.
 func (s *Scoreboard) Tick() {
+	if s.managed {
+		s.tickActiveRegisters()
+		s.tickSpecialRegisters()
+		return
+	}
+
 	for i := range s.VGPRBusyUntil {
 		if s.VGPRBusyUntil[i] > 0 {
 			s.VGPRBusyUntil[i]--
@@ -35,14 +50,40 @@ func (s *Scoreboard) Tick() {
 		}
 	}
 
+	s.tickSpecialRegisters()
+}
+
+func (s *Scoreboard) tickActiveRegisters() {
+	activeVGPR := s.activeVGPR[:0]
+	for _, reg := range s.activeVGPR {
+		s.VGPRBusyUntil[reg]--
+		if s.VGPRBusyUntil[reg] > 0 {
+			activeVGPR = append(activeVGPR, reg)
+		} else {
+			s.vgprTracked[reg] = false
+		}
+	}
+	s.activeVGPR = activeVGPR
+
+	activeSGPR := s.activeSGPR[:0]
+	for _, reg := range s.activeSGPR {
+		s.SGPRBusyUntil[reg]--
+		if s.SGPRBusyUntil[reg] > 0 {
+			activeSGPR = append(activeSGPR, reg)
+		} else {
+			s.sgprTracked[reg] = false
+		}
+	}
+	s.activeSGPR = activeSGPR
+}
+
+func (s *Scoreboard) tickSpecialRegisters() {
 	if s.SCCBusyUntil > 0 {
 		s.SCCBusyUntil--
 	}
-
 	if s.VCCBusyUntil > 0 {
 		s.VCCBusyUntil--
 	}
-
 	if s.EXECBusyUntil > 0 {
 		s.EXECBusyUntil--
 	}
@@ -55,6 +96,7 @@ func (s *Scoreboard) MarkBusy(inst *insts.Inst, latency int) {
 	if latency <= 0 {
 		return
 	}
+	s.enableSparseTracking()
 
 	s.markOperandBusy(inst.Dst, latency)
 	s.markOperandBusy(inst.SDst, latency)
@@ -68,6 +110,28 @@ func (s *Scoreboard) MarkBusy(inst *insts.Inst, latency int) {
 	if inst.Format != nil && inst.FormatType == insts.VOPC {
 		s.VCCBusyUntil = max(s.VCCBusyUntil, latency)
 	}
+}
+
+// enableSparseTracking builds the runtime-only indexes once. This also
+// preserves counters restored from a checkpoint before the first new issue.
+func (s *Scoreboard) enableSparseTracking() {
+	if s.managed {
+		return
+	}
+
+	for reg, busyUntil := range s.VGPRBusyUntil {
+		if busyUntil > 0 {
+			s.vgprTracked[reg] = true
+			s.activeVGPR = append(s.activeVGPR, reg)
+		}
+	}
+	for reg, busyUntil := range s.SGPRBusyUntil {
+		if busyUntil > 0 {
+			s.sgprTracked[reg] = true
+			s.activeSGPR = append(s.activeSGPR, reg)
+		}
+	}
+	s.managed = true
 }
 
 func (s *Scoreboard) markOperandBusy(op *insts.Operand, latency int) {
@@ -84,7 +148,12 @@ func (s *Scoreboard) markOperandBusy(op *insts.Operand, latency int) {
 	if reg.IsVReg() {
 		base := reg.RegIndex()
 		for i := 0; i < regCount && base+i < 256; i++ {
-			s.VGPRBusyUntil[base+i] = max(s.VGPRBusyUntil[base+i], latency)
+			index := base + i
+			s.VGPRBusyUntil[index] = max(s.VGPRBusyUntil[index], latency)
+			if !s.vgprTracked[index] {
+				s.vgprTracked[index] = true
+				s.activeVGPR = append(s.activeVGPR, index)
+			}
 		}
 		return
 	}
@@ -92,7 +161,12 @@ func (s *Scoreboard) markOperandBusy(op *insts.Operand, latency int) {
 	if reg.IsSReg() {
 		base := reg.RegIndex()
 		for i := 0; i < regCount && base+i < 102; i++ {
-			s.SGPRBusyUntil[base+i] = max(s.SGPRBusyUntil[base+i], latency)
+			index := base + i
+			s.SGPRBusyUntil[index] = max(s.SGPRBusyUntil[index], latency)
+			if !s.sgprTracked[index] {
+				s.sgprTracked[index] = true
+				s.activeSGPR = append(s.activeSGPR, index)
+			}
 		}
 		return
 	}
@@ -168,6 +242,14 @@ func (s *Scoreboard) operandHasHazard(op *insts.Operand) bool {
 
 // AnyBusy returns true if any register counter is still > 0.
 func (s *Scoreboard) AnyBusy() bool {
+	if s.managed {
+		return len(s.activeVGPR) > 0 ||
+			len(s.activeSGPR) > 0 ||
+			s.SCCBusyUntil > 0 ||
+			s.VCCBusyUntil > 0 ||
+			s.EXECBusyUntil > 0
+	}
+
 	for _, v := range s.VGPRBusyUntil {
 		if v > 0 {
 			return true
@@ -188,6 +270,11 @@ func (s *Scoreboard) Clear() {
 	s.SCCBusyUntil = 0
 	s.VCCBusyUntil = 0
 	s.EXECBusyUntil = 0
+	s.activeVGPR = nil
+	s.activeSGPR = nil
+	s.vgprTracked = [256]bool{}
+	s.sgprTracked = [102]bool{}
+	s.managed = false
 }
 
 // GetScoreboardLatency returns the scoreboard latency for an instruction based
