@@ -205,6 +205,11 @@ func (u *VectorMemoryUnit) execute() (madeProgress bool) {
 		if !ok {
 			return false
 		}
+	case insts.MUBUF:
+		ok := u.executeMUBUFInsts(wave)
+		if !ok {
+			return false
+		}
 	default:
 		log.Panicf("running inst %s in vector memory unit is not supported",
 			insts.NewInstPrinter(nil).Print(inst))
@@ -230,6 +235,21 @@ func (u *VectorMemoryUnit) executeFlatInsts(
 		log.Panicf("Opcode %d for format FLAT is not supported.", inst.Opcode)
 	}
 
+	panic("never")
+}
+
+func (u *VectorMemoryUnit) executeMUBUFInsts(
+	wavefront *wavefront.Wavefront,
+) bool {
+	inst := wavefront.DynamicInst()
+	switch inst.Opcode {
+	case 20, 21, 22, 23:
+		return u.executeFlatLoad(wavefront)
+	case 28, 29, 30, 31:
+		return u.executeFlatStore(wavefront)
+	default:
+		log.Panicf("Opcode %d for format MUBUF is not supported.", inst.Opcode)
+	}
 	panic("never")
 }
 

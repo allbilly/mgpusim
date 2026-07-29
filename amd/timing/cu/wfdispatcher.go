@@ -3,7 +3,9 @@ package cu
 import (
 	"log"
 
+	"github.com/sarchlab/mgpusim/v5/amd/emu"
 	"github.com/sarchlab/mgpusim/v5/amd/insts"
+	"github.com/sarchlab/mgpusim/v5/amd/kernels"
 	"github.com/sarchlab/mgpusim/v5/amd/protocol"
 	"github.com/sarchlab/mgpusim/v5/amd/timing/wavefront"
 )
@@ -65,8 +67,20 @@ func (d *WfDispatcherImpl) initRegisters(wf *wavefront.Wavefront) {
 
 	SGPRPtr := 0
 	if co.EnableSgprPrivateSegmentBuffer {
-		// log.Printf("EnableSgprPrivateSegmentBuffer is not supported")
-		// fmt.Printf("s%d SGPRPrivateSegmentBuffer\n", SGPRPtr/4)
+		var desc [16]byte
+		base := pkt.ScratchAddress +
+			uint64(kernels.PrivateSegmentWaveByteOffset(
+				wf.WG.WorkGroup, wf.FirstWiFlatID, co.PrivateSegmentByteSize))
+		kernels.WritePrivateSegmentBufferDesc(
+			desc[:],
+			base,
+			co.PrivateSegmentByteSize,
+		)
+		d.cu.SRegFile.Write(RegisterAccess{
+			0, insts.SReg(SGPRPtr / 4), 4, 0, wf.SRegOffset,
+			desc[:],
+			false,
+		})
 		SGPRPtr += 16
 	}
 
@@ -105,8 +119,13 @@ func (d *WfDispatcherImpl) initRegisters(wf *wavefront.Wavefront) {
 	}
 
 	if co.EnableSgprFlatScratchInit {
-		log.Printf("EnableSgprFlatScratchInit is not supported")
-		// fmt.Printf("s%d SGPRFlatScratchInit\n", SGPRPtr/4)
+		// No private scratch for GCN5-class kernels in this model; zero init
+		// matches a disabled flat scratch segment.
+		d.cu.SRegFile.Write(RegisterAccess{
+			0, insts.SReg(SGPRPtr / 4), 2, 0, wf.SRegOffset,
+			insts.Uint64ToBytes(0),
+			false,
+		})
 		SGPRPtr += 8
 	}
 
@@ -200,13 +219,23 @@ func (d *WfDispatcherImpl) initRegisters(wf *wavefront.Wavefront) {
 		// SGPRPtr += 4
 	}
 
+	// Zero the next SGPR when private-segment buffer is present so gfx90c
+	// spill prologues that add an uninitialized wave offset stay correct.
+	if co.EnableSgprPrivateSegmentBuffer {
+		d.cu.SRegFile.Write(RegisterAccess{
+			0, insts.SReg(SGPRPtr / 4), 1, 0, wf.SRegOffset,
+			insts.Uint32ToBytes(0),
+			false,
+		})
+	}
+
 	if co.EnableSgprWorkGroupInfo() {
 		log.Printf("EnableSgprPrivateSegmentSize is not supported")
 		// SGPRPtr += 4
 	}
 
 	if co.EnableSgprPrivateSegmentWaveByteOffset() {
-		log.Printf("EnableSgprPrivateSegentWaveByteOffset is not supported")
+		log.Printf("EnableSgprPrivateSegmentWaveByteOffset is not supported")
 		// SGPRPtr += 4
 	}
 
@@ -217,21 +246,35 @@ func (d *WfDispatcherImpl) initRegisters(wf *wavefront.Wavefront) {
 		x = i % (wf.WG.SizeX * wf.WG.SizeY) % wf.WG.SizeX
 		laneID := i - wf.FirstWiFlatID
 
-		if co.Version == insts.CodeObjectV5 {
-			// For V5 code objects (gfx942/CDNA3), the work-item IDs are
-			// packed into v0 as v0 = (z << 20) | (y << 10) | x. This mirrors
-			// the functional emulator (amd/emu/computeunit.go). Without this,
-			// gfx942 kernels read threadIdx.y/z as 0, breaking every kernel
-			// that uses a 2D/3D workgroup.
+		if emu.UsesPackedWorkItemIDs(co, d.cu.comp.Resources().ALU) {
+			// CDNA3 V5 code objects pack work-item IDs into v0.
 			packed := uint32(x) | (uint32(y) << 10) | (uint32(z) << 20)
 			d.cu.VRegFile[wf.SIMDID].Write(RegisterAccess{
 				0, insts.VReg(0), 1, laneID, wf.VRegOffset,
 				insts.Uint32ToBytes(packed),
 				false,
 			})
+		} else if co.Version == insts.CodeObjectV5 || co.EnableVgprWorkItemID() > 0 {
+			// GCN4/GCN5 / GCN3 V5 kernels: separate v0/v1/v2 (64-bit address math).
+			d.cu.VRegFile[wf.SIMDID].Write(RegisterAccess{
+				0, insts.VReg(0), 1, laneID, wf.VRegOffset,
+				insts.Uint32ToBytes(uint32(x)),
+				false,
+			})
+			d.cu.VRegFile[wf.SIMDID].Write(RegisterAccess{
+				0, insts.VReg(1), 1, laneID, wf.VRegOffset,
+				insts.Uint32ToBytes(uint32(y)),
+				false,
+			})
+			if co.EnableVgprWorkItemID() > 1 || co.Version == insts.CodeObjectV5 {
+				d.cu.VRegFile[wf.SIMDID].Write(RegisterAccess{
+					0, insts.VReg(2), 1, laneID, wf.VRegOffset,
+					insts.Uint32ToBytes(uint32(z)),
+					false,
+				})
+			}
 		} else {
-			// For V2/V3 code objects (GCN3), the work-item IDs use separate
-			// registers v0=x, v1=y, v2=z.
+			// V2/V3 code objects: v0=x only unless rsrc2 enables y/z.
 			d.cu.VRegFile[wf.SIMDID].Write(RegisterAccess{
 				0, insts.VReg(0), 1, laneID, wf.VRegOffset,
 				insts.Uint32ToBytes(uint32(x)),

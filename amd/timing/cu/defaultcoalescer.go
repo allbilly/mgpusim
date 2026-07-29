@@ -30,8 +30,9 @@ func (c defaultCoalescer) generateMemTransactions(
 func (c defaultCoalescer) mustBeAFlatLoadOrStore(
 	wf *wavefront.Wavefront,
 ) {
-	if wf.Inst().FormatType != insts.FLAT {
-		panic("must be a flat instruction")
+	ft := wf.Inst().FormatType
+	if ft != insts.FLAT && ft != insts.MUBUF {
+		panic("must be a flat or mubuf instruction")
 	}
 
 	if wf.Inst().Opcode < 16 || wf.Inst().Opcode > 31 {
@@ -237,6 +238,9 @@ func (c defaultCoalescer) readFlatAddr(
 	laneID int,
 ) uint64 {
 	inst := wf.Inst()
+	if inst.FormatType == insts.MUBUF {
+		return c.readMUBUFAddr(wf, laneID)
+	}
 
 	// Handle SAddr mode.
 	// Use inst.Addr.RegCount to determine the addressing mode. The disassembler
@@ -271,6 +275,42 @@ func (c defaultCoalescer) readFlatAddr(
 	finalAddr = uint64(int64(finalAddr) + signedOffset)
 
 	return finalAddr
+}
+
+func (c defaultCoalescer) readMUBUFAddr(
+	wf *wavefront.Wavefront,
+	laneID int,
+) uint64 {
+	inst := wf.Inst()
+	idx := inst.Base.Register.RegIndex()
+	w0 := uint32(wf.ReadOperand(insts.NewSRegOperand(idx, idx, 1), 0))
+	w1 := uint32(wf.ReadOperand(insts.NewSRegOperand(idx+1, idx+1, 1), 0))
+	w3 := uint32(wf.ReadOperand(insts.NewSRegOperand(idx+3, idx+3, 1), 0))
+	base := uint64(w0) | (uint64(w1&0xffff) << 32)
+	stride := uint64((w1 >> 16) & 0x3fff)
+	addTID := (w3 & (1 << 23)) != 0
+
+	var soff uint64
+	if inst.Offset != nil {
+		switch inst.Offset.OperandType {
+		case insts.IntOperand, insts.LiteralConstant:
+			soff = uint64(uint32(inst.Offset.IntValue))
+		default:
+			soff = wf.ReadOperand(inst.Offset, 0) & 0xFFFFFFFF
+		}
+	}
+
+	addr := base + soff + uint64(inst.Offset0)
+	if addTID {
+		addr += uint64(laneID) * stride
+	}
+	if inst.Offen {
+		addr += wf.ReadOperand(inst.Addr, laneID) & 0xFFFFFFFF
+	}
+	if inst.Idxen {
+		panic("MUBUF idxen not implemented")
+	}
+	return addr
 }
 
 func (c defaultCoalescer) isInSameCacheLine(addr1, addr2 uint64) bool {

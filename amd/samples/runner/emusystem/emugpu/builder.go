@@ -129,10 +129,11 @@ func (b Builder) buildMemory(name string) *idealmemcontroller.Comp {
 func (b Builder) buildComputeUnit(
 	name string,
 ) *emu.Comp {
-	isCDNA3 := b.archType == arch.CDNA3
+	// GFX9+ (GCN5/CDNA3) share FLAT/GLOBAL SADDR rules: only 0x7F is OFF.
+	useGfx9Decode := b.archType == arch.CDNA3 || b.archType == arch.GCN5
 
 	disassembler := insts.NewDisassembler()
-	disassembler.IsCDNA3 = isCDNA3
+	disassembler.IsCDNA3 = useGfx9Decode
 
 	storageAccessor := emu.NewStorageAccessor(
 		b.storage,
@@ -142,7 +143,7 @@ func (b Builder) buildComputeUnit(
 	)
 
 	var alu emu.ALU
-	if isCDNA3 {
+	if b.archType == arch.CDNA3 {
 		alu = cdna3.NewALU(storageAccessor)
 	} else {
 		alu = gcn3.NewALU(storageAccessor)

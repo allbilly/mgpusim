@@ -1,6 +1,7 @@
 package cu
 
 import (
+	"encoding/binary"
 	"log"
 	"reflect"
 
@@ -769,10 +770,25 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 		access.Reg = laneInfo.reg
 		access.RegCount = laneInfo.regCount
 		access.LaneID = laneInfo.laneID
-		if inst.FormatType == insts.FLAT && inst.Opcode == 16 { // FLAT_LOAD_UBYTE
-			access.Data = insts.Uint32ToBytes(uint32(rsp.Data[offset]))
-		} else if inst.FormatType == insts.FLAT && inst.Opcode == 18 {
-			access.Data = insts.Uint32ToBytes(uint32(rsp.Data[offset]))
+		if inst.FormatType == insts.FLAT && (inst.Opcode == 16 || inst.Opcode == 17) {
+			// FLAT/GLOBAL load ubyte / sbyte → zero-/sign-extend to VGPR dword
+			b := int8(rsp.Data[offset])
+			if inst.Opcode == 16 {
+				access.Data = insts.Uint32ToBytes(uint32(uint8(b)))
+			} else {
+				access.Data = insts.Uint32ToBytes(uint32(int32(b)))
+			}
+		} else if inst.FormatType == insts.FLAT && (inst.Opcode == 18 || inst.Opcode == 19) {
+			// FLAT/GLOBAL load ushort / sshort
+			if offset+1 >= uint64(len(rsp.Data)) {
+				continue
+			}
+			raw := binary.LittleEndian.Uint16(rsp.Data[offset : offset+2])
+			if inst.Opcode == 18 {
+				access.Data = insts.Uint32ToBytes(uint32(raw))
+			} else {
+				access.Data = insts.Uint32ToBytes(uint32(int32(int16(raw))))
+			}
 		} else {
 			end := offset + uint64(4*laneInfo.regCount)
 			if end > uint64(len(rsp.Data)) {
@@ -788,7 +804,7 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 
 	if !info.Read.CanWaitForCoalesce {
 		wf.OutstandingVectorMemAccess--
-		if info.Inst.FormatType == insts.FLAT {
+		if info.Inst.FormatType == insts.FLAT || info.Inst.FormatType == insts.MUBUF {
 			wf.OutstandingScalarMemAccess--
 		}
 	}
@@ -826,7 +842,7 @@ func (cu *ComputeUnit) handleVectorDataStoreRsp(
 	wf := info.Wavefront
 	if !info.Write.CanWaitForCoalesce {
 		wf.OutstandingVectorMemAccess--
-		if info.Inst.FormatType == insts.FLAT {
+		if info.Inst.FormatType == insts.FLAT || info.Inst.FormatType == insts.MUBUF {
 			wf.OutstandingScalarMemAccess--
 		}
 	}

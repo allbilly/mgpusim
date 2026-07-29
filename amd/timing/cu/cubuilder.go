@@ -26,6 +26,7 @@ var defaultSpec = Spec{
 	MemPipelineBufferSize:        8,
 	MaxCoalescingPenalty:         0,
 	RegisterScoreboard:           false,
+	LDSPipelineLatency:           14,
 	InFlightVectorMemAccessLimit: 512,
 	InstBufByteSize:              256,
 }
@@ -161,6 +162,7 @@ func (b *Builder) equipScheduler(cu *ComputeUnit) {
 	issueArbitor.scoreboardEnabled = b.spec.RegisterScoreboard
 	scheduler := NewScheduler(cu, fetchArbitor, issueArbitor)
 	scheduler.scoreboardEnabled = b.spec.RegisterScoreboard
+	scheduler.scoreboardVALULatency = b.spec.ScoreboardVALULatency
 	cu.Scheduler = scheduler
 }
 

@@ -89,6 +89,15 @@ type DMAState struct{}
 type DMAResources struct {
 	// LocalDataSource maps addresses to the ports that can provide the data.
 	LocalDataSource mem.AddressToPortMapper
+
+	// DirectDRAMSource maps addresses to DRAM ports for transfers that bypass
+	// the cache hierarchy. Used with L2BypassThreshold on APU platforms where
+	// small host copies populate L2 but large copies should not.
+	DirectDRAMSource mem.AddressToPortMapper
+
+	// L2BypassThreshold is the minimum transfer size (bytes) that routes through
+	// DirectDRAMSource instead of LocalDataSource. Zero disables bypass.
+	L2BypassThreshold uint64
 }
 
 // DMAComp is a DMAEngine component. A DMAEngine is responsible for accessing
@@ -111,8 +120,9 @@ type dmaMiddleware struct {
 	// component State. It is not checkpointable.
 	processingReqs []*RequestCollection
 	pendingReqs    []messaging.Msg
-	toSendToMem    []messaging.Msg
-	toSendToCP     []messaging.Msg
+	toSendToMem     []messaging.Msg
+	toSendToMemDRAM []messaging.Msg
+	toSendToCP      []messaging.Msg
 }
 
 func (m *dmaMiddleware) toCP() messaging.Port {
@@ -123,11 +133,40 @@ func (m *dmaMiddleware) toMem() messaging.Port {
 	return m.comp.GetPortByName("ToMem")
 }
 
+func (m *dmaMiddleware) toMemDRAM() messaging.Port {
+	return m.comp.GetPortByName("ToMemDRAM")
+}
+
+func (m *dmaMiddleware) dramBypassEnabled() bool {
+	r := m.comp.Resources()
+	return r.DirectDRAMSource != nil && r.L2BypassThreshold > 0
+}
+
+func (m *dmaMiddleware) dataPathFor(
+	nbytes uint64,
+) (mem.AddressToPortMapper, messaging.Port) {
+	r := m.comp.Resources()
+	if m.dramBypassEnabled() && nbytes >= r.L2BypassThreshold {
+		return r.DirectDRAMSource, m.toMemDRAM()
+	}
+	return r.LocalDataSource, m.toMem()
+}
+
+func transferBytes(total, chunk uint64) uint64 {
+	if total > 0 {
+		return total
+	}
+	return chunk
+}
+
 func (m *dmaMiddleware) Tick() bool {
 	madeProgress := false
 
 	madeProgress = m.send(m.toCP(), &m.toSendToCP) || madeProgress
 	madeProgress = m.send(m.toMem(), &m.toSendToMem) || madeProgress
+	if m.dramBypassEnabled() {
+		madeProgress = m.send(m.toMemDRAM(), &m.toSendToMemDRAM) || madeProgress
+	}
 	madeProgress = m.parseFromMem() || madeProgress
 	madeProgress = m.parseFromCP() || madeProgress
 
@@ -153,7 +192,16 @@ func (m *dmaMiddleware) send(
 }
 
 func (m *dmaMiddleware) parseFromMem() bool {
-	req := m.toMem().RetrieveIncoming()
+	madeProgress := false
+	madeProgress = m.parseFromMemPort(m.toMem()) || madeProgress
+	if m.dramBypassEnabled() {
+		madeProgress = m.parseFromMemPort(m.toMemDRAM()) || madeProgress
+	}
+	return madeProgress
+}
+
+func (m *dmaMiddleware) parseFromMemPort(port messaging.Port) bool {
+	req := port.RetrieveIncoming()
 	if req == nil {
 		return false
 	}
@@ -339,6 +387,8 @@ func (m *dmaMiddleware) parseMemCopyH2D(
 	rqC *RequestCollection,
 ) {
 	spec := m.comp.Spec()
+	mapper, memPort := m.dataPathFor(
+		transferBytes(req.TotalTransferBytes, uint64(len(req.SrcBuffer))))
 	offset := uint64(0)
 	lengthLeft := uint64(len(req.SrcBuffer))
 	addr := req.DstAddress
@@ -353,17 +403,21 @@ func (m *dmaMiddleware) parseMemCopyH2D(
 			length = lengthInUnit
 		}
 
-		module := m.comp.Resources().LocalDataSource.Find(addr)
+		module := mapper.Find(addr)
 		reqToBottom := memprotocol.WriteReq{
 			MsgMeta: messaging.MsgMeta{
 				ID:  timing.GetIDGenerator().Generate(),
-				Src: m.toMem().AsRemote(),
+				Src: memPort.AsRemote(),
 				Dst: module,
 			},
 			Address: addr,
 			Data:    req.SrcBuffer[offset : offset+length],
 		}
-		m.toSendToMem = append(m.toSendToMem, reqToBottom)
+		if memPort == m.toMemDRAM() {
+			m.toSendToMemDRAM = append(m.toSendToMemDRAM, reqToBottom)
+		} else {
+			m.toSendToMem = append(m.toSendToMem, reqToBottom)
+		}
 		m.pendingReqs = append(m.pendingReqs, reqToBottom)
 		rqC.appendSubordinateID(reqToBottom.Meta().ID)
 
@@ -381,6 +435,8 @@ func (m *dmaMiddleware) parseMemCopyD2H(
 	rqC *RequestCollection,
 ) {
 	spec := m.comp.Spec()
+	mapper, memPort := m.dataPathFor(
+		transferBytes(req.TotalTransferBytes, uint64(len(req.DstBuffer))))
 	offset := uint64(0)
 	lengthLeft := uint64(len(req.DstBuffer))
 	addr := req.SrcAddress
@@ -395,17 +451,21 @@ func (m *dmaMiddleware) parseMemCopyD2H(
 			length = lengthInUnit
 		}
 
-		module := m.comp.Resources().LocalDataSource.Find(addr)
+		module := mapper.Find(addr)
 		reqToBottom := memprotocol.ReadReq{
 			MsgMeta: messaging.MsgMeta{
 				ID:  timing.GetIDGenerator().Generate(),
-				Src: m.toMem().AsRemote(),
+				Src: memPort.AsRemote(),
 				Dst: module,
 			},
 			Address:        addr,
 			AccessByteSize: length,
 		}
-		m.toSendToMem = append(m.toSendToMem, reqToBottom)
+		if memPort == m.toMemDRAM() {
+			m.toSendToMemDRAM = append(m.toSendToMemDRAM, reqToBottom)
+		} else {
+			m.toSendToMem = append(m.toSendToMem, reqToBottom)
+		}
 		m.pendingReqs = append(m.pendingReqs, reqToBottom)
 		rqC.appendSubordinateID(reqToBottom.Meta().ID)
 
@@ -487,6 +547,7 @@ func (b DMAEngineBuilder) Build(name string) *DMAComp {
 
 	comp.DeclarePort("ToCP")
 	comp.DeclarePort("ToMem", memprotocol.Requester)
+	comp.DeclarePort("ToMemDRAM", memprotocol.Requester)
 
 	b.registrar.RegisterComponent(comp)
 

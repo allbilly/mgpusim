@@ -16,6 +16,7 @@ func main() {
 	runner := new(runner.Runner).Init()
 
 	benchmark := vectoradd.NewBenchmark(runner.Driver())
+	benchmark.Arch = runner.ArchType
 	benchmark.Width = uint32(*widthFlag)
 	benchmark.Height = uint32(*heightFlag)
 

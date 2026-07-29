@@ -37,6 +37,7 @@ type SchedulerImpl struct {
 	stopTickingAfterNCyclesNoProgress int
 
 	scoreboardEnabled bool
+	scoreboardVALULatency int
 
 	isPaused bool
 }
@@ -234,6 +235,10 @@ func (s *SchedulerImpl) DoIssue() bool {
 
 				if s.scoreboardEnabled && wf.ScoreboardData != nil {
 					latency := GetScoreboardLatency(wf.DynamicInst().Inst)
+					if s.scoreboardVALULatency > 0 &&
+						wf.DynamicInst().Inst.ExeUnit == insts.ExeUnitVALU {
+						latency = s.scoreboardVALULatency
+					}
 					if latency > 0 {
 						wf.ScoreboardData.(*Scoreboard).MarkBusy(
 							wf.DynamicInst().Inst, latency)

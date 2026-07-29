@@ -86,6 +86,15 @@ type Spec struct {
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`
 
+	// ScoreboardVALULatency overrides VALU scoreboard busy cycles when > 0.
+	// Use when writeback latency exceeds SIMD execution latency so dependent
+	// VALU instructions stall (e.g. GCN3-class GPUs at 4 cyc/instr).
+	ScoreboardVALULatency int `json:"scoreboard_valu_latency"`
+
+	// LDSPipelineLatency is the number of cycles the LDS execution stage holds
+	// a wavefront before writeback.
+	LDSPipelineLatency int `json:"lds_pipeline_latency"`
+
 	// InFlightVectorMemAccessLimit caps the number of outstanding vector
 	// memory transactions.
 	InFlightVectorMemAccessLimit int `json:"in_flight_vector_mem_access_limit"`

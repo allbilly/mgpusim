@@ -81,7 +81,7 @@ func (u *LDSUnit) runExecStage() bool {
 	if u.cycleLeft == 0 {
 		u.alu.SetLDS(u.toExec.WG.LDS)
 		u.alu.Run(u.toExec)
-		u.cycleLeft = 14
+		u.cycleLeft = u.cu.comp.Spec().LDSPipelineLatency
 		return true
 	}
 

@@ -78,6 +78,8 @@ type Builder struct {
 	memPipelineBufferSize     int
 	maxCoalescingPenalty      int
 	registerScoreboard        bool
+	scoreboardVALULatency     int
+	ldsPipelineLatency        int
 	l1AddressMapper           mem.AddressToPortMapper
 	l1TLBAddressMapper        mem.AddressToPortMapper
 	aluBuilder                func() emu.ALU
@@ -248,6 +250,19 @@ func (b Builder) WithMaxCoalescingPenalty(n int) Builder {
 // SIMD pipelining feature in each CU.
 func (b Builder) WithRegisterScoreboard(enabled bool) Builder {
 	b.registerScoreboard = enabled
+	return b
+}
+
+// WithScoreboardVALULatency sets VALU register write latency for scoreboard
+// hazard detection (0 leaves the CU default).
+func (b Builder) WithScoreboardVALULatency(latency int) Builder {
+	b.scoreboardVALULatency = latency
+	return b
+}
+
+// WithLDSPipelineLatency sets LDS instruction execution latency in cycles.
+func (b Builder) WithLDSPipelineLatency(latency int) Builder {
+	b.ldsPipelineLatency = latency
 	return b
 }
 
@@ -437,6 +452,14 @@ func (b *Builder) cuSpec() cu.Spec {
 	}
 
 	spec.RegisterScoreboard = b.registerScoreboard
+
+	if b.scoreboardVALULatency > 0 {
+		spec.ScoreboardVALULatency = b.scoreboardVALULatency
+	}
+
+	if b.ldsPipelineLatency > 0 {
+		spec.LDSPipelineLatency = b.ldsPipelineLatency
+	}
 
 	return spec
 }

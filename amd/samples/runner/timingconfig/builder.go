@@ -14,8 +14,11 @@ import (
 	"github.com/sarchlab/akita/v5/timing"
 	"github.com/sarchlab/mgpusim/v5/amd/driver"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/gpubuilder"
+	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/gfx90c"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/mi300x"
+	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/polaris10"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/r9nano"
+	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/vega64"
 )
 
 // Port buffer sizes. The driver port mirrors the emulation platform's
@@ -82,7 +85,8 @@ func (b Builder) WithMagicMemoryCopy() Builder {
 	return b
 }
 
-// WithGPUType sets the GPU type for timing simulation (r9nano or mi300x).
+// WithGPUType sets the GPU type for timing simulation (r9nano, polaris10,
+// vega64, gfx90c, or mi300x).
 func (b Builder) WithGPUType(gpuType string) Builder {
 	b.gpuType = gpuType
 	return b
@@ -135,6 +139,15 @@ func (b *Builder) adjustConfigForGPUType() {
 		// page-walk latency the hardware never pays. This sets the page size
 		// for the MMU/page table and every TLB consistently.
 		b.log2PageSize = 21 // 2 MB huge pages
+	case "vega64", "gcn5", "gfx900":
+		b.numCUPerSA = vega64.NumCUPerShaderArray
+		b.numSAPerGPU = vega64.NumShaderArray
+	case "polaris10", "gcn4", "gfx804":
+		b.numCUPerSA = polaris10.NumCUPerShaderArray
+		b.numSAPerGPU = polaris10.NumShaderArray
+	case "gfx90c":
+		b.numCUPerSA = gfx90c.NumCUPerShaderArray
+		b.numSAPerGPU = gfx90c.NumShaderArray
 	default:
 		// Keep defaults for r9nano
 	}
@@ -216,6 +229,27 @@ func (b *Builder) createGPUBuilder(
 	switch b.gpuType {
 	case "mi300x":
 		return mi300x.MakeBuilder().
+			WithSimulation(b.simulation).
+			WithMMU(mmuComponent).
+			WithLog2PageSize(b.log2PageSize).
+			WithGlobalStorage(b.globalStorage).
+			WithDriverPort(driverPort)
+	case "vega64", "gcn5", "gfx900":
+		return vega64.MakeBuilder().
+			WithSimulation(b.simulation).
+			WithMMU(mmuComponent).
+			WithLog2PageSize(b.log2PageSize).
+			WithGlobalStorage(b.globalStorage).
+			WithDriverPort(driverPort)
+	case "polaris10", "gcn4", "gfx804":
+		return polaris10.MakeBuilder().
+			WithSimulation(b.simulation).
+			WithMMU(mmuComponent).
+			WithLog2PageSize(b.log2PageSize).
+			WithGlobalStorage(b.globalStorage).
+			WithDriverPort(driverPort)
+	case "gfx90c":
+		return gfx90c.MakeBuilder().
 			WithSimulation(b.simulation).
 			WithMMU(mmuComponent).
 			WithLog2PageSize(b.log2PageSize).

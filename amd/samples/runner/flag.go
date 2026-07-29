@@ -14,9 +14,10 @@ var maxInstCount = flag.Uint64("max-inst", 0,
 var parallelFlag = flag.Bool("parallel", false,
 	"Run the simulation in parallel.")
 var isaDebug = flag.Bool("debug-isa", false, "Generate the ISA debugging file.")
-var archFlag = flag.String("arch", "gcn3", "GPU architecture: gcn3 or cdna3.")
+var archFlag = flag.String("arch", "gcn3",
+	"GPU architecture: gcn3, gcn4, gcn5, or cdna3.")
 var gpuTypeFlag = flag.String("gpu", "r9nano",
-	"GPU model for timing simulation: r9nano or mi300x.")
+	"GPU model for timing simulation: r9nano, polaris10, vega64, gfx90c, or mi300x.")
 
 var verifyFlag = flag.Bool("verify", false, "Verify the emulation result.")
 var memTracing = flag.Bool("trace-mem", false, "Generate memory trace")
@@ -120,6 +121,14 @@ func (r *Runner) parseSimulationFlags() {
 
 	r.ArchType = parseArchFlag()
 	r.GPUType = parseGPUTypeFlag()
+	if r.Timing && r.GPUType == "r9nano" {
+		switch r.ArchType {
+		case arch.GCN4:
+			r.GPUType = "polaris10"
+		case arch.GCN5:
+			r.GPUType = "vega64"
+		}
+	}
 }
 
 func (r *Runner) parseGPUFlag() {
@@ -161,11 +170,23 @@ func parseArchFlag() arch.Type {
 	switch strings.ToLower(*archFlag) {
 	case "cdna3", "gfx942":
 		return arch.CDNA3
+	case "gcn4", "gfx804", "gfx805", "polaris", "rx480":
+		return arch.GCN4
+	case "gcn5", "gfx900", "gfx90c", "vega":
+		return arch.GCN5
 	default:
 		return arch.GCN3
 	}
 }
 
 func parseGPUTypeFlag() string {
-	return strings.ToLower(*gpuTypeFlag)
+	gpu := strings.ToLower(*gpuTypeFlag)
+	switch gpu {
+	case "gcn4", "gfx804", "polaris", "rx480":
+		return "polaris10"
+	case "gcn5", "gfx900", "vega", "vega64":
+		return "vega64"
+	default:
+		return gpu
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/sarchlab/akita/v5/mem/cache/writeback"
 	"github.com/sarchlab/akita/v5/mem/dram"
 	"github.com/sarchlab/akita/v5/mem/idealmemcontroller"
+	"github.com/sarchlab/akita/v5/mem/simplebankedmemory"
 	"github.com/sarchlab/akita/v5/mem/vm/mmu"
 	"github.com/sarchlab/akita/v5/mem/vm/tlb"
 	"github.com/sarchlab/akita/v5/messaging"
@@ -16,6 +17,7 @@ import (
 	"github.com/sarchlab/akita/v5/noc/directconnection"
 	"github.com/sarchlab/akita/v5/simulation"
 	"github.com/sarchlab/akita/v5/timing"
+	"github.com/sarchlab/mgpusim/v5/amd/emu"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/gpubuilder"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/shaderarray"
 	"github.com/sarchlab/mgpusim/v5/amd/timing/cp"
@@ -31,11 +33,24 @@ const (
 	dmaToCPBufSize     = 4096
 	dmaToMemBufSize    = 64
 	rdmaPortBufSize    = 128
-	memCtrlPortBufSize = 16
-	l2TLBPortBufSize   = 1024
-	ctrlPortBufSize    = 1
-	l2CachePortBufSize = 32 // v4 writeback: 2 * NumReqPerCycle(16)
+	memCtrlPortBufSize      = 16
+	detailedDRAMPortBufSize = 1024 // v4 dram: WithTopPortBufferSize(1024)
+	l2TLBPortBufSize        = 1024
+	ctrlPortBufSize         = 1
+	l2CachePortBufSize      = 32 // v4 writeback: 2 * NumReqPerCycle(16)
 )
+
+// dramBackendKind selects the memory controller implementation.
+type dramBackendKind int
+
+const (
+	dramIdeal dramBackendKind = iota
+	dramDetailed
+	dramBanked
+)
+
+// unsetCPInt means a CP timing field was not overridden by the platform.
+const unsetCPInt = -1
 
 // Builder builds a hardware platform for timing simulation.
 type Builder struct {
@@ -53,6 +68,29 @@ type Builder struct {
 	log2MemoryBankInterleavingSize uint64
 	memAddrOffset                  uint64
 	dramSize                       uint64
+	memoryLatency                  int
+	memoryWidth                    int
+	l2BankLatency                  int
+	l1vCacheSize                   uint64
+	l1vBankLatency                 int
+	dramBackend                    dramBackendKind
+	dramMemFreq                    timing.Freq
+	dramNumInternalBanks           int
+	dramBankPipelineWidth          int
+	dramBankPipelineDepth          int
+	dramStageLatency               int
+	cpAlg                          string
+	cpNumDies                      int
+	cpWavefrontDispatchCycles      int
+	cpConstantKernelOverhead       int
+	registerScoreboard             bool
+	scoreboardVALULatency          int
+	ldsPipelineLatency             int
+	numSinglePrecisionUnits      int
+	dmaThroughL2                   bool
+	dmaThroughL2MaxBytes           uint64
+	aluBuilder                     func() emu.ALU
+	decoderBuilder                 func() emu.Decoder
 	globalStorage                  *mem.Storage
 	mmu                            *mmu.Comp
 	rdmaAddressMapper              mem.AddressToPortMapper
@@ -70,7 +108,8 @@ type Builder struct {
 	l2ToDramConnection *directconnection.Comp
 	l1AddressMapper    *mem.InterleavedAddressPortMapper
 	l1TLBAddressMapper *mem.SinglePortMapper
-	dmaLocalDataSource *mem.InterleavedAddressPortMapper
+	dmaLocalDataSource     *mem.InterleavedAddressPortMapper
+	dmaDirectDRAMSource    *mem.InterleavedAddressPortMapper
 }
 
 // MakeBuilder creates a new builder.
@@ -86,6 +125,7 @@ func MakeBuilder() Builder {
 		log2MemoryBankInterleavingSize: 7,
 		memAddrOffset:                  0,
 		dramSize:                       4 * mem.GB,
+		cpConstantKernelOverhead:       unsetCPInt,
 	}
 }
 
@@ -160,6 +200,183 @@ func (b Builder) WithNumMemoryBank(numMemoryBank int) Builder {
 func (b Builder) WithDramSize(size uint64) Builder {
 	b.dramSize = size
 	return b
+}
+
+// WithMemoryLatency sets fixed DRAM latency in GPU cycles for the ideal memory
+// controller. Zero keeps the default (100 cycles).
+func (b Builder) WithMemoryLatency(latency int) Builder {
+	b.memoryLatency = latency
+	return b
+}
+
+// WithMemoryWidth sets how many memory requests the ideal controller accepts
+// per cycle. Zero keeps the default (1).
+func (b Builder) WithMemoryWidth(width int) Builder {
+	b.memoryWidth = width
+	return b
+}
+
+// WithL2BankLatency sets the L2 cache bank latency in GPU cycles. Zero keeps
+// the writeback cache default (10 cycles).
+func (b Builder) WithL2BankLatency(latency int) Builder {
+	b.l2BankLatency = latency
+	return b
+}
+
+// WithL1VCacheSize sets the L1 vector cache size per CU in bytes. Zero keeps
+// the shader-array default.
+func (b Builder) WithL1VCacheSize(size uint64) Builder {
+	b.l1vCacheSize = size
+	return b
+}
+
+// WithL1VBankLatency sets the L1 vector cache bank latency in GPU cycles.
+// Zero keeps the shader-array default (20 cycles).
+func (b Builder) WithL1VBankLatency(latency int) Builder {
+	b.l1vBankLatency = latency
+	return b
+}
+
+// WithDetailedDRAM enables the cycle-accurate DDR4 DRAM controller instead of
+// the ideal fixed-latency model. Use for APUs and other DDR-backed GPUs where
+// memory bandwidth must be modeled.
+func (b Builder) WithDetailedDRAM(enable bool) Builder {
+	if enable {
+		b.dramBackend = dramDetailed
+	}
+	return b
+}
+
+// WithBankedDRAM enables the simple banked-memory DRAM model (bandwidth-limited,
+// much faster to simulate than the cycle-accurate DRAM controller). Parameters
+// can be tuned with the WithDRAM* helpers.
+func (b Builder) WithBankedDRAM(enable bool) Builder {
+	if enable {
+		b.dramBackend = dramBanked
+	}
+	return b
+}
+
+// WithDRAMMemFreq sets the clock of the banked DRAM controllers.
+func (b Builder) WithDRAMMemFreq(freq timing.Freq) Builder {
+	b.dramMemFreq = freq
+	return b
+}
+
+// WithDRAMNumInternalBanks sets the number of banks inside each banked DRAM
+// controller.
+func (b Builder) WithDRAMNumInternalBanks(n int) Builder {
+	b.dramNumInternalBanks = n
+	return b
+}
+
+// WithDRAMBankPipelineWidth sets how many requests enter each bank pipeline per
+// cycle in the banked DRAM model.
+func (b Builder) WithDRAMBankPipelineWidth(width int) Builder {
+	b.dramBankPipelineWidth = width
+	return b
+}
+
+// WithDRAMBankPipelineDepth sets the depth of each bank pipeline in the banked
+// DRAM model.
+func (b Builder) WithDRAMBankPipelineDepth(depth int) Builder {
+	b.dramBankPipelineDepth = depth
+	return b
+}
+
+// WithDRAMStageLatency sets the per-stage latency in bank pipelines.
+func (b Builder) WithDRAMStageLatency(latency int) Builder {
+	b.dramStageLatency = latency
+	return b
+}
+
+// WithCPAlg sets the work-group dispatch algorithm ("round-robin", "greedy",
+// "partition", or "per-die").
+func (b Builder) WithCPAlg(alg string) Builder {
+	b.cpAlg = alg
+	return b
+}
+
+// WithCPNumDies sets the number of parallel dispatch domains for the per-die
+// algorithm (typically the number of shader arrays).
+func (b Builder) WithCPNumDies(n int) Builder {
+	b.cpNumDies = n
+	return b
+}
+
+// WithCPWavefrontDispatchCycles sets per-wavefront dispatch cost for per-die
+// dispatch.
+func (b Builder) WithCPWavefrontDispatchCycles(cycles int) Builder {
+	b.cpWavefrontDispatchCycles = cycles
+	return b
+}
+
+// WithCPConstantKernelOverhead sets fixed post-kernel overhead in GPU cycles.
+// The CP default is 3600 cycles; platforms that calibrate against hardware
+// kernel time typically set this to 0.
+func (b Builder) WithCPConstantKernelOverhead(overhead int) Builder {
+	b.cpConstantKernelOverhead = overhead
+	return b
+}
+
+// WithRegisterScoreboard enables register RAW hazard stalls in each CU.
+func (b Builder) WithRegisterScoreboard(enabled bool) Builder {
+	b.registerScoreboard = enabled
+	return b
+}
+
+// WithScoreboardVALULatency sets VALU scoreboard busy cycles (writeback
+// latency) when register scoreboard is enabled.
+func (b Builder) WithScoreboardVALULatency(latency int) Builder {
+	b.scoreboardVALULatency = latency
+	return b
+}
+
+// WithLDSPipelineLatency sets LDS instruction execution latency in cycles.
+func (b Builder) WithLDSPipelineLatency(latency int) Builder {
+	b.ldsPipelineLatency = latency
+	return b
+}
+
+// WithNumSinglePrecisionUnits sets FP32 execution width per SIMD (64/units
+// cycles per VALU instruction).
+func (b Builder) WithNumSinglePrecisionUnits(n int) Builder {
+	b.numSinglePrecisionUnits = n
+	return b
+}
+
+// WithDMAThroughL2 routes host DMA (H2D/D2H) through the L2 cache instead of
+// directly to DRAM. Enable for APU/unified-memory platforms where host writes
+// populate the GPU cache hierarchy before kernels run.
+func (b Builder) WithDMAThroughL2(enable bool) Builder {
+	b.dmaThroughL2 = enable
+	return b
+}
+
+// WithDMAThroughL2MaxBytes sets a per-transfer size threshold above which host
+// DMA bypasses L2 and targets DRAM directly. Requires WithDMAThroughL2(true).
+// Use on APUs so small buffers stay cache-warm while large copies do not fill
+// L2 before bandwidth-bound kernels run.
+func (b Builder) WithDMAThroughL2MaxBytes(maxBytes uint64) Builder {
+	b.dmaThroughL2MaxBytes = maxBytes
+	return b
+}
+
+// WithALUBuilder sets the ALU factory for each CU (e.g. GCN3 vs CDNA3).
+func (b Builder) WithALUBuilder(f func() emu.ALU) Builder {
+	b.aluBuilder = f
+	return b
+}
+
+// WithDecoderBuilder sets the instruction decoder factory for each CU.
+// GFX9+ (GCN5) needs IsCDNA3=true so FLAT/GLOBAL SADDR=0 is a valid scalar base.
+func (b Builder) WithDecoderBuilder(f func() emu.Decoder) Builder {
+	b.decoderBuilder = f
+	return b
+}
+
+func (b *Builder) dmaHybrid() bool {
+	return b.dmaThroughL2 && b.dmaThroughL2MaxBytes > 0
 }
 
 // WithMMU sets the MMU that can provide the ultimate address translation.
@@ -398,7 +615,14 @@ func (b *Builder) connectL1ToL2() {
 	l1ToL2Conn.PlugIn(b.rdmaEngine.GetPortByName("RDMADataInside"))
 
 	for _, l2 := range b.l2Caches {
-		l1ToL2Conn.PlugIn(l2.GetPortByName("Top"))
+		topPort := l2.GetPortByName("Top")
+		l1ToL2Conn.PlugIn(topPort)
+		if b.dmaThroughL2 {
+			// Host DMA targets the L2 so copies populate the cache hierarchy
+			// before kernels run (APU unified-memory behavior).
+			b.dmaLocalDataSource.LowModules = append(
+				b.dmaLocalDataSource.LowModules, topPort.AsRemote())
+		}
 	}
 
 	for _, sa := range b.sas {
@@ -410,6 +634,10 @@ func (b *Builder) connectL1ToL2() {
 		// The instruction path egress to L2 is the L1I address translator's
 		// bottom port (the L1I cache sits above its AT).
 		l1ToL2Conn.PlugIn(sa.L1IAT.GetPortByName("Bottom"))
+	}
+
+	if b.dmaThroughL2 {
+		l1ToL2Conn.PlugIn(b.dmaEngine.GetPortByName("ToMem"))
 	}
 }
 
@@ -426,11 +654,22 @@ func (b *Builder) connectL2AndDRAM() {
 	for _, dramComp := range b.drams {
 		topPort := dramComp.GetPortByName("Top")
 		b.l2ToDramConnection.PlugIn(topPort)
-		b.dmaLocalDataSource.LowModules = append(
-			b.dmaLocalDataSource.LowModules, topPort.AsRemote())
+		switch {
+		case b.dmaHybrid():
+			b.dmaDirectDRAMSource.LowModules = append(
+				b.dmaDirectDRAMSource.LowModules, topPort.AsRemote())
+		case !b.dmaThroughL2:
+			b.dmaLocalDataSource.LowModules = append(
+				b.dmaLocalDataSource.LowModules, topPort.AsRemote())
+		}
 	}
 
-	b.l2ToDramConnection.PlugIn(b.dmaEngine.GetPortByName("ToMem"))
+	if !b.dmaThroughL2 {
+		b.l2ToDramConnection.PlugIn(b.dmaEngine.GetPortByName("ToMem"))
+	}
+	if b.dmaHybrid() {
+		b.l2ToDramConnection.PlugIn(b.dmaEngine.GetPortByName("ToMemDRAM"))
+	}
 }
 
 func (b *Builder) connectL1TLBToL2TLB() {
@@ -462,6 +701,31 @@ func (b *Builder) buildSAs() {
 		WithL1AddressMapper(b.l1AddressMapper).
 		WithL1TLBAddressMapper(b.l1TLBAddressMapper)
 
+	if b.l1vCacheSize > 0 {
+		saBuilder = saBuilder.WithL1VCacheSize(b.l1vCacheSize)
+	}
+	if b.l1vBankLatency > 0 {
+		saBuilder = saBuilder.WithL1VBankLatency(b.l1vBankLatency)
+	}
+	if b.registerScoreboard {
+		saBuilder = saBuilder.WithRegisterScoreboard(true)
+	}
+	if b.scoreboardVALULatency > 0 {
+		saBuilder = saBuilder.WithScoreboardVALULatency(b.scoreboardVALULatency)
+	}
+	if b.ldsPipelineLatency > 0 {
+		saBuilder = saBuilder.WithLDSPipelineLatency(b.ldsPipelineLatency)
+	}
+	if b.numSinglePrecisionUnits > 0 {
+		saBuilder = saBuilder.WithNumSinglePrecisionUnits(b.numSinglePrecisionUnits)
+	}
+	if b.aluBuilder != nil {
+		saBuilder = saBuilder.WithALUBuilder(b.aluBuilder)
+	}
+	if b.decoderBuilder != nil {
+		saBuilder = saBuilder.WithDecoderBuilder(b.decoderBuilder)
+	}
+
 	for i := 0; i < b.numShaderArray; i++ {
 		saName := fmt.Sprintf("%s.SA[%d]", b.name, i)
 		sa := saBuilder.Build(saName)
@@ -480,6 +744,9 @@ func (b *Builder) buildL2Caches() {
 	spec.TotalByteSize = byteSize
 	spec.NumMSHREntry = 64
 	spec.NumReqPerCycle = 16
+	if b.l2BankLatency > 0 {
+		spec.BankLatency = b.l2BankLatency
+	}
 
 	for i := 0; i < b.numMemoryBank; i++ {
 		cacheName := fmt.Sprintf("%s.L2Cache[%d]", b.name, i)
@@ -506,18 +773,36 @@ func (b *Builder) buildL2Caches() {
 	}
 }
 
-// buildDRAMControllers builds the memory controllers. Like the v4
-// configuration, the active model is the ideal memory controller with a
-// fixed 100-cycle latency; hbmDRAMSpec provides the detailed
-// HBM timing model for experiments (v4 kept the same alternative as dead
-// code in createDramControllerBuilder).
+// buildDRAMControllers builds the memory controllers. The default is the ideal
+// memory controller with a fixed latency; WithDetailedDRAM and WithBankedDRAM
+// swap in cycle-accurate or banked DRAM models.
 func (b *Builder) buildDRAMControllers() {
 	b.dmaLocalDataSource = mem.NewInterleavedAddressPortMapper(
 		1 << b.log2MemoryBankInterleavingSize)
+	if b.dmaHybrid() {
+		b.dmaDirectDRAMSource = mem.NewInterleavedAddressPortMapper(
+			1 << b.log2MemoryBankInterleavingSize)
+	}
+
+	switch b.dramBackend {
+	case dramDetailed:
+		b.buildDetailedDRAMControllers()
+		return
+	case dramBanked:
+		b.buildBankedDRAMControllers()
+		return
+	}
 
 	spec := idealmemcontroller.DefaultSpec()
 	spec.Freq = b.freq
 	spec.Latency = 100
+	if b.memoryLatency > 0 {
+		spec.Latency = b.memoryLatency
+	}
+	spec.Width = 1
+	if b.memoryWidth > 0 {
+		spec.Width = b.memoryWidth
+	}
 
 	for i := 0; i < b.numMemoryBank; i++ {
 		dramName := fmt.Sprintf("%s.DRAM[%d]", b.name, i)
@@ -534,6 +819,140 @@ func (b *Builder) buildDRAMControllers() {
 
 		b.drams = append(b.drams, dramComp)
 	}
+}
+
+func (b *Builder) buildDetailedDRAMControllers() {
+	spec := b.ddr4DRAMSpec()
+
+	for i := 0; i < b.numMemoryBank; i++ {
+		dramName := fmt.Sprintf("%s.DRAM[%d]", b.name, i)
+		dramComp := dram.MakeBuilder().
+			WithRegistrar(b.simulation).
+			WithSpec(spec).
+			WithResources(dram.Resources{
+				Storage: b.globalStorage,
+			}).
+			Build(dramName)
+
+		b.buildPort(dramComp, "Top", detailedDRAMPortBufSize)
+		b.buildPort(dramComp, "Control", ctrlPortBufSize)
+
+		b.drams = append(b.drams, dramComp)
+	}
+}
+
+func (b *Builder) buildBankedDRAMControllers() {
+	memBankSize := b.dramSize / uint64(b.numMemoryBank)
+
+	memFreq := b.dramMemFreq
+	if memFreq == 0 {
+		memFreq = 1 * timing.GHz
+	}
+	numBanks := b.dramNumInternalBanks
+	if numBanks <= 0 {
+		numBanks = 16
+	}
+	pipelineWidth := b.dramBankPipelineWidth
+	if pipelineWidth <= 0 {
+		pipelineWidth = 1
+	}
+	pipelineDepth := b.dramBankPipelineDepth
+	if pipelineDepth <= 0 {
+		pipelineDepth = 14
+	}
+	stageLatency := b.dramStageLatency
+	if stageLatency <= 0 {
+		stageLatency = 7
+	}
+
+	for i := 0; i < b.numMemoryBank; i++ {
+		dramName := fmt.Sprintf("%s.DRAM[%d]", b.name, i)
+
+		spec := simplebankedmemory.DefaultSpec()
+		spec.Freq = memFreq
+		spec.NumBanks = numBanks
+		spec.BankPipelineWidth = pipelineWidth
+		spec.BankPipelineDepth = pipelineDepth
+		spec.StageLatency = stageLatency
+		spec.PostPipelineBufSize = 128
+		spec.BankSelectorKind = "interleaved"
+		spec.BankSelectorLog2InterleaveSize = 6
+		spec.BankAddrConvKind = "interleaving"
+		spec.BankAddrInterleavingSize = 1 << b.log2MemoryBankInterleavingSize
+		spec.BankAddrTotalNumOfElements = b.numMemoryBank
+		spec.BankAddrCurrentElementIndex = i
+		spec.Capacity = memBankSize
+
+		dramComp := simplebankedmemory.MakeBuilder().
+			WithRegistrar(b.simulation).
+			WithSpec(spec).
+			WithResources(simplebankedmemory.Resources{
+				Storage: b.globalStorage,
+			}).
+			Build(dramName)
+
+		b.buildPort(dramComp, "Top", detailedDRAMPortBufSize)
+		b.buildPort(dramComp, "Control", ctrlPortBufSize)
+
+		b.drams = append(b.drams, dramComp)
+	}
+}
+
+// ddr4DRAMSpec returns a DDR4-3200 controller spec sized for one memory
+// channel. Renoir-class APUs use dual 64-bit DDR4 channels; model each channel
+// as one DRAM controller (numMemoryBank=2).
+func (b *Builder) ddr4DRAMSpec() dram.Spec {
+	memBankSize := b.dramSize / uint64(b.numMemoryBank)
+	if b.dramSize%uint64(b.numMemoryBank) != 0 {
+		panic("GPU memory size is not a multiple of the number of memory banks")
+	}
+
+	dramCol := 1024
+	dramRow := 32768
+	dramDeviceWidth := 8
+	dramBankSize := dramCol * dramRow * dramDeviceWidth
+	dramBank := 4
+	dramBankGroup := 4
+	dramBusWidth := 64
+	dramDevicePerRank := dramBusWidth / dramDeviceWidth
+	dramRankSize := dramBankSize * dramDevicePerRank * dramBank
+	dramRank := int(memBankSize * 8 / uint64(dramRankSize))
+	if dramRank < 1 {
+		dramRank = 1
+	}
+
+	spec := dram.DDR4Spec
+	// DDR4-3200 (1600 MHz memory clock). Peak BW per channel:
+	// 1600 MHz * 64 bits * 2 (DDR) / 8 = 25.6 GB/s.
+	spec.Freq = 1600 * timing.MHz
+	spec.TCL = 22
+	spec.TCWL = 16
+	spec.TRCD = 22
+	spec.TRP = 22
+	spec.TRAS = 52
+	spec.TCCDL = 8
+	spec.TCCDS = 4
+	spec.TRTP = 12
+	spec.TWTRL = 12
+	spec.TWTRS = 4
+	spec.TWR = 24
+	spec.TRRDL = 8
+	spec.TRRDS = 6
+	spec.TFAW = 32
+	spec.BusWidth = dramBusWidth
+	spec.DeviceWidth = dramDeviceWidth
+	spec.NumChannel = 1
+	spec.NumRank = dramRank
+	spec.NumBankGroup = dramBankGroup
+	spec.NumBank = dramBank
+	spec.NumCol = dramCol
+	spec.NumRow = dramRow
+	spec.TransactionQueueSize = 64
+	spec.CommandQueueCapacity = 16
+	spec.ReadQueueSize = 32
+	spec.WriteQueueSize = 32
+
+	return spec
 }
 
 // hbmDRAMSpec returns the spec of a detailed HBM memory controller that
@@ -628,21 +1047,42 @@ func (b *Builder) buildRDMAEngine() {
 }
 
 func (b *Builder) buildDMAEngine() {
+	resources := cp.DMAResources{
+		LocalDataSource: b.dmaLocalDataSource,
+	}
+	if b.dmaHybrid() {
+		resources.DirectDRAMSource = b.dmaDirectDRAMSource
+		resources.L2BypassThreshold = b.dmaThroughL2MaxBytes
+	}
+
 	b.dmaEngine = cp.MakeDMAEngineBuilder().
 		WithRegistrar(b.simulation).
 		WithSpec(cp.DefaultDMASpec()).
-		WithResources(cp.DMAResources{
-			LocalDataSource: b.dmaLocalDataSource,
-		}).
+		WithResources(resources).
 		Build(fmt.Sprintf("%s.DMA", b.name))
 
 	b.buildPort(b.dmaEngine, "ToCP", dmaToCPBufSize)
 	b.buildPort(b.dmaEngine, "ToMem", dmaToMemBufSize)
+	if b.dmaHybrid() {
+		b.buildPort(b.dmaEngine, "ToMemDRAM", dmaToMemBufSize)
+	}
 }
 
 func (b *Builder) buildCP() {
 	spec := cp.DefaultSpec()
 	spec.Freq = b.freq
+	if b.cpAlg != "" {
+		spec.Alg = b.cpAlg
+	}
+	if b.cpNumDies > 0 {
+		spec.NumDies = b.cpNumDies
+	}
+	if b.cpWavefrontDispatchCycles > 0 {
+		spec.WavefrontDispatchCycles = b.cpWavefrontDispatchCycles
+	}
+	if b.cpConstantKernelOverhead != unsetCPInt {
+		spec.ConstantKernelOverhead = b.cpConstantKernelOverhead
+	}
 
 	b.cp = cp.MakeBuilder().
 		WithRegistrar(b.simulation).

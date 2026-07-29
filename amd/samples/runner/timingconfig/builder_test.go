@@ -53,3 +53,15 @@ func TestBuildR9NanoMultiGPUPlatform(t *testing.T) {
 func TestBuildMI300XPlatform(t *testing.T) {
 	buildPlatform(t, "mi300x", 1)
 }
+
+func TestBuildVega64Platform(t *testing.T) {
+	buildPlatform(t, "vega64", 1)
+}
+
+func TestBuildGfx90cPlatform(t *testing.T) {
+	buildPlatform(t, "gfx90c", 1)
+}
+
+func TestBuildPolaris10Platform(t *testing.T) {
+	buildPlatform(t, "polaris10", 1)
+}

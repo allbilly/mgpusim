@@ -46,6 +46,13 @@ func (a *CURegFileAccessor) ReadReg(
 		return insts.Uint32ToBytes(uint32(a.WF.EXEC()))
 	case insts.M0:
 		return insts.Uint32ToBytes(a.WF.M0)
+	case insts.FlatSratchLo:
+		return insts.Uint32ToBytes(a.WF.FlatScratchLo)
+	case insts.FlatSratchHi:
+		return insts.Uint32ToBytes(a.WF.FlatScratchHi)
+	case insts.FlatSratch:
+		return insts.Uint64ToBytes(uint64(a.WF.FlatScratchHi)<<32 |
+			uint64(a.WF.FlatScratchLo))
 	}
 
 	// Handle regular SReg and VReg via register files
@@ -129,6 +136,17 @@ func (a *CURegFileAccessor) WriteReg(
 		return
 	case insts.M0:
 		a.WF.M0 = insts.BytesToUint32(data)
+		return
+	case insts.FlatSratchLo:
+		a.WF.FlatScratchLo = insts.BytesToUint32(data)
+		return
+	case insts.FlatSratchHi:
+		a.WF.FlatScratchHi = insts.BytesToUint32(data)
+		return
+	case insts.FlatSratch:
+		v := insts.BytesToUint64(padTo8(data))
+		a.WF.FlatScratchLo = uint32(v)
+		a.WF.FlatScratchHi = uint32(v >> 32)
 		return
 	}
 

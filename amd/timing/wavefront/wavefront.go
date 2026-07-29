@@ -60,6 +60,9 @@ type Wavefront struct {
 	M0   uint32
 	scc  byte
 
+	FlatScratchLo uint32
+	FlatScratchHi uint32
+
 	RegAccessor RegFileAccessor
 
 	OutstandingScalarMemAccess int
