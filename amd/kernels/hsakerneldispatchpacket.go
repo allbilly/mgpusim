@@ -16,6 +16,8 @@ type HsaKernelDispatchPacket struct {
 	GroupSegmentSize   uint32
 	KernelObject       uint64
 	KernargAddress     uint64
-	reserved2          uint64
-	CompletionSignal   uint64
+	// ScratchAddress is the GPU VA of the private/scratch segment for this
+	// dispatch (AQL reserved2). Zero when the kernel needs no scratch.
+	ScratchAddress   uint64
+	CompletionSignal uint64
 }

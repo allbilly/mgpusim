@@ -112,6 +112,21 @@ func (d *Driver) CreateCommandQueue(c *Context) *CommandQueue {
 	return q
 }
 
+// EnqueueFlush registers a cache flush on all GPUs attached to the context.
+func (d *Driver) EnqueueFlush(queue *CommandQueue) {
+	cmd := &FlushCommand{
+		ID: timing.GetIDGenerator().Generate(),
+	}
+	d.Enqueue(queue, cmd)
+}
+
+// FlushCaches flushes GPU caches so later kernels observe in-flight writes.
+func (d *Driver) FlushCaches(ctx *Context) {
+	queue := d.CreateCommandQueue(ctx)
+	d.EnqueueFlush(queue)
+	d.DrainCommandQueue(queue)
+}
+
 // DrainCommandQueue will return when there is no command to execute
 func (d *Driver) DrainCommandQueue(q *CommandQueue) {
 	listener := q.Subscribe()

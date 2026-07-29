@@ -37,6 +37,9 @@ type MemCopyH2DReq struct {
 	messaging.MsgMeta
 	SrcBuffer  []byte
 	DstAddress uint64
+	// TotalTransferBytes is the full host copy size when the driver splits a
+	// MemCopyH2D command across pages. Zero means use len(SrcBuffer).
+	TotalTransferBytes uint64
 }
 
 // A MemCopyD2HReq is a request that asks the DMAEngine to copy memory from
@@ -45,6 +48,9 @@ type MemCopyD2HReq struct {
 	messaging.MsgMeta
 	SrcAddress uint64
 	DstBuffer  []byte
+	// TotalTransferBytes is the full device read size when the driver splits a
+	// MemCopyD2H command across pages. Zero means use len(DstBuffer).
+	TotalTransferBytes uint64
 }
 
 // ShootDownCommand requests the GPU to perform a TLB shootdown and invalidate

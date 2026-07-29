@@ -30,6 +30,8 @@ func (m *defaultMemoryCopyMiddleware) ProcessCommand(
 		return m.processMemCopyH2DCommand(cmd, queue)
 	case *MemCopyD2HCommand:
 		return m.processMemCopyD2HCommand(cmd, queue)
+	case *FlushCommand:
+		return m.processFlushCommand(cmd, queue)
 	}
 
 	return false
@@ -74,8 +76,9 @@ func (m *defaultMemoryCopyMiddleware) processMemCopyH2DCommand(
 				Src: m.driver.gpuPort().AsRemote(),
 				Dst: m.driver.GPUs[gpuID-1],
 			},
-			SrcBuffer:  rawBytes[offset : offset+sizeToCopy],
-			DstAddress: pAddr,
+			SrcBuffer:          rawBytes[offset : offset+sizeToCopy],
+			DstAddress:         pAddr,
+			TotalTransferBytes: uint64(len(rawBytes)),
 		}
 		cmd.Reqs = append(cmd.Reqs, req)
 		m.awaitingReqs = append(m.awaitingReqs, req)
@@ -129,8 +132,9 @@ func (m *defaultMemoryCopyMiddleware) processMemCopyD2HCommand(
 				Src: m.driver.gpuPort().AsRemote(),
 				Dst: m.driver.GPUs[gpuID-1],
 			},
-			SrcAddress: pAddr,
-			DstBuffer:  cmd.RawData[offset : offset+sizeToCopy],
+			SrcAddress:         pAddr,
+			DstBuffer:          cmd.RawData[offset : offset+sizeToCopy],
+			TotalTransferBytes: uint64(len(cmd.RawData)),
 		}
 		cmd.Reqs = append(cmd.Reqs, req)
 		m.awaitingReqs = append(m.awaitingReqs, req)
@@ -180,6 +184,15 @@ func memRangeOverlap(
 	}
 
 	return false
+}
+
+func (m *defaultMemoryCopyMiddleware) processFlushCommand(
+	cmd *FlushCommand,
+	queue *CommandQueue,
+) bool {
+	m.sendFlushRequest(cmd)
+	queue.IsRunning = true
+	return true
 }
 
 func (m *defaultMemoryCopyMiddleware) sendFlushRequest(
@@ -312,11 +325,14 @@ func (m *defaultMemoryCopyMiddleware) processFlushReturn(
 
 	m.driver.logTaskToGPUClear(req)
 
-	_, cmd, _ := m.driver.findCommandByReqID(req.Meta().ID)
-
+	_, cmd, cmdQueue := m.driver.findCommandByReqID(req.Meta().ID)
 	cmd.RemoveReq(req)
 
-	m.driver.logTaskToGPUClear(req)
+	if len(cmd.GetReqs()) == 0 {
+		cmdQueue.IsRunning = false
+		cmdQueue.Dequeue()
+		m.driver.logCmdComplete(cmd)
+	}
 
 	return true
 }
