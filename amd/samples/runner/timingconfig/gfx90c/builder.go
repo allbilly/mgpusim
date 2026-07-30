@@ -40,13 +40,17 @@ func MakeBuilder() r9nano.Builder {
 		WithL1VBankLatency(19). // 12 ns * 1.6 GHz ≈ 19 cyc
 		// L2: ~80 ns bank latency at 1.6 GHz (cache_latency L2 plateau).
 		WithL2BankLatency(128).
-		// Banked DDR4-3200: depth 40 → ~vectoradd matches HW (~26 µs).
+		// Banked DDR4-2666, 128-bit (2x64): host dmesg reports "RAM width
+		// 128bits DDR4", mclk max 1333 MHz = DDR4-2666. Peak BW = 42.7 GB/s.
+		// With 2 channels, 64B lines, width=1: freq = 42.7/(2*64) = 333 MHz.
+		// APU round-trip (SoC fabric + MMC + DRAM) ≈ 400 ns; at 333 MHz that
+		// is 133 cycles, so depth 12 × stage 11 = 132 cyc → 396 ns.
 		WithBankedDRAM(true).
-		WithDRAMMemFreq(1*timing.GHz).
+		WithDRAMMemFreq(333*timing.MHz).
 		WithDRAMNumInternalBanks(16).
 		WithDRAMBankPipelineWidth(1).
-		WithDRAMBankPipelineDepth(40).
-		WithDRAMStageLatency(10).
+		WithDRAMBankPipelineDepth(12).
+		WithDRAMStageLatency(11).
 		WithRegisterScoreboard(true).
 		WithVALUTiming(cu.VALUTiming{
 			DefaultIssueInterval:         4,
