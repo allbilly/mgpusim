@@ -93,6 +93,8 @@ static float elapsed_us(hipEvent_t a, hipEvent_t b) {
 
 static int warmup_iters = 0;
 static bool report_components = false;
+static int cache_array_bytes = 16 * 1024;
+static int cache_num_accesses = 131072;
 
 template <typename F>
 static float time_iters(int iters, F &&launch) {
@@ -299,6 +301,76 @@ static void bench_fir(int iters) {
   HIP_CHECK(hipFree(hist));
 }
 
+static uint64_t splitmix64_next(uint64_t &state) {
+  state += UINT64_C(0x9E3779B97F4A7C15);
+  uint64_t z = state;
+  z = (z ^ (z >> 30)) * UINT64_C(0xBF58476D1CE4E5B9);
+  z = (z ^ (z >> 27)) * UINT64_C(0x94D049BB133111EB);
+  return z ^ (z >> 31);
+}
+
+static void bench_cache_latency(int iters) {
+  ModuleKernel kernel(
+      "gpu_perf_scripts/calibration/gfx90c/build/cache_latency_gfx90c.co",
+      "pointer_chase_kernel");
+  constexpr int cacheline_bytes = 64;
+  constexpr int stride = cacheline_bytes / sizeof(uint32_t);
+  int n = std::max(cache_array_bytes / int(sizeof(uint32_t)), stride * 2);
+  int nodes = n / stride;
+  n = nodes * stride;
+
+  std::vector<uint32_t> permutation(nodes);
+  for (int i = 0; i < nodes; ++i)
+    permutation[i] = uint32_t(i);
+  uint64_t state = uint64_t(42) * UINT64_C(2654435761) +
+                   UINT64_C(0x9E3779B97F4A7C15);
+  for (int i = nodes - 1; i > 0; --i) {
+    int j = int(splitmix64_next(state) % uint64_t(i + 1));
+    std::swap(permutation[i], permutation[j]);
+  }
+
+  std::vector<uint32_t> chain(n, 0);
+  for (int i = 0; i < nodes; ++i) {
+    uint32_t node = permutation[i] * stride;
+    uint32_t next = permutation[(i + 1) % nodes] * stride;
+    chain[node] = next;
+  }
+  uint32_t start_index = permutation[0] * stride;
+  uint32_t accesses = uint32_t(std::max(cache_num_accesses, 1));
+  uint32_t expected = start_index;
+  for (uint32_t i = 0; i < accesses; ++i)
+    expected = chain[expected];
+
+  uint32_t *device_chain, *device_result;
+  HIP_CHECK(hipMalloc(&device_chain, chain.size() * sizeof(uint32_t)));
+  HIP_CHECK(hipMalloc(&device_result, sizeof(uint32_t)));
+  HIP_CHECK(hipMemcpy(device_chain, chain.data(),
+                      chain.size() * sizeof(uint32_t),
+                      hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemset(device_result, 0, sizeof(uint32_t)));
+
+  auto launch = [&] {
+    void *args[] = {&device_chain, &start_index, &accesses, &device_result};
+    kernel.launch(dim3(1), dim3(1), 0, args);
+  };
+  float us = time_iters(iters, launch);
+
+  uint32_t actual = 0;
+  HIP_CHECK(hipMemcpy(&actual, device_result, sizeof(uint32_t),
+                      hipMemcpyDeviceToHost));
+  if (actual != expected) {
+    fprintf(stderr, "cache_latency mismatch: expected %u, got %u\n", expected,
+            actual);
+    std::exit(3);
+  }
+
+  printf("cache_latency %.3f\n", us);
+  printf("cache_latency_ns_per_access %.6f\n",
+         double(us) * 1000.0 / double(accesses));
+  HIP_CHECK(hipFree(device_chain));
+  HIP_CHECK(hipFree(device_result));
+}
+
 static void bench_kmeans(int iters) {
   ModuleKernel swap_kernel(
       "amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco",
@@ -483,6 +555,10 @@ int main(int argc, char **argv) {
       only = argv[++i];
     else if (!strcmp(argv[i], "--components"))
       report_components = true;
+    else if (!strcmp(argv[i], "--array-bytes") && i + 1 < argc)
+      cache_array_bytes = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--num-accesses") && i + 1 < argc)
+      cache_num_accesses = atoi(argv[++i]);
   }
   bitonic_iters = iters;
   hipDeviceProp_t prop;
@@ -502,6 +578,7 @@ int main(int argc, char **argv) {
   run("bitonicsort", bench_bitonicsort, bitonic_iters);
   run("aes", bench_aes, iters);
   run("fir", bench_fir, iters);
+  run("cache_latency", bench_cache_latency, iters);
   run("kmeans", bench_kmeans, iters);
   run("pagerank", bench_pagerank, iters);
   run("nw", bench_nw, iters);
