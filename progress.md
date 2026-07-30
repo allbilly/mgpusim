@@ -324,6 +324,33 @@ the 4-CU bug by setting per-CU throughput ~1.75x too fast. With 7 CUs, the
 sim is now 1.75x too fast. The VALU issue interval (4 cycles) and result
 latency (4 cycles) need retuning, but this requires hardware measurements.
 
+## DRAM bandwidth fix (2026-07-31, commit 4683ba25)
+
+Host dmesg reports "RAM width 128bits DDR4" and mclk max 1333 MHz =
+DDR4-2666. Peak bandwidth = 2 × 8B × 2666 MT/s = 42.7 GB/s. The old config
+used freq=1 GHz giving 128 GB/s (3x too high). Fixed to freq=333 MHz with
+depth=12, stage=11, preserving the 400 ns APU round-trip latency while
+matching the spec bandwidth.
+
+Suite MARE: 18.6% → 17.9%. Improvements: relu 22.6%→18.8%, pagerank
+15.7%→13.5%. No regressions.
+
+## Current calibration state (after CU dispatch + DRAM fixes)
+
+| Benchmark         |     HW |    Sim |  Error |
+|-------------------|--------|--------|--------|
+| vectoradd         | 29.364 | 28.662 |  2.4%  |
+| relu              | 13.123 | 15.586 | 18.8%  |
+| matrixmult        | 39.107 | 45.141 | 15.4%  |
+| matrixtranspose   |140.773 |116.230 | 17.4%  |
+| bitonicsort       |811.360 |771.773 |  4.9%  |
+| aes               | 16.962 | 16.997 |  0.2%  |
+| fir               | 12.003 |  8.338 | 30.5%  |
+| kmeans            | 39.220 | 59.096 | 50.7%  |
+| pagerank          |130.638 |112.948 | 13.5%  |
+| nw                |123.052 |153.630 | 24.8%  |
+| **MARE**          |        |        |**17.9%**|
+
 ## Next
 
 1. **Re-tune calibration knobs** now that all 7 CUs are active. The knobs
