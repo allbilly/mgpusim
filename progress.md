@@ -149,9 +149,37 @@ policy is `auto` at the 200 MHz state.
 
 ## Open (timing model)
 
-- **K-means:** simulator is 43.5% slow. Its 256 KiB strided swap input bypasses
-  L2, while globally warming that transfer makes vectoradd/ReLU about 2× too
-  fast. The next model needs reuse-sensitive residency, not a size-only knob.
+- **K-means:** simulator is 43.5% slow. Root cause identified via swap-only
+  microbenchmark sweep (max-iter=0) and L1V cache hit-rate profiling:
+
+  1. **L1V cache thrashing** (primary): at the calibration point (features=16,
+     4096 points = 64 waves), the L1V hit rate is 1.7%. With 1 wave it is 93.8%
+     (correct — 15 of 16 iterations hit the same cachelines). The degradation
+     scales with wave count: 4 waves = 89.8%, 16 waves = 41.2%, 64 waves = 1.7%.
+     All waves' read lines map to the same 64 L1V sets (stride = nfeatures × 4 ×
+     64 lanes = 4096 B = 64 cachelines, wrapping around the 64-set, 4-way cache).
+     With 4 SIMDs, 4 concurrent waves fill all 4 ways; the 5th+ waves evict
+     running waves' lines. This is architecturally realistic — the real gfx90c
+     also has a 16 KB L1V shared across 4 SIMDs — so the thrashing itself is not
+     a modeling error.
+
+  2. **Utilization penalty** (secondary, does NOT affect the calibration point):
+     maxCoalescingPenalty=12 adds ~50% overhead for multi-lane sparse reads
+     (features=4: 10.85→5.89 µs, features=8: 34.91→16.51 µs with penalty=0).
+     But at features=16 (1 lane/cacheline), the penalty is not applied, so it
+     does not explain the 43.5% gap. The penalty is applied to L1 hits as well
+     as misses, which is architecturally incorrect but only affects non-
+     calibration feature counts.
+
+  3. **Remaining gap** likely from L2 latency (128 cycles, possibly too high for
+     gfx90c APU) and load-store serialization (store waits for all load
+     transactions to complete, next load waits for store). The pointer-chase
+     microbenchmark showed ~76 cycles/access for L1 at 200 MHz (unpinned), vs
+     ~115 modeled — suggesting hierarchy-path overhead is inflated.
+
+  Next steps: measure real L2 latency with a vector pointer-chase at 256 KiB+
+  working set; investigate load-store overlap in the vector memory unit.
+
 - **Matrix multiplication:** simulator is 22.9% slow after fixing premature
   VMEM completion. Scratch writes now avoid the FLAT RMW heuristic, but private
   MUBUF latency/coalescing remains conservative.
@@ -169,6 +197,11 @@ Session log from 2026-06-15 (V2 HSACO, VOP3C blockers, Docker images) lived here
 ## Next
 
 1. Re-run the exact-input hardware harness with the GPU pinned to `high`.
-2. Model reuse-sensitive DMA/L2 residency for K-means without warming streaming
-   vectoradd/ReLU inputs wholesale.
-3. Revisit private-segment MUBUF service latency for matrix multiplication.
+2. Measure real L2 latency with a vector pointer-chase at 256 KiB+ working set
+   (the scalar pointer-chase only validated L1). If L2 latency is lower than the
+   modeled 128 cycles, retune it — this directly affects the K-means swap path
+   where L1V thrashing sends all reads to L2.
+3. Investigate load-store overlap in the vector memory unit: the sim serializes
+   store behind load completion and next load behind store, while real hardware
+   may overlap them through separate load/store pipelines.
+4. Revisit private-segment MUBUF service latency for matrix multiplication.
