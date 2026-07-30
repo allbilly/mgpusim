@@ -351,16 +351,60 @@ Suite MARE: 18.6% → 17.9%. Improvements: relu 22.6%→18.8%, pagerank
 | nw                |123.052 |153.630 | 24.8%  |
 | **MARE**          |        |        |**17.9%**|
 
+## L2 latency uncertainty (2026-07-31)
+
+The L2 bank latency (128 cycles = 80 ns at 1600 MHz) was calibrated from a
+cache_latency measurement done at 200 MHz (idle clock), not 1600 MHz. The
+benchmark measurements (hw_ground_truth.txt) were done with the clock pinned
+to `high` (1600 MHz), but the cache_latency validation was at the wrong clock.
+
+At 200 MHz, 128 cycles = 640 ns. The measured 916 ns/access includes L1S miss
+overhead + L2 bank latency + pointer-chase dependency. This is consistent with
+128 cycles at 200 MHz. But at 1600 MHz, 128 cycles = 80 ns — the L2 is 8x
+faster in wall-clock time because it runs at the GPU clock.
+
+The sim's 128-cycle L2 bank latency may be correct if the L2 cache's cycle
+count is clock-independent (same cycle count at any clock). But this cannot
+be verified without a cache_latency measurement at 1600 MHz with a pinned
+clock. This is the single most important hardware measurement to make.
+
+If the L2 latency is wrong, it affects every memory-bound benchmark:
+- kmeans (50.7% slow): 91% L2 hit rate, L2 latency is the dominant cost
+- nw (24.8% slow): 70% L2 hit rate
+- matmul (15.4% slow): 86% L2 hit rate
+- relu (18.8% slow): 0.3% L2 hit rate (DRAM-bound, L2 latency irrelevant)
+
+## FIR gap analysis (2026-07-31)
+
+FIR is 30.5% too fast (sim 8.34 µs vs HW 12.00 µs). The kernel uses only 14
+VGPRs and 16 SGPRs — very low register pressure. Occupancy is limited by the
+work-group count (128 WGs / 7 CUs = 18 per CU = 4.5 per SIMD), well below the
+WfPoolSize limit of 10.
+
+The SIMD pipeline model is architecturally correct:
+- 4 SIMDs per CU, each with 4-cycle issue interval (64 threads / 16 ALUs = 4)
+- MaxInFlight = 4 per SIMD (pipeline capacity)
+- Average issue rate: 1 VALU/cycle per CU (matches GCN5 hardware)
+- Fetch arbiter: 1 fetch/cycle (sufficient for 1 VALU/cycle issue rate)
+- Issue arbiter: can select up to 4 VALU/cycle (one per SIMD), but each SIMD's
+  issueIntervalLeft limits to 1 issue per 4 cycles → 1/cycle average
+
+The gap is from old calibration compensating for the 4-CU bug. With 4 CUs,
+the sim matched 7-CU hardware (1.3% error). With 7 CUs, the sim is 1.44x too
+fast. The per-CU throughput is architecturally correct; the old calibration
+had knobs that were 1.75x too fast (7/4 ratio) to compensate for the missing
+3 CUs. Fixing this requires hardware measurements to determine the correct
+per-CU throughput at 1600 MHz.
+
 ## Next
 
-1. **Re-tune calibration knobs** now that all 7 CUs are active. The knobs
-   that compensated for underutilization (e.g. matrixtranspose's L1S/L2
-   latency, fir's issue rates) need adjustment. Start with the benchmarks
-   that regressed: fir (1.3%→30.8%), matrixtranspose (4.3%→17.2%). This
-   requires hardware measurements (pinned clock) to be principled.
-2. **Hardware** (deferred): re-run the exact-input harness with the GPU
-   pinned to `high`, one benchmark at a time with cooling pauses. Re-validate
-   the cache_latency baseline (the 916 ns/access figure needs a pinned clock
-   to be useful).
-3. **Hardware** (deferred): measure real L2 latency with a vector
+1. **Hardware (critical)**: re-measure cache_latency with the GPU clock pinned
+   to `high` (1600 MHz). This is the single most important measurement — it
+   determines whether the L2 bank latency (128 cycles) is correct. Run one
+   benchmark at a time with 30-60 s cooling pauses to avoid thermal lockup.
+2. **Re-tune calibration knobs** based on the pinned-clock measurements. The
+   FIR per-CU throughput and L2 latency are the key uncertainties.
+3. **Hardware** (deferred): re-run the exact-input harness with the GPU
+   pinned to `high`, one benchmark at a time with cooling pauses.
+4. **Hardware** (deferred): measure real L2 latency with a vector
    pointer-chase at 256 KiB+ working set.
