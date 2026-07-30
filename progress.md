@@ -263,18 +263,36 @@ The load-store overlap investigation (task #1) was not the primary issue —
 the scoreboard returns 0 for VMem, so the sim does NOT serialize load-store
 by register dependency. The 43% gap was almost entirely the CU dispatch bug.
 
+## Matmul scratch analysis (2026-07-31)
+
+Disassembled the matmul kernel (`kernels_gfx90c.hsaco`) to check scratch
+usage. The kernel spills 4 VGPRs (v1, v3, v19, v20) via `buffer_store_dword`
+to the scratch buffer (s[20:23]). The scratch pattern is:
+
+- **Prologue**: 4 buffer_store + 1 buffer_load (before the inner loop)
+- **Inner loop**: 32 iterations of global_load_dwordx4 + 16 v_fma_f32 per
+  iteration — zero scratch instructions
+- **Epilogue**: 3 buffer_load (after the loop)
+
+Total scratch: 8 instructions out of ~648 per wavefront = **1.2%**. The
+scratch cost is negligible and not in the critical path. The spill/no-spill
+kernel pair (task #2) is **not needed** — YAGNI.
+
+The matmul's 15.4% gap is from the VMem global load path (43% of CPI 7.03):
+L1V hit rate is only 22.4%, L2 hit rate 86.1%. Most data is served from L2
+(128 cycles). The gap is likely from L2 latency being too high or L1V hit
+rate being too low for the register-tiled access pattern.
+
 ## Next
 
 1. **Re-tune calibration knobs** now that all 7 CUs are active. The knobs
    that compensated for underutilization (e.g. matrixtranspose's L1S/L2
    latency, fir's issue rates) need adjustment. Start with the benchmarks
-   that regressed: fir (1.3%→30.8%), matrixtranspose (4.3%→17.2%).
-2. **Sim-side**: add the spill/no-spill kernel pair for matmul scratch cost
-   isolation. Run both in MGPUSim only; hardware validation deferred until
-   the GPU is thermally stable.
-3. **Hardware** (deferred): re-run the exact-input harness with the GPU
+   that regressed: fir (1.3%→30.8%), matrixtranspose (4.3%→17.2%). This
+   requires hardware measurements (pinned clock) to be principled.
+2. **Hardware** (deferred): re-run the exact-input harness with the GPU
    pinned to `high`, one benchmark at a time with cooling pauses. Re-validate
    the cache_latency baseline (the 916 ns/access figure needs a pinned clock
    to be useful).
-4. **Hardware** (deferred): measure real L2 latency with a vector
+3. **Hardware** (deferred): measure real L2 latency with a vector
    pointer-chase at 256 KiB+ working set.
