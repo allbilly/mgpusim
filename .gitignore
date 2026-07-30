@@ -67,3 +67,9 @@ _akita_local/
 
 # hipcc linker intermediate
 *.resolution.txt
+
+# User-owned scratch: custom_test scaffolding and NW backup/sweep snapshots.
+# Restored to untracked after 5595ca72 mistakenly committed them.
+amd/samples/custom_test/
+*.go.bak
+*.go.sweep
