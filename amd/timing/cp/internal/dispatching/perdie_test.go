@@ -113,3 +113,78 @@ var _ = Describe("Per-Die Algorithm", func() {
 		Expect(alg.numDispatchedWG).To(Equal(0))
 	})
 })
+
+// 7-CU / 4-die regression test: the old integer division (7/4=1) wasted
+// 3 CUs. Ceiling division gives [2,2,2,1] and all 7 CUs must receive work.
+var _ = Describe("Per-Die Algorithm CU distribution", func() {
+	var (
+		ctrl     *gomock.Controller
+		pool     *MockCUResourcePool
+		cus      []*MockCUResource
+		alg      *perDieAlgorithm
+	)
+
+	BeforeEach(func() {
+		ctrl = gomock.NewController(GinkgoT())
+		cus = make([]*MockCUResource, 7)
+		for i := 0; i < 7; i++ {
+			cus[i] = NewMockCUResource(ctrl)
+			cus[i].EXPECT().DispatchingPort().
+				Return(messaging.RemotePort("CUPort"+strconv.Itoa(i))).
+				AnyTimes()
+			cus[i].EXPECT().ReserveResourceForWG(gomock.Any()).
+				Return([]resource.WfLocation{}, true).
+				AnyTimes()
+		}
+
+		pool = NewMockCUResourcePool(ctrl)
+		pool.EXPECT().NumCU().Return(7).AnyTimes()
+		pool.EXPECT().GetCU(gomock.Any()).
+			DoAndReturn(func(i int) resource.CUResource { return cus[i] }).
+			AnyTimes()
+
+		alg = &perDieAlgorithm{
+			cuPool:  pool,
+			numDies: 4,
+		}
+	})
+
+	AfterEach(func() {
+		ctrl.Finish()
+	})
+
+	It("distributes all 7 CUs across 4 dies with ceiling division [2,2,2,1]", func() {
+		alg.StartNewKernel(kernels.KernelLaunchInfo{
+			Packet: &kernels.HsaKernelDispatchPacket{
+				WorkgroupSizeX: 64,
+				WorkgroupSizeY: 1,
+				WorkgroupSizeZ: 1,
+				GridSizeX:      64 * 64, // 64 WGs
+				GridSizeY:      1,
+				GridSizeZ:      1,
+			},
+		})
+
+		// Die CU counts: [2, 2, 2, 1]
+		Expect(alg.dies[0].numCUs).To(Equal(2))
+		Expect(alg.dies[1].numCUs).To(Equal(2))
+		Expect(alg.dies[2].numCUs).To(Equal(2))
+		Expect(alg.dies[3].numCUs).To(Equal(1))
+
+		// CU offsets: [0, 2, 4, 6]
+		Expect(alg.dies[0].firstCU).To(Equal(0))
+		Expect(alg.dies[1].firstCU).To(Equal(2))
+		Expect(alg.dies[2].firstCU).To(Equal(4))
+		Expect(alg.dies[3].firstCU).To(Equal(6))
+
+		// WG counts proportional to CUs: 64*2/7≈18, 64*1/7≈9
+		// Largest-remainder: [19, 19, 18, 8] or similar; total must be 64.
+		total := 0
+		for d := 0; d < 4; d++ {
+			total += alg.dies[d].numWGInDie
+		}
+		Expect(total).To(Equal(64))
+		// Die 3 (1 CU) must get fewer WGs than die 0 (2 CUs).
+		Expect(alg.dies[3].numWGInDie).To(BeNumerically("<", alg.dies[0].numWGInDie))
+	})
+})
