@@ -227,13 +227,48 @@ but the wall-clock time still 916 ns).
 - The `power_dpm=high` pinning (needs root) remains a prerequisite for
   absolute µs targets; without it, only cycle ratios are meaningful.
 
+## CU dispatch bug fix (2026-07-31, commit fe4e4f8c)
+
+The per-die dispatch algorithm used `NumCU / numDies` (integer division) to
+compute CUs per die. On gfx90c (7 active CUs, 4 shader arrays), `7/4=1` —
+only 4 of 7 CUs received work. SA[2] and SA[3] had zero instructions across
+all benchmarks. This was a bug, not a modeling choice.
+
+Fix: ceiling division for CU distribution (7/4 → [2,2,2,1]) plus proportional
+work-group allocation via largest-remainder. Per-die CU count stored in
+`dieState.numCUs` so `NextForDie` iterates the correct range.
+
+**Suite impact (MARE 17.3% → 18.6%):**
+
+| Benchmark         |     HW | Before |  After | B_err | A_err |
+|-------------------|--------|--------|--------|-------|-------|
+| vectoradd         | 29.364 | 29.855 | 28.756 |  1.7% |  2.1% |
+| relu              | 13.123 | 16.291 | 16.093 | 24.1% | 22.6% |
+| matrixmult        | 39.107 | 50.728 | 45.141 | 29.7% | 15.4% |
+| matrixtranspose   |140.773 |146.863 |116.578 |  4.3% | 17.2% |
+| bitonicsort       |811.360 |835.078 |771.937 |  2.9% |  4.9% |
+| aes               | 16.962 | 16.966 | 16.999 |  0.0% |  0.2% |
+| fir               | 12.003 | 11.842 |  8.306 |  1.3% | 30.8% |
+| kmeans            | 39.220 | 69.385 | 59.742 | 76.9% | 52.3% |
+| pagerank          |130.638 |119.742 |110.154 |  8.3% | 15.7% |
+| nw                |123.052 |151.739 |153.630 | 23.3% | 24.8% |
+
+The MARE regression is expected: the calibration knobs were compensating for
+the 4-CU underutilization. Benchmarks that were accidentally well-calibrated
+because the sim ran 43% slower (matrixtranspose: 4.3% → 17.2%, fir: 1.3% →
+30.8%) now need their own root-cause analysis. K-means improved (76.9% →
+52.3%) but remains the largest outlier.
+
+The load-store overlap investigation (task #1) was not the primary issue —
+the scoreboard returns 0 for VMem, so the sim does NOT serialize load-store
+by register dependency. The 43% gap was almost entirely the CU dispatch bug.
+
 ## Next
 
-1. **Sim-side first** (no GPU needed): investigate load-store overlap in the
-   vector memory unit — the sim serializes store behind load completion and
-   next load behind store, while real hardware may overlap them through
-   separate load/store pipelines. This is the most likely remaining model
-   error for K-means (after L1V thrashing, which is architecturally correct).
+1. **Re-tune calibration knobs** now that all 7 CUs are active. The knobs
+   that compensated for underutilization (e.g. matrixtranspose's L1S/L2
+   latency, fir's issue rates) need adjustment. Start with the benchmarks
+   that regressed: fir (1.3%→30.8%), matrixtranspose (4.3%→17.2%).
 2. **Sim-side**: add the spill/no-spill kernel pair for matmul scratch cost
    isolation. Run both in MGPUSim only; hardware validation deferred until
    the GPU is thermally stable.
