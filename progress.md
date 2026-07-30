@@ -194,14 +194,52 @@ Session log from 2026-06-15 (V2 HSACO, VOP3C blockers, Docker images) lived here
 - `docs/Adding-VOP3C-Instructions.md`
 - `~/mgpusim/README.md` (ISCA-10 table)
 
+## Hardware stability incident (2026-07-30 10:23)
+
+The Renoir iGPU (gfx90c) suffered an amdgpu hard lockup under sustained
+load. Four back-to-back podman containers ran the full `isca10_bench` suite
+(including the new cache_latency pointer-chase: 131072 dependent scalar
+loads on a 16 KiB array). The 4th container's cache_latency jumped 30%
+(120089 → 156639 µs), and the 5th container's creation coincided with the
+system freeze.
+
+Root cause: amdgpu hard lockup under sustained iGPU load — the classic
+pattern where the GPU stops responding, the driver waits, and the machine
+freezes before emitting a panic. Not caused by the earlier OOM kill (18h
+prior, clean reaping), WiFi firmware errors, or mcelog/thermald failures.
+
+**Measurement validity:** the first 3 cache_latency runs were consistent
+(~120089 µs = 916 ns/access for 131072 accesses). At 200 MHz (auto/idle)
+this is ~183 cycles/access — much higher than the "76 cycles/access"
+claimed in the earlier session history. That earlier figure was likely
+from a different measurement method (s_memrealtime ISA timer vs hipEvent
+wall-clock) or a miscalculation. The modeled L1 bank latency is 19 cycles;
+even with full pipeline overhead, 183 cycles suggests either the scalar
+load path is much slower than modeled, or the GPU boosted above 200 MHz
+during the measurement (making the effective cycle count lower than 183
+but the wall-clock time still 916 ns).
+
+**Constraint for future hardware runs:**
+- Run one benchmark at a time (no parallel containers).
+- Insert 30–60 s cooling pauses between runs.
+- Monitor `hwmon4/temp1_input` (amdgpu edge temp) before and after each run.
+- Prefer `--only` to run a single benchmark per container.
+- The `power_dpm=high` pinning (needs root) remains a prerequisite for
+  absolute µs targets; without it, only cycle ratios are meaningful.
+
 ## Next
 
-1. Re-run the exact-input hardware harness with the GPU pinned to `high`.
-2. Measure real L2 latency with a vector pointer-chase at 256 KiB+ working set
-   (the scalar pointer-chase only validated L1). If L2 latency is lower than the
-   modeled 128 cycles, retune it — this directly affects the K-means swap path
-   where L1V thrashing sends all reads to L2.
-3. Investigate load-store overlap in the vector memory unit: the sim serializes
-   store behind load completion and next load behind store, while real hardware
-   may overlap them through separate load/store pipelines.
-4. Revisit private-segment MUBUF service latency for matrix multiplication.
+1. **Sim-side first** (no GPU needed): investigate load-store overlap in the
+   vector memory unit — the sim serializes store behind load completion and
+   next load behind store, while real hardware may overlap them through
+   separate load/store pipelines. This is the most likely remaining model
+   error for K-means (after L1V thrashing, which is architecturally correct).
+2. **Sim-side**: add the spill/no-spill kernel pair for matmul scratch cost
+   isolation. Run both in MGPUSim only; hardware validation deferred until
+   the GPU is thermally stable.
+3. **Hardware** (deferred): re-run the exact-input harness with the GPU
+   pinned to `high`, one benchmark at a time with cooling pauses. Re-validate
+   the cache_latency baseline (the 916 ns/access figure needs a pinned clock
+   to be useful).
+4. **Hardware** (deferred): measure real L2 latency with a vector
+   pointer-chase at 256 KiB+ working set.

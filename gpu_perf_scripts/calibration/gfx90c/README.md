@@ -23,6 +23,15 @@ Reference results require the GPU performance policy to be `high`. The runner
 refuses an unpinned clock because `hipGetDeviceProperties().clockRate` reports
 the maximum clock, not the clock actually used by a launch.
 
+**Thermal safety (Renoir iGPU):** the integrated Radeon on Renoir has limited
+thermal headroom and can hard-lockup under sustained load. On 2026-07-30, four
+back-to-back full-suite containers caused an amdgpu hard lockup after the 4th
+run's cache_latency jumped 30%. To avoid this:
+- Run one benchmark at a time: `./build_and_run.sh --only cache_latency`
+- Insert 30–60 s cooling pauses between runs
+- Monitor edge temp: `cat /sys/class/hwmon/hwmon4/temp1_input` (millidegrees)
+- Do not run multiple containers in parallel
+
 After pinning the clock with the host's normal privileged administration
 workflow:
 
