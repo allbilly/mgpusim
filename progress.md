@@ -283,6 +283,47 @@ L1V hit rate is only 22.4%, L2 hit rate 86.1%. Most data is served from L2
 (128 cycles). The gap is likely from L2 latency being too high or L1V hit
 rate being too low for the register-tiled access pattern.
 
+## Remaining gap profiling (2026-07-31)
+
+After the CU dispatch fix, the suite breaks down as:
+
+**Too SLOW (sim > HW):** kmeans +52.3%, nw +24.8%, relu +22.6%, matmul +15.4%,
+aes +0.2%.
+
+**Too FAST (sim < HW):** fir -30.8%, matrixtranspose -17.2%, pagerank -15.7%,
+bitonicsort -4.9%, vectoradd -2.1%.
+
+### NW (+24.8% slow): LDS + barriers, architecturally correct
+
+CPI 13.42: LDS 3.57 (27%), Idle 2.17 (16%), VALU 2.16, VMem 1.70. The kernel
+has 12 s_barrier instructions (diagonal sweep pattern), 58 DS ops, 41 global
+ops. The Idle time is from barrier wait — waves that finish their block early
+wait for slower waves. This is architecturally correct. L1V hit rate 3.2%,
+L2 hit rate 69.7%. The gap is from LDS bank conflicts + L2 latency for global
+loads.
+
+### ReLU (+22.6% slow) vs matrixtranspose (-17.2% fast): DRAM bandwidth
+
+Both are pure streaming (0% L1V hit, 0.3% L2 hit — all DRAM). But the sim's
+effective bandwidth is inconsistent:
+- ReLU (512 KB): sim 31.8 GB/s, HW 39.0 GB/s — sim 18% too slow
+- Matrixtranspose (2 MB): sim 17.1 GB/s, HW 14.2 GB/s — sim 20% too fast
+
+The DRAM model (banked: 2 channels, 16 internal banks, pipeline depth 40,
+stage latency 10 at 1 GHz = 400 ns per request) has a latency/bandwidth
+balance that doesn't match the real DDR4-3200. The fixed latency (400 ns)
+hurts small transfers; the peak bandwidth is too high for large transfers.
+Additionally, matrixtranspose's strided writes (stride 2048 B vs 128 B
+interleave) may cause DRAM bank conflicts on real hardware that the sim's
+simple banked model doesn't capture.
+
+### FIR (-30.8% fast): per-CU throughput too high
+
+FIR is VALU-bound (CPI 2.82, 31% VALU). The old calibration compensated for
+the 4-CU bug by setting per-CU throughput ~1.75x too fast. With 7 CUs, the
+sim is now 1.75x too fast. The VALU issue interval (4 cycles) and result
+latency (4 cycles) need retuning, but this requires hardware measurements.
+
 ## Next
 
 1. **Re-tune calibration knobs** now that all 7 CUs are active. The knobs
