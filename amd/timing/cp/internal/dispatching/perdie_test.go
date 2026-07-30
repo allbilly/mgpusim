@@ -47,8 +47,8 @@ var _ = Describe("Per-Die Algorithm", func() {
 			numWG:     8,
 			cusPerDie: 2,
 			dies: []*dieState{
-				{gridBuilder: gridBuilder0, numWGInDie: 4, firstCU: 0},
-				{gridBuilder: gridBuilder1, numWGInDie: 4, firstCU: 2},
+				{gridBuilder: gridBuilder0, numWGInDie: 4, firstCU: 0, numCUs: 2},
+				{gridBuilder: gridBuilder1, numWGInDie: 4, firstCU: 2, numCUs: 2},
 			},
 		}
 	})

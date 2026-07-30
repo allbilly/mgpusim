@@ -14,6 +14,7 @@ type dieState struct {
 	dispatchedWG int                 // WGs already dispatched from the block
 	currWG       *kernels.WorkGroup  // pulled from the block but not yet placed
 	firstCU      int                 // index of this die's first CU in the pool
+	numCUs       int                 // CUs assigned to this die (may differ per die)
 	nextCUOffset int                 // round-robin CU cursor within the die
 }
 
@@ -49,34 +50,77 @@ func (a *perDieAlgorithm) NumDies() int {
 }
 
 // StartNewKernel partitions the grid into one contiguous block per die.
+// Work-groups are distributed proportionally to each die's CU count so a
+// die with fewer CUs does not become the bottleneck.
 func (a *perDieAlgorithm) StartNewKernel(info kernels.KernelLaunchInfo) {
 	gb := kernels.NewGridBuilder()
 	gb.SetKernel(info)
 	a.numWG = gb.NumWG()
 	a.numDispatchedWG = 0
 
-	a.cusPerDie = a.cuPool.NumCU() / a.numDies
-	numWGPerDie := (a.numWG-1)/a.numDies + 1 // ceil; block size per die
+	totalCUs := a.cuPool.NumCU()
+	// Distribute CUs across dies with ceiling division so a remainder
+	// (e.g. 7 CUs / 4 dies) does not silently waste CUs. Earlier dies get
+	// the extra CU: 7/4 → dies get [2, 2, 2, 1].
+	a.cusPerDie = (totalCUs + a.numDies - 1) / a.numDies
 
-	a.dies = make([]*dieState, a.numDies)
+	// First pass: compute each die's CU count.
+	cuCounts := make([]int, a.numDies)
+	cuOffset := 0
 	for d := 0; d < a.numDies; d++ {
-		start := d * numWGPerDie
-		n := a.numWG - start
-		if n < 0 {
-			n = 0
+		cusThisDie := a.cusPerDie
+		if cuOffset+cusThisDie > totalCUs {
+			cusThisDie = totalCUs - cuOffset
 		}
-		if n > numWGPerDie {
-			n = numWGPerDie
+		if cusThisDie < 1 {
+			cusThisDie = 1
 		}
+		cuCounts[d] = cusThisDie
+		cuOffset += cusThisDie
+	}
 
+	// Distribute WGs proportionally to CU count, using largest-remainder
+	// allocation so the total is exact.
+	wgCounts := make([]int, a.numDies)
+	allocated := 0
+	for d := 0; d < a.numDies; d++ {
+		wgCounts[d] = a.numWG * cuCounts[d] / totalCUs
+		allocated += wgCounts[d]
+	}
+	// Assign remaining WGs to dies with the largest fractional remainder.
+	remainders := make([]int, a.numDies)
+	for d := 0; d < a.numDies; d++ {
+		remainders[d] = a.numWG*cuCounts[d] - wgCounts[d]*totalCUs
+	}
+	for allocated < a.numWG {
+		best := 0
+		for d := 1; d < a.numDies; d++ {
+			if remainders[d] > remainders[best] {
+				best = d
+			}
+		}
+		wgCounts[best]++
+		remainders[best] -= totalCUs
+		allocated++
+	}
+
+	// Second pass: build die states.
+	a.dies = make([]*dieState, a.numDies)
+	cuOffset = 0
+	wgStart := 0
+	for d := 0; d < a.numDies; d++ {
 		ds := &dieState{
-			gridBuilder: kernels.NewGridBuilder(),
-			numWGInDie:  n,
-			firstCU:     d * a.cusPerDie,
+			gridBuilder:  kernels.NewGridBuilder(),
+			numWGInDie:   wgCounts[d],
+			firstCU:      cuOffset,
+			numCUs:       cuCounts[d],
+			nextCUOffset: 0,
 		}
 		ds.gridBuilder.SetKernel(info)
-		ds.gridBuilder.Skip(start)
+		ds.gridBuilder.Skip(wgStart)
 		a.dies[d] = ds
+		cuOffset += cuCounts[d]
+		wgStart += wgCounts[d]
 	}
 }
 
@@ -110,8 +154,8 @@ func (a *perDieAlgorithm) NextForDie(die int) dispatchLocation {
 		ds.currWG = ds.gridBuilder.NextWG()
 	}
 
-	for k := 0; k < a.cusPerDie; k++ {
-		cuOffset := (ds.nextCUOffset + k) % a.cusPerDie
+	for k := 0; k < ds.numCUs; k++ {
+		cuOffset := (ds.nextCUOffset + k) % ds.numCUs
 		cuID := ds.firstCU + cuOffset
 		cu := a.cuPool.GetCU(cuID)
 
