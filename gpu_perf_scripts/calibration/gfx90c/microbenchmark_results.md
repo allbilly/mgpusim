@@ -850,6 +850,41 @@ completion/fanout. The simulator artifacts are retained at
 `/tmp/mgpusim-vmem-core-115d1186.XAwhv3` and
 `/tmp/mgpusim-vmem-occ-115d1186.8Mwmoo` for this calibration session.
 
+An extended serial dwordx4/alias-8 sweep looked beyond the planned 28-WG
+endpoint:
+
+| Footprint | 28 WGs | 56 WGs | 112 WGs |
+|-----------|-------:|-------:|--------:|
+| 8 KiB | 11.214 | 11.611 | 12.463 |
+| 64 KiB | 64.484 | 68.985 | 72.197 |
+
+The expected sharp knee after filling 7 CUs x 4 SIMDs did not occur. Even 112
+work-groups are only 11--12% slower than 28, so the current model hides most of
+the serialized VMEM completion cost well beyond the production matrix grid of
+16 work-groups. The extended artifacts are at
+`/tmp/mgpusim-vmem-knee-115d1186.L9PP64`.
+
+Code-path inspection explains why fanout is a strong missing-mechanism
+candidate. The coalescer retains every destination lane/dword in each returned
+line, but the CU writes all of them to an immediate, unlimited register file in
+one tick. Up to 16 response messages can complete per CU tick. There is no
+return-crossbar, lane-fanout, or per-SIMD VGPR-writeback service cost. The model
+decrements `OutstandingVectorMemAccess` once only after the final transaction
+of the instruction returns, and `vmcnt(0)` waits on that instruction count.
+Consequently cache-line arrival is modeled, while delivery of a returned word
+to one versus eight destination lanes is free.
+
+The first hardware comparison should therefore test two mechanisms in order:
+
+1. an alias-aware, overlapable completion delay, predicted to penalize serial
+   more than independent4 and alias-8 more than alias-1; and
+2. a finite per-CU or per-SIMD return/writeback queue, predicted to create a
+   work-group knee and reduce independent-load speedup when saturated.
+
+No parameter is changed from simulator-only evidence. A uniform L1/L2 latency
+change remains rejected because it cannot predict width, alias, dependency,
+and work-group signatures independently.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
