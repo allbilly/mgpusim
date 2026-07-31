@@ -413,7 +413,7 @@ func (m *dmaMiddleware) parseMemCopyH2D(
 			Address: addr,
 			Data:    req.SrcBuffer[offset : offset+length],
 		}
-		if memPort == m.toMemDRAM() {
+		if m.dramBypassEnabled() && memPort == m.toMemDRAM() {
 			m.toSendToMemDRAM = append(m.toSendToMemDRAM, reqToBottom)
 		} else {
 			m.toSendToMem = append(m.toSendToMem, reqToBottom)
@@ -461,7 +461,7 @@ func (m *dmaMiddleware) parseMemCopyD2H(
 			Address:        addr,
 			AccessByteSize: length,
 		}
-		if memPort == m.toMemDRAM() {
+		if m.dramBypassEnabled() && memPort == m.toMemDRAM() {
 			m.toSendToMemDRAM = append(m.toSendToMemDRAM, reqToBottom)
 		} else {
 			m.toSendToMem = append(m.toSendToMem, reqToBottom)
