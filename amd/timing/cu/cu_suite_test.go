@@ -150,6 +150,8 @@ func newTestComputeUnitWithSpec(
 		wftime:                make(map[uint64]timing.VTimeInPicoSec),
 	}
 	cuMW.InFlightVectorMemAccessLimit = 512
+	cuMW.vmemReturnFanoutLaneDwordsPerCycle =
+		spec.VMemReturnFanoutLaneDwordsPerCycle
 
 	return cuMW
 }

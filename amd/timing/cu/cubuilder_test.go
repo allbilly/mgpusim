@@ -141,4 +141,31 @@ var _ = Describe("Builder", func() {
 			"cu: wide-write far penalty requires a near penalty",
 		))
 	})
+
+	It("propagates the vector-memory return fanout bandwidth", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		comp := MakeBuilder().
+			WithRegistrar(reg).
+			WithVMemReturnFanoutLaneDwordsPerCycle(7).
+			Build("GPU.CU")
+
+		Expect(comp.Spec().VMemReturnFanoutLaneDwordsPerCycle).To(Equal(7))
+		Expect(MiddlewareOf(comp).vmemReturnFanoutLaneDwordsPerCycle).To(Equal(7))
+	})
+
+	It("rejects a negative vector-memory return fanout bandwidth", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithVMemReturnFanoutLaneDwordsPerCycle(-1).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: VMemReturnFanoutLaneDwordsPerCycle cannot be negative",
+		))
+	})
 })

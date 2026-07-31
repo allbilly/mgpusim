@@ -48,6 +48,14 @@ type ComputeUnit struct {
 	shadowInFlightScalarMemAccess []*ScalarMemAccessInfo
 	shadowInFlightVectorMemAccess []VectorMemAccessInfo
 
+	vmemReturnFanoutLaneDwordsPerCycle int
+
+	// vmemReturnAssemblies accumulates duplicate lane-dword deliveries across
+	// all cache-line response siblings of one dynamic vector load. Pending
+	// retirements count down independently, so unrelated loads overlap.
+	vmemReturnAssemblies   map[uint64]int
+	pendingVMemRetirements []pendingVMemLoadRetirement
+
 	Scheduler        Scheduler
 	BranchUnit       SubComponent
 	VectorMemDecoder SubComponent
@@ -71,6 +79,12 @@ type ComputeUnit struct {
 
 	// wftime records, for sampling, the time each wavefront was mapped.
 	wftime map[uint64]timing.VTimeInPicoSec
+}
+
+type pendingVMemLoadRetirement struct {
+	wf              *wavefront.Wavefront
+	inst            *wavefront.Inst
+	remainingCycles int
 }
 
 // Comp returns the component this middleware belongs to.
@@ -152,6 +166,9 @@ func (cu *ComputeUnit) runPipeline() bool {
 		madeProgress = cu.LDSDecoder.Run() || madeProgress
 		madeProgress = cu.VectorMemUnit.Run() || madeProgress
 		madeProgress = cu.VectorMemDecoder.Run() || madeProgress
+		if cu.vmemReturnFanoutLaneDwordsPerCycle > 0 {
+			madeProgress = cu.advanceVMemLoadRetirements() || madeProgress
+		}
 		madeProgress = cu.Scheduler.Run() || madeProgress
 	}
 
@@ -291,6 +308,10 @@ func (cu *ComputeUnit) flushPipeline() bool {
 	cu.shadowInFlightScalarMemAccess = nil
 	cu.shadowInFlightVectorMemAccess = nil
 
+	// Preserve VMEM return assemblies and retirement countdowns. Responses
+	// already consumed are absent from the in-flight lists and therefore are
+	// not shadowed or re-sent. Likewise, a fully returned delayed load has no
+	// request left to complete its wait counters after restart.
 	cu.populateShadowBuffers()
 	cu.endInflightTracingTasks()
 	cu.setWavesToReady()
@@ -754,6 +775,15 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 
 	wf := info.Wavefront
 	inst := info.Inst
+	if cu.vmemReturnFanoutLaneDwordsPerCycle > 0 {
+		duplicateLaneDwords := countDuplicateVMemLaneDwords(info.laneInfo)
+		if duplicateLaneDwords > 0 {
+			if cu.vmemReturnAssemblies == nil {
+				cu.vmemReturnAssemblies = make(map[uint64]int)
+			}
+			cu.vmemReturnAssemblies[inst.ID] += duplicateLaneDwords
+		}
+	}
 
 	for _, laneInfo := range info.laneInfo {
 		offset := laneInfo.addrOffsetInCacheLine
@@ -799,15 +829,86 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 	// vmcnt/lgkmcnt, end the inst task, and mark the data wait only once no
 	// transaction for this instruction is still in flight.
 	if !cu.hasInFlightVectorMemFor(info.Inst) {
-		wf.MarkMemoryLoadDestination(info.Inst.Inst)
-		wf.OutstandingVectorMemAccess--
-		if info.Inst.FormatType == insts.FLAT ||
-			info.Inst.FormatType == insts.MUBUF {
-			wf.OutstandingScalarMemAccess--
-		}
-		cu.markInstDataReturned(info.Inst, "vmem")
-		cu.logInstTask(wf, info.Inst, true)
+		cu.finishVectorMemLoadReturn(wf, info.Inst)
 	}
+}
+
+func countDuplicateVMemLaneDwords(lanes []vectorMemAccessLaneInfo) int {
+	if len(lanes) < 2 {
+		return 0
+	}
+
+	distinctOffsets := make(map[uint64]struct{}, len(lanes))
+	for _, lane := range lanes {
+		distinctOffsets[lane.addrOffsetInCacheLine] = struct{}{}
+	}
+
+	return len(lanes) - len(distinctOffsets)
+}
+
+func (cu *ComputeUnit) finishVectorMemLoadReturn(
+	wf *wavefront.Wavefront,
+	inst *wavefront.Inst,
+) {
+	bandwidth := cu.vmemReturnFanoutLaneDwordsPerCycle
+	if bandwidth <= 0 {
+		cu.retireVectorMemLoad(wf, inst)
+		return
+	}
+
+	duplicateLaneDwords := cu.vmemReturnAssemblies[inst.ID]
+	delete(cu.vmemReturnAssemblies, inst.ID)
+	if duplicateLaneDwords == 0 {
+		cu.retireVectorMemLoad(wf, inst)
+		return
+	}
+
+	cycles := duplicateLaneDwords / bandwidth
+	if duplicateLaneDwords%bandwidth != 0 {
+		cycles++
+	}
+	cu.pendingVMemRetirements = append(
+		cu.pendingVMemRetirements,
+		pendingVMemLoadRetirement{
+			wf:              wf,
+			inst:            inst,
+			remainingCycles: cycles,
+		},
+	)
+}
+
+func (cu *ComputeUnit) advanceVMemLoadRetirements() bool {
+	if len(cu.pendingVMemRetirements) == 0 {
+		return false
+	}
+
+	remaining := cu.pendingVMemRetirements[:0]
+	for i := range cu.pendingVMemRetirements {
+		retirement := cu.pendingVMemRetirements[i]
+		retirement.remainingCycles--
+		if retirement.remainingCycles <= 0 {
+			cu.retireVectorMemLoad(retirement.wf, retirement.inst)
+			continue
+		}
+		remaining = append(remaining, retirement)
+	}
+	clear(cu.pendingVMemRetirements[len(remaining):])
+	cu.pendingVMemRetirements = remaining
+
+	return true
+}
+
+func (cu *ComputeUnit) retireVectorMemLoad(
+	wf *wavefront.Wavefront,
+	inst *wavefront.Inst,
+) {
+	wf.MarkMemoryLoadDestination(inst.Inst)
+	wf.OutstandingVectorMemAccess--
+	if inst.FormatType == insts.FLAT || inst.FormatType == insts.MUBUF {
+		wf.OutstandingScalarMemAccess--
+	}
+	cu.markInstDataReturned(inst, "vmem")
+	cu.logInstTask(wf, inst, true)
 }
 
 func (cu *ComputeUnit) handleVectorDataStoreRsp(

@@ -109,6 +109,7 @@ type Builder struct {
 	maxWideWriteStridePenalty             int
 	maxWideWriteStrideFarPenalty          int
 	maxWideWriteStrideFarMinDistanceLines int
+	vmemReturnFanoutLaneDwordsPerCycle    int
 	vecMemTransPipelineWidth              int
 	numSinglePrecisionUnits               int
 	dmaThroughL2                          bool
@@ -432,6 +433,14 @@ func (b Builder) WithBarrierLatency(latency int) Builder {
 // penalty in cycles.
 func (b Builder) WithMaxCoalescingPenalty(penalty int) Builder {
 	b.maxCoalescingPenalty = penalty
+	return b
+}
+
+// WithVMemReturnFanoutLaneDwordsPerCycle sets the per-instruction bandwidth
+// for broadcasting returned dwords to duplicate vector-lane destinations.
+// Zero disables the model.
+func (b Builder) WithVMemReturnFanoutLaneDwordsPerCycle(n int) Builder {
+	b.vmemReturnFanoutLaneDwordsPerCycle = n
 	return b
 }
 
@@ -946,6 +955,9 @@ func (b *Builder) buildSAs() {
 			)
 		}
 	}
+	saBuilder = saBuilder.WithVMemReturnFanoutLaneDwordsPerCycle(
+		b.vmemReturnFanoutLaneDwordsPerCycle,
+	)
 	if b.vecMemTransPipelineWidth > 0 {
 		saBuilder = saBuilder.WithVecMemTransPipelineWidth(
 			b.vecMemTransPipelineWidth,

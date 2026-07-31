@@ -69,6 +69,39 @@ func exampleGrid() *kernels.Grid {
 	return grid
 }
 
+var _ = DescribeTable(
+	"counts duplicate vector-memory return lane-dwords",
+	func(alias, width int) {
+		lanes := make([]vectorMemAccessLaneInfo, 0, 64*width)
+		uniqueLanes := 64 / alias
+		for laneID := 0; laneID < 64; laneID++ {
+			for dword := 0; dword < width; dword++ {
+				lanes = append(lanes, vectorMemAccessLaneInfo{
+					laneID: laneID,
+					addrOffsetInCacheLine: uint64(
+						4 * ((laneID%uniqueLanes)*width + dword),
+					),
+				})
+			}
+		}
+
+		want := 64 * width * (alias - 1) / alias
+		Expect(countDuplicateVMemLaneDwords(lanes)).To(Equal(want))
+	},
+	Entry("alias 1 dword", 1, 1),
+	Entry("alias 2 dword", 2, 1),
+	Entry("alias 4 dword", 4, 1),
+	Entry("alias 8 dword", 8, 1),
+	Entry("alias 1 dwordx2", 1, 2),
+	Entry("alias 2 dwordx2", 2, 2),
+	Entry("alias 4 dwordx2", 4, 2),
+	Entry("alias 8 dwordx2", 8, 2),
+	Entry("alias 1 dwordx4", 1, 4),
+	Entry("alias 2 dwordx4", 2, 4),
+	Entry("alias 4 dwordx4", 4, 4),
+	Entry("alias 8 dwordx4", 8, 4),
+)
+
 var _ = Describe("ComputeUnit", func() {
 	var (
 		cu               *ComputeUnit
@@ -474,6 +507,8 @@ var _ = Describe("ComputeUnit", func() {
 
 			Expect(wf.OutstandingVectorMemAccess).To(Equal(0))
 			Expect(wf.OutstandingScalarMemAccess).To(Equal(0))
+			Expect(cu.vmemReturnAssemblies).To(BeNil())
+			Expect(cu.pendingVMemRetirements).To(BeEmpty())
 			for i := 0; i < 4; i++ {
 				access := RegisterAccess{}
 				access.RegCount = 1
@@ -484,6 +519,114 @@ var _ = Describe("ComputeUnit", func() {
 				cu.VRegFile[0].Read(access)
 				Expect(insts.BytesToUint32(access.Data)).To(Equal(uint32(i)))
 			}
+		})
+
+		It("retires an enabled load with no duplicate destinations immediately", func() {
+			cu.vmemReturnFanoutLaneDwordsPerCycle = 1
+
+			cu.processInputFromVectorMem()
+
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(0))
+			Expect(wf.OutstandingScalarMemAccess).To(Equal(0))
+			Expect(cu.pendingVMemRetirements).To(BeEmpty())
+		})
+
+		It("aggregates sibling fanout and delays final retirement", func() {
+			cu.vmemReturnFanoutLaneDwordsPerCycle = 2
+			wf.InFlightInsts = 1
+			cu.InFlightVectorMemAccess[0].laneInfo[1].addrOffsetInCacheLine = 0
+			cu.InFlightVectorMemAccess[0].laneInfo[3].addrOffsetInCacheLine = 8
+
+			sibling := info
+			sibling.Read = &memprotocol.ReadReq{
+				MsgMeta: messaging.MsgMeta{
+					ID: timing.GetIDGenerator().Generate(),
+				},
+			}
+			sibling.laneInfo[1].addrOffsetInCacheLine = 0
+			sibling.laneInfo[3].addrOffsetInCacheLine = 8
+			cu.InFlightVectorMemAccess = append(
+				cu.InFlightVectorMemAccess, sibling)
+
+			cu.processInputFromVectorMem()
+
+			Expect(cu.vmemReturnAssemblies[inst.ID]).To(Equal(2))
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(1))
+
+			toVectorMem.incoming = append(
+				toVectorMem.incoming,
+				memprotocol.DataReadyRsp{
+					MsgMeta: messaging.MsgMeta{
+						ID:    timing.GetIDGenerator().Generate(),
+						RspTo: sibling.Read.ID,
+					},
+					Data: make([]byte, 16),
+				},
+			)
+			cu.processInputFromVectorMem()
+
+			Expect(cu.vmemReturnAssemblies).NotTo(HaveKey(inst.ID))
+			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(2))
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(1))
+			Expect(wf.OutstandingScalarMemAccess).To(Equal(1))
+			waitInst := wavefront.NewInst(insts.NewInst())
+			waitInst.Format = insts.FormatTable[insts.SOPP]
+			waitInst.Opcode = 12
+			waitInst.VMCNT = 0
+			waitInst.LKGMCNT = 0
+			wf.SetDynamicInst(waitInst)
+			wf.State = wavefront.WfRunning
+			wf.InFlightInsts++
+			waitScheduler := NewScheduler(cu, nil, nil)
+			waitScheduler.internalExecuting = []*wavefront.Wavefront{wf}
+
+			Expect(waitScheduler.EvaluateInternalInst()).To(BeFalse())
+			Expect(waitScheduler.internalExecuting).To(ContainElement(wf))
+
+			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(1))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(1))
+			Expect(waitScheduler.EvaluateInternalInst()).To(BeFalse())
+			Expect(waitScheduler.internalExecuting).To(ContainElement(wf))
+
+			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(0))
+			Expect(wf.OutstandingScalarMemAccess).To(Equal(0))
+			Expect(cu.pendingVMemRetirements).To(BeEmpty())
+			Expect(waitScheduler.EvaluateInternalInst()).To(BeTrue())
+			Expect(waitScheduler.internalExecuting).NotTo(ContainElement(wf))
+			Expect(wf.State).To(Equal(wavefront.WfReady))
+			Expect(wf.InFlightInsts).To(Equal(0))
+		})
+
+		It("advances independent load retirements in parallel", func() {
+			otherInst := wavefront.NewInst(insts.NewInst())
+			otherInst.FormatType = insts.FLAT
+			otherWf := wavefront.NewWavefront(kernels.NewWavefront())
+			for _, wave := range []*wavefront.Wavefront{wf, otherWf} {
+				wave.OutstandingVectorMemAccess = 1
+				wave.OutstandingScalarMemAccess = 1
+				wave.InFlightInsts = 1
+			}
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				{wf: wf, inst: inst, remainingCycles: 2},
+				{wf: otherWf, inst: otherInst, remainingCycles: 2},
+			}
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect(cu.pendingVMemRetirements).To(HaveLen(2))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(1))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(1))
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(1))
+			Expect(otherWf.OutstandingVectorMemAccess).To(Equal(1))
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect(cu.pendingVMemRetirements).To(BeEmpty())
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(0))
+			Expect(otherWf.OutstandingVectorMemAccess).To(Equal(0))
 		})
 	})
 
@@ -554,6 +697,7 @@ var _ = Describe("ComputeUnit", func() {
 
 		It("should handle vector data store return and the return is the "+
 			"last one from an instruction", func() {
+			cu.vmemReturnFanoutLaneDwordsPerCycle = 1
 			writeReq.CanWaitForCoalesce = false
 
 			cu.processInputFromVectorMem()
@@ -602,6 +746,68 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(cu.InFlightInstFetch).To(BeNil())
 			Expect(cu.InFlightVectorMemAccess).To(BeNil())
 			Expect(cu.InFlightScalarMemAccess).To(BeNil())
+		})
+
+		It("preserves fanout state through flush and restart", func() {
+			assemblyInst := wavefront.NewInst(insts.NewInst())
+			assemblyInst.FormatType = insts.FLAT
+			assemblyWf := wavefront.NewWavefront(kernels.NewWavefront())
+			assemblyReq := &memprotocol.ReadReq{
+				MsgMeta: messaging.MsgMeta{
+					ID: timing.GetIDGenerator().Generate(),
+				},
+			}
+			cu.InFlightVectorMemAccess = []VectorMemAccessInfo{
+				{
+					Read:      assemblyReq,
+					Wavefront: assemblyWf,
+					Inst:      assemblyInst,
+				},
+			}
+			cu.vmemReturnAssemblies = map[uint64]int{assemblyInst.ID: 7}
+
+			pendingInst := wavefront.NewInst(insts.NewInst())
+			pendingInst.FormatType = insts.FLAT
+			pendingWf := wavefront.NewWavefront(kernels.NewWavefront())
+			pendingWf.OutstandingVectorMemAccess = 1
+			pendingWf.OutstandingScalarMemAccess = 1
+			pendingWf.InFlightInsts = 1
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				{wf: pendingWf, inst: pendingInst, remainingCycles: 3},
+			}
+			cu.comp.State.HasFlushReq = true
+			cu.comp.State.FlushReqID = timing.GetIDGenerator().Generate()
+			cu.comp.State.FlushReqSrc = "CP"
+
+			Expect(cu.flushPipeline()).To(BeTrue())
+
+			Expect(cu.vmemReturnAssemblies[assemblyInst.ID]).To(Equal(7))
+			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(3))
+			Expect(cu.shadowInFlightVectorMemAccess).To(HaveLen(1))
+			Expect(cu.comp.State.IsPaused).To(BeTrue())
+
+			Expect(cu.runPipeline()).To(BeFalse())
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(3))
+
+			Expect(cu.checkShadowBuffers()).To(BeTrue())
+			Expect(cu.checkShadowBuffers()).To(BeTrue())
+			Expect(cu.comp.State.IsPaused).To(BeFalse())
+			Expect(cu.vmemReturnAssemblies[assemblyInst.ID]).To(Equal(7))
+
+			for remaining := 2; remaining > 0; remaining-- {
+				Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+				Expect(cu.pendingVMemRetirements[0].remainingCycles).
+					To(Equal(remaining))
+				Expect(pendingWf.OutstandingVectorMemAccess).To(Equal(1))
+			}
+			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+			Expect(cu.pendingVMemRetirements).To(BeEmpty())
+			Expect(pendingWf.OutstandingVectorMemAccess).To(Equal(0))
+			Expect(pendingWf.OutstandingScalarMemAccess).To(Equal(0))
+			Expect(pendingWf.InFlightInsts).To(Equal(0))
+			Expect(cu.advanceVMemLoadRetirements()).To(BeFalse())
+			Expect(pendingWf.OutstandingVectorMemAccess).To(Equal(0))
 		})
 
 		It("should handle a restart request", func() {

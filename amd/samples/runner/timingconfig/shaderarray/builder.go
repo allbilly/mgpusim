@@ -88,6 +88,7 @@ type Builder struct {
 	maxWideWriteStridePenalty             int
 	maxWideWriteStrideFarPenalty          int
 	maxWideWriteStrideFarMinDistanceLines int
+	vmemReturnFanoutLaneDwordsPerCycle    int
 	registerScoreboard                    bool
 	scoreboardVALULatency                 int
 	valuTiming                            cu.VALUTiming
@@ -261,6 +262,14 @@ func (b Builder) WithMemPipelineBufferSize(size int) Builder {
 // transaction penalty in cycles for each CU.
 func (b Builder) WithMaxCoalescingPenalty(n int) Builder {
 	b.maxCoalescingPenalty = n
+	return b
+}
+
+// WithVMemReturnFanoutLaneDwordsPerCycle sets the per-instruction bandwidth
+// for broadcasting returned dwords to duplicate vector-lane destinations.
+// Zero disables the model.
+func (b Builder) WithVMemReturnFanoutLaneDwordsPerCycle(n int) Builder {
+	b.vmemReturnFanoutLaneDwordsPerCycle = n
 	return b
 }
 
@@ -587,6 +596,8 @@ func (b *Builder) cuSpec() cu.Spec {
 				b.maxWideWriteStrideFarMinDistanceLines
 		}
 	}
+	spec.VMemReturnFanoutLaneDwordsPerCycle =
+		b.vmemReturnFanoutLaneDwordsPerCycle
 
 	spec.RegisterScoreboard = b.registerScoreboard
 

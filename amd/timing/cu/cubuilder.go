@@ -36,6 +36,7 @@ var defaultSpec = Spec{
 	MaxWideWriteStridePenalty:             0,
 	MaxWideWriteStrideFarPenalty:          0,
 	MaxWideWriteStrideFarMinDistanceLines: 0,
+	VMemReturnFanoutLaneDwordsPerCycle:    0,
 	RegisterScoreboard:                    false,
 	LDSPipelineLatency:                    14,
 	LDSIssueInterval:                      0,
@@ -88,6 +89,14 @@ func (b Builder) WithSpec(spec Spec) Builder {
 	return b
 }
 
+// WithVMemReturnFanoutLaneDwordsPerCycle sets the per-instruction bandwidth
+// for broadcasting returned dwords to duplicate vector-lane destinations.
+// Zero disables the model.
+func (b Builder) WithVMemReturnFanoutLaneDwordsPerCycle(n int) Builder {
+	b.spec.VMemReturnFanoutLaneDwordsPerCycle = n
+	return b
+}
+
 // WithResources sets the shared references of the compute unit. Decoder and
 // ALU default to insts.NewDisassembler() and gcn3.NewALU(nil) when left nil.
 func (b Builder) WithResources(resources Resources) Builder {
@@ -122,6 +131,8 @@ func (b Builder) Build(name string) *Comp {
 		wftime:                make(map[uint64]timing.VTimeInPicoSec),
 	}
 	cuMW.InFlightVectorMemAccessLimit = b.spec.InFlightVectorMemAccessLimit
+	cuMW.vmemReturnFanoutLaneDwordsPerCycle =
+		b.spec.VMemReturnFanoutLaneDwordsPerCycle
 
 	wfDispatcher := NewWfDispatcher(cuMW)
 	wfDispatcher.scoreboardEnabled = b.spec.RegisterScoreboard
@@ -194,6 +205,9 @@ func (b *Builder) mustHaveValidSpec() {
 	if b.spec.MaxWideWriteStrideFarPenalty == 0 &&
 		b.spec.MaxWideWriteStrideFarMinDistanceLines != 0 {
 		panic("cu: wide-write far distance requires a far penalty")
+	}
+	if b.spec.VMemReturnFanoutLaneDwordsPerCycle < 0 {
+		panic("cu: VMemReturnFanoutLaneDwordsPerCycle cannot be negative")
 	}
 }
 

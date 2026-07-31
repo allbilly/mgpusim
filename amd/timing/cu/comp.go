@@ -118,6 +118,11 @@ type Spec struct {
 	MaxWideWriteStrideFarPenalty          int  `json:"max_wide_write_stride_far_penalty"`
 	MaxWideWriteStrideFarMinDistanceLines int  `json:"max_wide_write_stride_far_min_distance_lines"`
 
+	// VMemReturnFanoutLaneDwordsPerCycle models the per-instruction bandwidth
+	// for broadcasting a returned source dword to duplicate lane destinations.
+	// Zero disables the model and preserves legacy immediate retirement.
+	VMemReturnFanoutLaneDwordsPerCycle int `json:"vmem_return_fanout_lane_dwords_per_cycle"`
+
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`
