@@ -67,20 +67,25 @@ func MakeBuilder() r9nano.Builder {
 		WithDRAMBankPipelineWidth(1).
 		WithDRAMBankPipelineDepth(1).
 		WithDRAMStageLatency(1).
-		// A shared request token bucket allows an initial 896 KiB of cache-line
+		// A shared request token bucket allows an initial 625 KiB of cache-line
 		// traffic, then limits sustained L2-to-DRAM issue to one 64-byte line
 		// per GPU cycle. This retains bank-level random-miss concurrency while
 		// matching the measured large-vector slope.
 		WithL2ToDRAMRequestRate(1, 1).
-		WithL2ToDRAMRequestBurst(14336).
+		WithL2ToDRAMRequestBurst(10000).
+		// Dense stores can burst through 192 KiB, then share the L2 ingress at
+		// one cache line per two GPU cycles. Reads and responses remain
+		// unrestricted on this path.
+		WithL1ToL2WriteRate(1, 2).
+		WithL1ToL2WriteBurst(3072).
 		// Structural timing mechanisms adopted from the calibrated gfx90c
 		// model; numeric values are calibrated against RX 570 hardware.
 		WithRegisterScoreboard(true).
 		WithVALUTiming(cu.VALUTiming{
-			DefaultIssueInterval:         4, // 16-wide SIMD, 4 cyc/wavefront
-			DefaultResultLatency:         4,
-			BitwiseIssueInterval:         1,
-			BitwiseResultLatency:         1,
+			DefaultIssueInterval: 4, // 16-wide SIMD, 4 cyc/wavefront
+			DefaultResultLatency: 4,
+			BitwiseIssueInterval: 1,
+			BitwiseResultLatency: 1,
 			// Effective dependent-FMA occupancy validated at four matrix sizes;
 			// the generic four-cycle wave issue path undercounted this kernel by
 			// a nearly constant 20-22% without the removed memory stalls.

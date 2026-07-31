@@ -117,9 +117,12 @@ is deliberately blank until recollected. Multi-size evidence is recorded in
 - GDDR5 exposes four interleaved banks per 32-bit controller so unrelated
   random misses can overlap; cache and store serialization costs are modeled
   separately.
-- A shared L2-to-DRAM token bucket preserves short/random bursts and limits
-  sustained cache-line issue. The 262,144-element vectoradd error improves
-  from 47.2% to 2.1%.
+- A shared L2-to-DRAM token bucket preserves a 625 KiB short/random burst and
+  limits sustained cache-line issue; the large vectoradd point remains within
+  7% across the repeated hardware median.
+- A write-filtered L1-to-L2 token bucket preserves the first 192 KiB of dense
+  stores, then limits sustained write ingress to one line per two cycles. The
+  five-point ReLU MARE is 4.6% without throttling reads or responses.
 - Sparse read coalescing no longer pays an extra per-line stall on top of the
   actual generated requests and memory latency.
 - Wide vector loads and stores use their actual cache, memory, and LDS timing;

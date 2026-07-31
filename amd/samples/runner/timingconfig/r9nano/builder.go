@@ -84,6 +84,9 @@ type Builder struct {
 	l2ToDramRequestRateNumerator     int
 	l2ToDramRequestRateDenominator   int
 	l2ToDramRequestBurst             int
+	l1ToL2WriteRateNumerator         int
+	l1ToL2WriteRateDenominator       int
+	l1ToL2WriteBurst                 int
 	cpAlg                            string
 	cpNumDies                        int
 	cpWavefrontDispatchCycles        int
@@ -341,6 +344,21 @@ func (b Builder) WithL2ToDRAMRequestRate(
 // credit balance. Zero disables bursting beyond one cycle's request budget.
 func (b Builder) WithL2ToDRAMRequestBurst(n int) Builder {
 	b.l2ToDramRequestBurst = n
+	return b
+}
+
+// WithL1ToL2WriteRate limits aggregate write requests from all L1 caches to
+// the shared L2 while leaving reads and responses unrestricted.
+func (b Builder) WithL1ToL2WriteRate(numerator, denominator int) Builder {
+	b.l1ToL2WriteRateNumerator = numerator
+	b.l1ToL2WriteRateDenominator = denominator
+	return b
+}
+
+// WithL1ToL2WriteBurst sets the number of unused write-request credits that
+// the shared L1-to-L2 path can accumulate.
+func (b Builder) WithL1ToL2WriteBurst(n int) Builder {
+	b.l1ToL2WriteBurst = n
 	return b
 }
 
@@ -770,10 +788,24 @@ func (b *Builder) connectCPWithDRAMControllers() {
 }
 
 func (b *Builder) connectL1ToL2() {
-	l1ToL2Conn := directconnection.MakeBuilder().
-		WithRegistrar(b.simulation).
-		WithSpec(directconnection.Spec{Freq: b.freq}).
-		Build(b.name + ".L1ToL2")
+	var l1ToL2Conn messaging.Connection
+	if b.l1ToL2WriteRateNumerator > 0 {
+		l1ToL2Conn = requestlimitedconnection.MakeBuilder().
+			WithRegistrar(b.simulation).
+			WithSpec(requestlimitedconnection.Spec{
+				Freq:                   b.freq,
+				RequestRateNumerator:   b.l1ToL2WriteRateNumerator,
+				RequestRateDenominator: b.l1ToL2WriteRateDenominator,
+				BurstRequests:          b.l1ToL2WriteBurst,
+				RequestFilter:          requestlimitedconnection.WriteRequests,
+			}).
+			Build(b.name + ".L1ToL2")
+	} else {
+		l1ToL2Conn = directconnection.MakeBuilder().
+			WithRegistrar(b.simulation).
+			WithSpec(directconnection.Spec{Freq: b.freq}).
+			Build(b.name + ".L1ToL2")
+	}
 
 	l1ToL2Conn.PlugIn(b.rdmaEngine.GetPortByName("RDMARequestInside"))
 	l1ToL2Conn.PlugIn(b.rdmaEngine.GetPortByName("RDMADataInside"))

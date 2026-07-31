@@ -90,6 +90,52 @@ func TestZeroRequestLimitIsUnlimited(t *testing.T) {
 	}
 }
 
+func TestWriteFilterLeavesReadsUnlimited(t *testing.T) {
+	engine := timing.NewSerialEngine()
+	connection := MakeBuilder().
+		WithRegistrar(modeling.NewStandaloneRegistrar(engine)).
+		WithSpec(Spec{
+			Freq:                   1 * timing.GHz,
+			RequestRateNumerator:   1,
+			RequestRateDenominator: 1,
+			BurstRequests:          1,
+			RequestFilter:          WriteRequests,
+		}).
+		Build("Connection")
+	requester := messaging.NewPort(nil, 8, 8, "Requester")
+	memory := messaging.NewPort(nil, 8, 8, "Memory")
+	connection.PlugIn(requester)
+	connection.PlugIn(memory)
+
+	requester.Send(memprotocol.ReadReq{
+		MsgMeta: messaging.MsgMeta{
+			ID:  timing.GetIDGenerator().Generate(),
+			Src: requester.AsRemote(),
+			Dst: memory.AsRemote(),
+		},
+		AccessByteSize: 64,
+	})
+	for range 2 {
+		requester.Send(memprotocol.WriteReq{
+			MsgMeta: messaging.MsgMeta{
+				ID:  timing.GetIDGenerator().Generate(),
+				Src: requester.AsRemote(),
+				Dst: memory.AsRemote(),
+			},
+			Data: make([]byte, 64),
+		})
+	}
+
+	connection.Tick()
+
+	if got := memory.NumIncoming(); got != 2 {
+		t.Fatalf("delivered %d messages, want unlimited read plus one write", got)
+	}
+	if got := requester.NumOutgoing(); got != 1 {
+		t.Fatalf("left %d messages queued, want one throttled write", got)
+	}
+}
+
 func TestAllowsConfiguredInitialBurst(t *testing.T) {
 	engine := timing.NewSerialEngine()
 	connection := MakeBuilder().

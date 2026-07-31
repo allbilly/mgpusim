@@ -13,11 +13,22 @@ import (
 
 // Spec configures a request-limited connection.
 type Spec struct {
-	Freq                   timing.Freq `json:"freq"`
-	RequestRateNumerator   int         `json:"request_rate_numerator"`
-	RequestRateDenominator int         `json:"request_rate_denominator"`
-	BurstRequests          int         `json:"burst_requests"`
+	Freq                   timing.Freq   `json:"freq"`
+	RequestRateNumerator   int           `json:"request_rate_numerator"`
+	RequestRateDenominator int           `json:"request_rate_denominator"`
+	BurstRequests          int           `json:"burst_requests"`
+	RequestFilter          RequestFilter `json:"request_filter"`
 }
+
+// RequestFilter selects which memory request class consumes token credits.
+// The zero value preserves the original behavior and limits every AccessReq.
+type RequestFilter string
+
+const (
+	AllRequests   RequestFilter = ""
+	ReadRequests  RequestFilter = "read"
+	WriteRequests RequestFilter = "write"
+)
 
 // State stores arbitration and token-bucket state.
 type State struct {
@@ -187,7 +198,7 @@ func (m *middleware) forwardMany(
 			break
 		}
 
-		_, isRequest := head.(memprotocol.AccessReq)
+		isRequest := requestConsumesCredit(head, m.comp.Spec().RequestFilter)
 		if isRequest && !unlimited && *requestCredit < creditDenominator {
 			*waitingForCredit = true
 			break
@@ -208,4 +219,21 @@ func (m *middleware) forwardMany(
 	}
 
 	return madeProgress
+}
+
+func requestConsumesCredit(msg messaging.Msg, filter RequestFilter) bool {
+	if _, ok := msg.(memprotocol.AccessReq); !ok {
+		return false
+	}
+
+	switch filter {
+	case ReadRequests:
+		_, ok := msg.(memprotocol.ReadReq)
+		return ok
+	case WriteRequests:
+		_, ok := msg.(memprotocol.WriteReq)
+		return ok
+	default:
+		return true
+	}
 }

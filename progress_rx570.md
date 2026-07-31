@@ -88,6 +88,20 @@ token bucket alone leaves the default vectoradd and pagerank points bit-for-bit
 unchanged, while the final launch/store calibration puts the 262,144-element
 vector at 23.799 µs versus 24.3 µs hardware.
 
+### Sustained writes need a separate shared path
+
+The original per-transaction dense-store delay could not represent the size
+curve: increasing it enough for 262K ReLU overcharged 16K and 65K grids. The
+shared L1-to-L2 connection now supports filtering token credits by request
+class. RX 570 writes can burst for 3,072 cache lines (192 KiB), then issue at
+one line per two GPU cycles; reads and responses remain unlimited.
+
+This mechanism was selected from five ReLU sizes, including a new 131K
+midpoint, and checked against all four vectoradd sizes. ReLU's family MARE
+falls from 19.8% to 4.6%, vectoradd's is 7.9%, and the complete 32-point MARE
+falls to 8.8%. A two-lines-per-three-cycles candidate undercorrected both
+large ReLU points, while a 128 KiB burst overcharged the 65K points.
+
 | vector length | HW steady (µs) | Sim (µs) | Error |
 |---:|---:|---:|---:|
 | 4,096 | 4.400 | 4.808 | 9.3% |
