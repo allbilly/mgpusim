@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -23,7 +24,7 @@ ROOT = HERE.parents[2]
 
 SPECS = {
     "vectoradd": ([4096, 16384, 65536, 262144], lambda n: n),
-    "relu": ([4096, 16384, 65536, 262144], lambda n: n),
+    "relu": ([4096, 16384, 65536, 131072, 262144], lambda n: n),
     "matrixmult": ([64, 96, 128, 160], lambda n: n**3),
     "matrixtranspose": ([128, 256, 384, 512], lambda n: n**2),
     "bitonicsort": (
@@ -138,42 +139,55 @@ def run_sim(points, jobs, timeout):
     return rows
 
 
-def run_hardware(points, warmup, iters, timeout):
+def run_hardware(points, warmup, iters, trials, timeout):
     if not os.access("/dev/kfd", os.R_OK | os.W_OK):
         raise SystemExit(
             "hardware mode requires read/write access to /dev/kfd; "
             "add this user to the render group and start a new login session"
         )
     rows = []
-    for index, (benchmark, size) in enumerate(points):
-        env = os.environ.copy()
-        if index == 0:
-            env.pop("RX570_REUSE_BUILD", None)
-        else:
-            env["RX570_REUSE_BUILD"] = "1"
-        try:
-            output = run_checked(
-                [
-                    "bash", str(HERE / "build_and_run.sh"),
-                    "--only", benchmark,
-                    "--size", str(size),
-                    "--warmup", str(warmup),
-                    "--iters", str(iters),
-                ],
-                env,
-                timeout,
-            )
-            time_us = extract_time(output, benchmark)
-            status = "ok"
+    invocation = 0
+    for benchmark, size in points:
+        samples = []
+        failed = False
+        for trial in range(1, trials + 1):
+            env = os.environ.copy()
+            if invocation == 0:
+                env.pop("RX570_REUSE_BUILD", None)
+            else:
+                env["RX570_REUSE_BUILD"] = "1"
+            invocation += 1
+            try:
+                output = run_checked(
+                    [
+                        "bash", str(HERE / "build_and_run.sh"),
+                        "--only", benchmark,
+                        "--size", str(size),
+                        "--warmup", str(warmup),
+                        "--iters", str(iters),
+                    ],
+                    env,
+                    timeout,
+                )
+                sample_us = extract_time(output, benchmark)
+                samples.append(sample_us)
+                print(
+                    f"hardware {benchmark} size={size} trial={trial}: "
+                    f"{sample_us:.3f} us",
+                    file=sys.stderr,
+                )
+            except Exception as error:  # Keep other hardware points usable.
+                failed = True
+                print(
+                    f"hardware {benchmark} size={size} trial={trial}: "
+                    f"FAILED\n{error}",
+                    file=sys.stderr,
+                )
+        time_us = statistics.median(samples) if samples else None
+        status = "failed" if failed else "ok"
+        if time_us is not None:
             print(
-                f"hardware {benchmark} size={size}: {time_us:.3f} us",
-                file=sys.stderr,
-            )
-        except Exception as error:  # Keep other hardware points usable.
-            time_us = None
-            status = "failed"
-            print(
-                f"hardware {benchmark} size={size}: FAILED\n{error}",
+                f"hardware {benchmark} size={size} median: {time_us:.3f} us",
                 file=sys.stderr,
             )
         rows.append((benchmark, size, time_us, status))
@@ -194,6 +208,10 @@ def main():
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--iters", type=int, default=100)
+    parser.add_argument(
+        "--trials", type=int, default=3,
+        help="independent hardware processes per point; output is the median",
+    )
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--output", type=Path, default=Path("-"))
     args = parser.parse_args()
@@ -209,6 +227,8 @@ def main():
         parser.error("--warmup must not be negative")
     if args.iters < 1:
         parser.error("--iters must be positive")
+    if args.trials < 1:
+        parser.error("--trials must be positive")
 
     points = []
     for benchmark in benchmarks:
@@ -225,7 +245,9 @@ def main():
     else:
         if args.jobs != 1:
             print("hardware mode is serialized; ignoring --jobs", file=sys.stderr)
-        measured = run_hardware(points, args.warmup, args.iters, args.timeout)
+        measured = run_hardware(
+            points, args.warmup, args.iters, args.trials, args.timeout
+        )
 
     order = {(benchmark, size): i for i, (benchmark, size) in enumerate(points)}
     measured.sort(key=lambda row: order[(row[0], row[1])])

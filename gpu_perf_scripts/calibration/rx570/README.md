@@ -11,10 +11,10 @@ HIP-event microseconds remain diagnostic. The hardware file records both:
 
 - `cold`: the first timed launch, including workload-dependent ROCm/KFD
   first-use costs;
-- `steady`: the average after warmup, which is the appropriate comparison for
-  the GPU execution model.
+- `steady`: the median of three independent processes, each averaging 100
+  launches after 10 warmups. This is the comparison used for the GPU model.
 
-Cold-minus-steady ranges from about 10 to 50 µs and is not represented by a
+Cold-minus-steady ranges from about 10 to 71 µs and is not represented by a
 single simulator constant. `compare.py` therefore uses steady timing by
 default and exposes cold timing only as an explicit diagnostic.
 
@@ -68,16 +68,17 @@ calibration points:
 
 ```bash
 ./run_size_sweeps.py --mode sim --jobs 4 --output sim_size_sweep.csv
-./run_size_sweeps.py --mode hardware --jobs 1 --output hw_size_sweep.csv
+./run_size_sweeps.py --mode hardware --jobs 1 --trials 3 \
+  --output hw_size_sweep.csv
 ./compare_size_sweeps.py hw_size_sweep.csv sim_size_sweep.csv
 ```
 
 The sweep uses four launch-compatible sizes for each of eight scalable
-families. It writes every point and its status even if an individual run
-fails, so a failed holdout cannot silently disappear. The committed simulator
-CSV contains 32 verified points. The hardware CSV currently contains only the
-four previously measured vectoradd points because this user cannot read and
-write `/dev/kfd`; hardware mode checks that access before building.
+families plus a ReLU midpoint at 131K. It writes every point and its status
+even if an individual run fails, so a failed holdout cannot silently
+disappear. Both committed CSV files contain all 33 matched points. Hardware
+mode checks `/dev/kfd` access, runs three independent processes per point by
+default, and records their median.
 
 The sizes and work transforms are fixed in `run_size_sweeps.py`. Do not tune
 the timing model from simulator-only curves. Collect the corresponding exact
@@ -88,25 +89,21 @@ hardware/simulator slope ratio.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 7.101 | 7.387 | 4.0% |
-| relu | 6.837 | 6.261 | 8.4% |
-| matrixmult | 73.458 | 80.266 | 9.3% |
-| matrixtranspose | — | 78.548 | — |
-| bitonicsort | 350.214 | 320.969 | 8.4% |
-| aes | 18.084 | 18.415 | 1.8% |
-| fir | 7.637 | 7.454 | 2.4% |
-| kmeans | 29.424 | 26.854 | 8.7% |
-| pagerank | 20.356 | 21.812 | 7.2% |
-| nw | — | 137.432 | — |
+| vectoradd | 9.299 | 7.387 | 20.6% |
+| relu | 6.997 | 6.648 | 5.0% |
+| matrixmult | 52.396 | 49.803 | 4.9% |
+| matrixtranspose | 22.579 | 29.040 | 28.6% |
+| bitonicsort | 348.697 | 320.969 | 8.0% |
+| aes | 18.595 | 16.998 | 8.6% |
+| fir | 7.875 | 7.557 | 4.0% |
+| kmeans | 30.045 | 27.358 | 8.9% |
+| pagerank | 19.176 | 22.334 | 16.5% |
+| nw | 146.999 | 137.432 | 6.5% |
 
-MARE is **6.3% across the eight benchmarks with valid steady hardware
-data**, and every measured error is below 10%. All ten benchmarks verify their output;
-matrix transpose has only a 78.722 µs cold hardware measurement, so it is not
-included in steady MARE (its 78.548 µs simulation is 0.2% lower).
-NW's prior hardware measurement used an incorrect ascending second phase. The
-correct dependency order is now used by both launchers, and its hardware row
-is deliberately blank until recollected. Multi-size evidence is recorded in
-`hw_size_sweep.csv` and `sim_size_sweep.csv`.
+Canonical-size MARE is **11.2%** across all ten remeasured benchmarks. The
+anti-overfit result is **8.6% MARE across 33 matched size points**; seven of
+the eight swept families have family MARE below 10%. Matrix transpose remains
+the explicit outlier (28.8% family MARE, 34.5% maximum). All points verify.
 
 ## Main model corrections
 
@@ -142,6 +139,7 @@ parameter sweeps.
 ## Open
 
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
-- Re-measure with the GPU clock pinned after granting the user `render` access
-  to `/dev/kfd`.
-- Extend multi-size hardware sweeps to the remaining benchmark families.
+- Re-measure with the GPU clock pinned; current auto-clock microseconds remain
+  diagnostic despite three-process medians.
+- Diagnose matrix-transpose occupancy without adding benchmark-specific
+  timing, and add size sweeps for k-means and pagerank.

@@ -24,6 +24,10 @@ mkdir -p "$OUT"
 IMG="${ROCM_IMAGE:-docker.io/rocm/dev-ubuntu-22.04:6.2.4}"
 ARCH="${OFFLOAD_ARCH:-gfx803}"
 GO_BIN="${GO_BIN:-$(command -v go || true)}"
+account_home="$(getent passwd "$(id -u)" | cut -d: -f6)"
+if [[ -z "$GO_BIN" && -x "$account_home/go/bin/go" ]]; then
+  GO_BIN="$account_home/go/bin/go"
+fi
 if [[ -z "$GO_BIN" && -x /home/fedora/.local/go/bin/go ]]; then
   GO_BIN=/home/fedora/.local/go/bin/go
 fi

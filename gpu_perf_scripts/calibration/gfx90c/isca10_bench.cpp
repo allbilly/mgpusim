@@ -594,7 +594,8 @@ int main(int argc, char **argv) {
   run("bitonicsort", bench_bitonicsort, bitonic_iters);
   run("aes", bench_aes, iters);
   run("fir", bench_fir, iters);
-  run("cache_latency", bench_cache_latency, iters);
+  if (only == "cache_latency")
+    bench_cache_latency(iters);
   run("kmeans", bench_kmeans, iters);
   run("pagerank", bench_pagerank, iters);
   run("nw", bench_nw, iters);
