@@ -7,8 +7,8 @@
 // are taken from the AMD RX 570 product page and corroborating spec sheets.
 // Timing latencies are calibrated against the ISCA-10 benchmark suite run on
 // the physical RX 570 (see gpu_perf_scripts/calibration/rx570/hw_ground_truth.txt).
-// The steady-state calibration achieves 6.7% MARE across 47 matched size
-// points and 7.5% canonical-size MARE; all 10 benchmarks execute and verify.
+// The steady-state calibration achieves 6.0% MARE across 47 matched size
+// points and 5.8% canonical-size MARE; all 10 benchmarks execute and verify.
 // Cold
 // hipEvent measurements are reported separately because they include
 // workload-dependent host/runtime first-use costs outside the GPU model.
@@ -148,13 +148,11 @@ func MakeBuilder() r9nano.Builder {
 		// mostly bypasses the GPU L2. The r9nano builder's non-L2 DMA path
 		// is broken on the current HEAD (the ToMemDRAM port is declared but
 		// only built in hybrid mode, panicking otherwise), so the preset
-		// uses hybrid DMA. The L2-fill threshold is set to 128 KB: small
-		// working sets (NW's 129×129 int matrix = 65 KB) are pre-loaded
-		// into L2 via DMA, making them L2-hit on first kernel access. Larger
-		// transfers (vectoradd's 256 KB arrays) bypass L2 and go direct to
-		// DRAM, matching the streaming access pattern. Matrixmult's 64 KB
-		// inputs are also pre-loaded; its calibrated wide-load path includes
-		// that initial cache residency.
+		// uses hybrid DMA. Transfers below 1 MiB populate L2; this captures the
+		// measured medium-size vector, transpose, PageRank, and NW residency
+		// regime. Larger transfers bypass L2 and go directly to DRAM. A 2 MiB
+		// threshold overfilled the modeled cache before vectoradd-262K and was
+		// rejected by the cross-size holdouts.
 		WithDMAThroughL2(true).
-		WithDMAThroughL2MaxBytes(128 * mem.KB)
+		WithDMAThroughL2MaxBytes(1 * mem.MB)
 }

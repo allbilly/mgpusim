@@ -96,21 +96,21 @@ hardware/simulator slope ratio.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 6.765 | 7.996 | 18.2% |
-| relu | 7.155 | 7.256 | 1.4% |
+| vectoradd | 6.765 | 7.473 | 10.5% |
+| relu | 7.155 | 7.194 | 0.5% |
 | matrixmult | 51.803 | 49.485 | 4.5% |
 | matrixtranspose | 16.989 | 14.154 | 16.7% |
 | bitonicsort | 347.854 | 323.743 | 6.9% |
 | aes | 18.314 | 16.925 | 7.6% |
 | fir | 7.699 | 7.646 | 0.7% |
-| kmeans | 29.615 | 28.473 | 3.9% |
-| pagerank | 19.455 | 22.168 | 13.9% |
+| kmeans | 29.615 | 28.231 | 4.7% |
+| pagerank | 19.455 | 20.450 | 5.1% |
 | nw | 146.510 | 144.844 | 1.1% |
 
-Canonical-size MARE is **7.5%** across all ten remeasured benchmarks. The
-anti-overfit result is **6.7% MARE across 47 matched size points**; nine of
-the ten swept families have family MARE below 10%. The maximum point error
-is the 384-wide transpose holdout at 25.0%. All points verify.
+Canonical-size MARE is **5.8%** across all ten remeasured benchmarks. The
+anti-overfit result is **6.0% MARE across 47 matched size points**; all ten
+swept families have family MARE below 10%. The maximum point error is the
+512-wide transpose holdout at 16.7%. All points verify.
 
 ## Main model corrections
 
@@ -134,6 +134,10 @@ is the 384-wide transpose holdout at 25.0%. All points verify.
   bank-service pressure exposed by k-means once its L1 hit rate collapses,
   without changing any of the independent vector, PageRank, or transpose
   holdouts. The write-specific bucket above remains active at the same time.
+- Host-to-device transfers below 1 MiB populate L2 before execution. This
+  reproduces the shared medium-working-set transition across vectoradd, ReLU,
+  transpose, PageRank, and NW. Raising the boundary to 2 MiB created a 27.7%
+  large-vector error, so full-L2 residency was rejected.
 - Full-line write serialization is charged once per wave instruction rather
   than once per generated cache-line request. This preserves scalar-store
   timing without penalizing a wide store 16 times.
@@ -158,5 +162,5 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned; current auto-clock microseconds remain
   diagnostic despite three-process medians.
-- Investigate the remaining transpose-384 residual without a benchmark- or
+- Investigate the remaining transpose-512 residual without a benchmark- or
   size-specific timing rule.
