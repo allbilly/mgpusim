@@ -19,6 +19,7 @@ SPECS=(
   "bitonicsort|amd/benchmarks/amdappsdk/bitonicsort/native/bitonicsort.cpp|amd/benchmarks/amdappsdk/bitonicsort/kernels_gfx90c.hsaco|BitonicSort"
   "aes|amd/benchmarks/heteromark/aes/native/kernels.cpp|amd/benchmarks/heteromark/aes/kernels_gfx90c.hsaco|Encrypt"
   "fir|amd/benchmarks/heteromark/fir/native/fir.cpp|amd/benchmarks/heteromark/fir/kernels_gfx90c.hsaco|FIR"
+  "cachelatency|amd/benchmarks/microbench/cachelatency/native/cache_latency.cpp|amd/benchmarks/microbench/cachelatency/kernels_gfx90c.hsaco|pointer_chase_kernel,vector_pointer_chase_kernel"
   "kmeans|amd/benchmarks/heteromark/kmeans/native/kmeans.cpp|amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco|kmeans_kernel_swap,kmeans_kernel_compute"
   "pagerank|amd/benchmarks/heteromark/pagerank/native/pagerank.cpp|amd/benchmarks/heteromark/pagerank/kernels_gfx90c.hsaco|PageRankUpdateGpu"
   "nw|amd/benchmarks/rodinia/nw/native/nw.cpp|amd/benchmarks/rodinia/nw/kernels_gfx90c.hsaco|nw_kernel1,nw_kernel2"

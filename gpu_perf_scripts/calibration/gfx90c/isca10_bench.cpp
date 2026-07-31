@@ -95,6 +95,7 @@ static int warmup_iters = 0;
 static bool report_components = false;
 static int cache_array_bytes = 16 * 1024;
 static int cache_num_accesses = 131072;
+static int cache_active_lanes = 0;
 static int kmeans_npoints = 4096;
 static int kmeans_nfeatures = 16;
 static int kmeans_nclusters = 5;
@@ -313,63 +314,126 @@ static uint64_t splitmix64_next(uint64_t &state) {
 }
 
 static void bench_cache_latency(int iters) {
+  const bool vector_probe = cache_active_lanes > 0;
+  if (cache_active_lanes < 0 || cache_active_lanes > 64) {
+    fprintf(stderr, "active lanes must be between 0 and 64\n");
+    std::exit(2);
+  }
   ModuleKernel kernel(
-      "gpu_perf_scripts/calibration/gfx90c/build/cache_latency_gfx90c.co",
-      "pointer_chase_kernel");
+      "amd/benchmarks/microbench/cachelatency/kernels_gfx90c.hsaco",
+      vector_probe ? "vector_pointer_chase_kernel" : "pointer_chase_kernel");
   constexpr int cacheline_bytes = 64;
   constexpr int stride = cacheline_bytes / sizeof(uint32_t);
   int n = std::max(cache_array_bytes / int(sizeof(uint32_t)), stride * 2);
   int nodes = n / stride;
   n = nodes * stride;
 
-  std::vector<uint32_t> permutation(nodes);
-  for (int i = 0; i < nodes; ++i)
-    permutation[i] = uint32_t(i);
-  uint64_t state = uint64_t(42) * UINT64_C(2654435761) +
-                   UINT64_C(0x9E3779B97F4A7C15);
-  for (int i = nodes - 1; i > 0; --i) {
-    int j = int(splitmix64_next(state) % uint64_t(i + 1));
-    std::swap(permutation[i], permutation[j]);
-  }
-
   std::vector<uint32_t> chain(n, 0);
-  for (int i = 0; i < nodes; ++i) {
-    uint32_t node = permutation[i] * stride;
-    uint32_t next = permutation[(i + 1) % nodes] * stride;
-    chain[node] = next;
+  std::vector<uint32_t> starts;
+  if (vector_probe) {
+    const int nodes_per_lane = nodes / cache_active_lanes;
+    if (nodes_per_lane < 2) {
+      fprintf(stderr, "vector cache_latency requires at least two cache lines "
+                      "per active lane\n");
+      std::exit(2);
+    }
+    starts.resize(cache_active_lanes);
+    for (int lane = 0; lane < cache_active_lanes; ++lane) {
+      std::vector<uint32_t> permutation(nodes_per_lane);
+      for (int i = 0; i < nodes_per_lane; ++i)
+        permutation[i] = uint32_t(i);
+      uint64_t state =
+          uint64_t(uint32_t(42) + uint32_t(lane)) * UINT64_C(2654435761) +
+          UINT64_C(0x9E3779B97F4A7C15);
+      for (int i = nodes_per_lane - 1; i > 0; --i) {
+        int j = int(splitmix64_next(state) % uint64_t(i + 1));
+        std::swap(permutation[i], permutation[j]);
+      }
+      auto node_index = [&](uint32_t ordinal) {
+        return (ordinal * uint32_t(cache_active_lanes) + uint32_t(lane)) *
+               uint32_t(stride);
+      };
+      for (int i = 0; i < nodes_per_lane; ++i) {
+        uint32_t node = node_index(permutation[i]);
+        uint32_t next =
+            node_index(permutation[(i + 1) % nodes_per_lane]);
+        chain[node] = next;
+      }
+      starts[lane] = node_index(permutation[0]);
+    }
+  } else {
+    std::vector<uint32_t> permutation(nodes);
+    for (int i = 0; i < nodes; ++i)
+      permutation[i] = uint32_t(i);
+    uint64_t state = uint64_t(42) * UINT64_C(2654435761) +
+                     UINT64_C(0x9E3779B97F4A7C15);
+    for (int i = nodes - 1; i > 0; --i) {
+      int j = int(splitmix64_next(state) % uint64_t(i + 1));
+      std::swap(permutation[i], permutation[j]);
+    }
+    for (int i = 0; i < nodes; ++i) {
+      uint32_t node = permutation[i] * stride;
+      uint32_t next = permutation[(i + 1) % nodes] * stride;
+      chain[node] = next;
+    }
+    starts.push_back(permutation[0] * stride);
   }
-  uint32_t start_index = permutation[0] * stride;
   uint32_t accesses = uint32_t(std::max(cache_num_accesses, 1));
-  uint32_t expected = start_index;
-  for (uint32_t i = 0; i < accesses; ++i)
-    expected = chain[expected];
+  std::vector<uint32_t> expected = starts;
+  for (uint32_t &value : expected)
+    for (uint32_t i = 0; i < accesses; ++i)
+      value = chain[value];
 
-  uint32_t *device_chain, *device_result;
+  uint32_t *device_chain, *device_starts = nullptr, *device_result;
   HIP_CHECK(hipMalloc(&device_chain, chain.size() * sizeof(uint32_t)));
-  HIP_CHECK(hipMalloc(&device_result, sizeof(uint32_t)));
+  if (vector_probe)
+    HIP_CHECK(hipMalloc(&device_starts, starts.size() * sizeof(uint32_t)));
+  HIP_CHECK(hipMalloc(&device_result, expected.size() * sizeof(uint32_t)));
   HIP_CHECK(hipMemcpy(device_chain, chain.data(),
                       chain.size() * sizeof(uint32_t),
                       hipMemcpyHostToDevice));
-  HIP_CHECK(hipMemset(device_result, 0, sizeof(uint32_t)));
+  if (vector_probe)
+    HIP_CHECK(hipMemcpy(device_starts, starts.data(),
+                        starts.size() * sizeof(uint32_t),
+                        hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemset(device_result, 0,
+                      expected.size() * sizeof(uint32_t)));
 
   auto launch = [&] {
-    void *args[] = {&device_chain, &start_index, &accesses, &device_result};
-    kernel.launch(dim3(1), dim3(1), 0, args);
+    if (vector_probe) {
+      uint32_t active_lanes = uint32_t(cache_active_lanes);
+      void *args[] = {&device_chain, &device_starts, &accesses, &active_lanes,
+                      &device_result};
+      kernel.launch(dim3(1), dim3(64), 0, args);
+    } else {
+      uint32_t start_index = starts[0];
+      void *args[] = {&device_chain, &start_index, &accesses, &device_result};
+      kernel.launch(dim3(1), dim3(1), 0, args);
+    }
   };
   float us = time_iters(iters, launch);
 
-  uint32_t actual = 0;
-  HIP_CHECK(hipMemcpy(&actual, device_result, sizeof(uint32_t),
+  std::vector<uint32_t> actual(expected.size());
+  HIP_CHECK(hipMemcpy(actual.data(), device_result,
+                      actual.size() * sizeof(uint32_t),
                       hipMemcpyDeviceToHost));
-  if (actual != expected) {
-    fprintf(stderr, "cache_latency mismatch: expected %u, got %u\n", expected,
-            actual);
-    std::exit(3);
+  for (size_t lane = 0; lane < expected.size(); ++lane) {
+    if (actual[lane] != expected[lane]) {
+      fprintf(stderr,
+              "cache_latency lane %zu mismatch: expected %u, got %u\n", lane,
+              expected[lane], actual[lane]);
+      std::exit(3);
+    }
   }
 
-  printf("cache_latency %.3f\n", us);
-  printf("cache_latency_ns_per_access %.6f\n",
+  printf(vector_probe ? "cache_latency_vector %.3f\n"
+                      : "cache_latency %.3f\n",
+         us);
+  printf(vector_probe ? "cache_latency_vector_ns_per_access %.6f\n"
+                      : "cache_latency_ns_per_access %.6f\n",
          double(us) * 1000.0 / double(accesses));
+  if (device_starts)
+    HIP_CHECK(hipFree(device_starts));
   HIP_CHECK(hipFree(device_chain));
   HIP_CHECK(hipFree(device_result));
 }
@@ -573,6 +637,8 @@ int main(int argc, char **argv) {
       cache_array_bytes = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--num-accesses") && i + 1 < argc)
       cache_num_accesses = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--active-lanes") && i + 1 < argc)
+      cache_active_lanes = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--points") && i + 1 < argc)
       kmeans_npoints = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--features") && i + 1 < argc)

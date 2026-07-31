@@ -156,7 +156,29 @@ contains a scalar pointer-chase implementation:
 ```
 
 The scalar probe is useful for hierarchy latency, but it does not characterize
-wave coalescing. Add a vector-load version before changing VMEM behavior.
+wave coalescing. The gfx90c benchmark also includes a dependent vector-memory
+variant. It gives every active lane a disjoint randomized cache-line cycle:
+
+```bash
+/home/fedora/.local/go/bin/go run ./amd/samples/cache_latency \
+  -timing -gpu gfx90c -arch gcn5 -verify \
+  -array-bytes 262144 -num-accesses 4096 -active-lanes 8
+```
+
+Sweep `-active-lanes 1`, `8`, and `64` first. Even the one-lane vector case
+uses `global_load_dword`; `-active-lanes 0` selects the original scalar probe.
+The checked-in gfx90c HSACO is loadable by both MGPUSim and the HIP hardware
+harness, and its metadata/disassembly must be rechecked after recompilation:
+
+```bash
+llvm-objdump --disassemble-symbols=vector_pointer_chase_kernel \
+  --mcpu=gfx90c kernels_gfx90c.hsaco
+llvm-readelf --notes kernels_gfx90c.hsaco
+```
+
+The expected vector ABI is 32 kernarg bytes, with no private-memory use or
+spills. Reject a generated binary if the dependent loop is scalarized to an
+`s_load_*` instruction.
 
 ### Vector stride and coalescing sweep
 

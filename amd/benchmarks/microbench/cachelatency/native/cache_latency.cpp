@@ -32,3 +32,28 @@ extern "C" __global__ void pointer_chase_kernel(
 
     *result = idx;
 }
+
+/*
+ * Vector-memory variant. Each active lane follows a disjoint randomized cycle
+ * of cache-line-spaced nodes. Loading the lane's start from global memory and
+ * indexing the chain with that lane-dependent value forces the dependent loads
+ * through the vector/global-memory path instead of the scalar-cache path.
+ */
+extern "C" __global__ void vector_pointer_chase_kernel(
+    const uint32_t* __restrict__ arr,
+    const uint32_t* __restrict__ start_indices,
+    uint32_t num_accesses,
+    uint32_t active_lanes,
+    uint32_t* result)
+{
+    const uint32_t lane = threadIdx.x;
+    if (blockIdx.x != 0 || lane >= active_lanes) return;
+
+    uint32_t idx = start_indices[lane];
+
+    for (uint32_t i = 0; i < num_accesses; ++i) {
+        idx = arr[idx];
+    }
+
+    result[lane] = idx;
+}

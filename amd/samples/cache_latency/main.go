@@ -16,6 +16,8 @@ var measureLaps = flag.Int("measure-laps", 4,
 var numAccesses = flag.Int("num-accesses", 0,
 	"Dependent loads to perform. 0 = derive from -measure-laps (match real HW).")
 var seed = flag.Int("seed", 42, "RNG seed for the chain permutation.")
+var activeLanes = flag.Int("active-lanes", 0,
+	"Vector pointer-chase lanes (1-64). 0 uses the scalar-cache probe.")
 
 func main() {
 	flag.Parse()
@@ -28,6 +30,7 @@ func main() {
 	benchmark.MeasureLaps = *measureLaps
 	benchmark.NumAccesses = *numAccesses
 	benchmark.Seed = uint32(*seed)
+	benchmark.ActiveLanes = *activeLanes
 	benchmark.Arch = runner.ArchType
 
 	runner.AddBenchmark(benchmark)

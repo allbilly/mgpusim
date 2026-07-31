@@ -38,6 +38,15 @@ type KernelArgs struct {
 	Result      driver.Ptr // offset 16
 }
 
+// VectorKernelArgs is the 32-byte ABI layout of vector_pointer_chase_kernel.
+type VectorKernelArgs struct {
+	Arr          driver.Ptr // offset 0
+	StartIndices driver.Ptr // offset 8
+	NumAccesses  uint32     // offset 16
+	ActiveLanes  uint32     // offset 20
+	Result       driver.Ptr // offset 24
+}
+
 // Benchmark defines the cache_latency benchmark.
 type Benchmark struct {
 	driver  *driver.Driver
@@ -63,15 +72,20 @@ type Benchmark struct {
 	NumAccesses int
 	// Seed controls the deterministic chain permutation.
 	Seed uint32
+	// ActiveLanes selects the vector-memory pointer chase when set to 1..64.
+	// Zero preserves the original single-thread scalar-cache probe.
+	ActiveLanes int
 
-	n        int // total array elements (ArrayBytes/4)
-	m        int // number of cacheline chase nodes (n/stride)
-	stride   int // element stride between nodes (CachelineBytes/4)
-	startIdx uint32
-	chain    []uint32
+	n            int // total array elements (ArrayBytes/4)
+	m            int // number of cacheline chase nodes (n/stride)
+	stride       int // element stride between nodes (CachelineBytes/4)
+	startIdx     uint32
+	startIndices []uint32
+	chain        []uint32
 
-	gArr    driver.Ptr
-	gResult driver.Ptr
+	gArr          driver.Ptr
+	gStartIndices driver.Ptr
+	gResult       driver.Ptr
 
 	useUnifiedMemory bool
 }
@@ -109,8 +123,14 @@ func (b *Benchmark) loadProgram() {
 		log.Panic("the cache_latency benchmark requires -arch cdna3, gcn4, or gcn5")
 	}
 
-	b.hsaco = insts.LoadKernelCodeObjectFromBytes(
-		hsacoBytes, "pointer_chase_kernel")
+	symbol := "pointer_chase_kernel"
+	if b.ActiveLanes > 0 {
+		if b.Arch != arch.GCN5 {
+			log.Panic("the vector cache_latency probe currently requires -arch gcn5")
+		}
+		symbol = "vector_pointer_chase_kernel"
+	}
+	b.hsaco = insts.LoadKernelCodeObjectFromBytes(hsacoBytes, symbol)
 	if b.hsaco == nil {
 		log.Panic("Failed to load kernel binary")
 	}
@@ -188,6 +208,47 @@ func (b *Benchmark) buildChain() {
 	b.startIdx = perm[0] * s
 }
 
+// buildVectorChains partitions the cache-line nodes evenly among active lanes.
+// Lane l owns node ((ordinal*lanes)+l)*stride, so no two lanes share a line.
+func (b *Benchmark) buildVectorChains() {
+	lanes := b.ActiveLanes
+	nodesPerLane := b.m / lanes
+	b.chain = make([]uint32, b.n)
+	b.startIndices = make([]uint32, lanes)
+
+	for lane := 0; lane < lanes; lane++ {
+		perm := make([]uint32, nodesPerLane)
+		for i := range perm {
+			perm[i] = uint32(i)
+		}
+
+		state := uint64(b.Seed+uint32(lane))*2654435761 +
+			0x9E3779B97F4A7C15
+		next := func() uint64 {
+			state += 0x9E3779B97F4A7C15
+			z := state
+			z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+			z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+			return z ^ (z >> 31)
+		}
+		for i := nodesPerLane - 1; i > 0; i-- {
+			j := int(next() % uint64(i+1))
+			perm[i], perm[j] = perm[j], perm[i]
+		}
+
+		nodeIndex := func(ordinal uint32) uint32 {
+			return (ordinal*uint32(lanes) + uint32(lane)) *
+				uint32(b.stride)
+		}
+		for i := 0; i < nodesPerLane; i++ {
+			node := nodeIndex(perm[i])
+			nextNode := nodeIndex(perm[(i+1)%nodesPerLane])
+			b.chain[node] = nextNode
+		}
+		b.startIndices[lane] = nodeIndex(perm[0])
+	}
+}
+
 func (b *Benchmark) initMem() {
 	if b.ArrayBytes <= 0 {
 		b.ArrayBytes = 16 * 1024 // 16 KB
@@ -213,6 +274,12 @@ func (b *Benchmark) initMem() {
 		b.ArrayBytes = b.n * 4
 	}
 	b.m = b.n / b.stride // cacheline nodes == touched lines
+	if b.ActiveLanes < 0 || b.ActiveLanes > 64 {
+		log.Panic("active lanes must be between 0 and 64")
+	}
+	if b.ActiveLanes > 0 && b.m/b.ActiveLanes < 2 {
+		log.Panic("vector cache_latency requires at least two cache lines per active lane")
+	}
 
 	// Timed accesses: derive from MeasureLaps like the real benchmark unless an
 	// explicit NumAccesses was given. The floor gives tiny resident sizes many
@@ -230,25 +297,64 @@ func (b *Benchmark) initMem() {
 		b.NumAccesses = na
 	}
 
-	b.buildChain()
+	if b.ActiveLanes > 0 {
+		b.buildVectorChains()
+	} else {
+		b.buildChain()
+	}
 
+	resultLen := 1
+	if b.ActiveLanes > 0 {
+		resultLen = b.ActiveLanes
+	}
 	if b.useUnifiedMemory {
 		b.gArr = b.driver.AllocateUnifiedMemory(
 			b.context, uint64(b.n*4))
+		if b.ActiveLanes > 0 {
+			b.gStartIndices = b.driver.AllocateUnifiedMemory(
+				b.context, uint64(b.ActiveLanes*4))
+		}
 		b.gResult = b.driver.AllocateUnifiedMemory(
-			b.context, uint64(4))
+			b.context, uint64(resultLen*4))
 	} else {
 		b.gArr = b.driver.AllocateMemory(b.context, uint64(b.n*4))
-		b.gResult = b.driver.AllocateMemory(b.context, uint64(4))
+		if b.ActiveLanes > 0 {
+			b.gStartIndices = b.driver.AllocateMemory(
+				b.context, uint64(b.ActiveLanes*4))
+		}
+		b.gResult = b.driver.AllocateMemory(
+			b.context, uint64(resultLen*4))
 	}
 
 	b.driver.MemCopyH2D(b.context, b.gArr, b.chain)
+	if b.ActiveLanes > 0 {
+		b.driver.MemCopyH2D(b.context, b.gStartIndices, b.startIndices)
+	}
 	// Initialize the result buffer so its page is resident on the GPU before
 	// the kernel writes to it (output-only buffers are otherwise never mapped).
-	b.driver.MemCopyH2D(b.context, b.gResult, []uint32{0})
+	b.driver.MemCopyH2D(b.context, b.gResult, make([]uint32, resultLen))
 }
 
 func (b *Benchmark) exec() {
+	if b.ActiveLanes > 0 {
+		args := VectorKernelArgs{
+			Arr:          b.gArr,
+			StartIndices: b.gStartIndices,
+			NumAccesses:  uint32(b.NumAccesses),
+			ActiveLanes:  uint32(b.ActiveLanes),
+			Result:       b.gResult,
+		}
+		b.driver.EnqueueLaunchKernel(
+			b.queue,
+			b.hsaco,
+			[3]uint32{64, 1, 1},
+			[3]uint16{64, 1, 1},
+			&args,
+		)
+		b.driver.DrainCommandQueue(b.queue)
+		return
+	}
+
 	args := KernelArgs{
 		Arr:         b.gArr,
 		StartIdx:    b.startIdx,
@@ -273,17 +379,24 @@ func (b *Benchmark) exec() {
 // Verify checks the GPU result against a CPU reference walk of the same chain.
 // The thread starts at startIdx and applies num_accesses chain hops.
 func (b *Benchmark) Verify() {
-	gpuResult := make([]uint32, 1)
+	resultLen := 1
+	starts := []uint32{b.startIdx}
+	if b.ActiveLanes > 0 {
+		resultLen = b.ActiveLanes
+		starts = b.startIndices
+	}
+	gpuResult := make([]uint32, resultLen)
 	b.driver.MemCopyD2H(b.context, gpuResult, b.gResult)
 
-	idx := b.startIdx
-	for i := 0; i < b.NumAccesses; i++ {
-		idx = b.chain[idx]
-	}
-
-	if gpuResult[0] != idx {
-		log.Fatalf("Mismatch: expected final index %d, but got %d.\n",
-			idx, gpuResult[0])
+	for lane, start := range starts {
+		idx := start
+		for i := 0; i < b.NumAccesses; i++ {
+			idx = b.chain[idx]
+		}
+		if gpuResult[lane] != idx {
+			log.Fatalf("Lane %d mismatch: expected final index %d, but got %d.\n",
+				lane, idx, gpuResult[lane])
+		}
 	}
 
 	log.Printf("Passed!\n")
