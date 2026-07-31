@@ -58,6 +58,71 @@ shape:
 - A one-point timing fit would hide both effects. Feature count and point count
   must remain independent calibration axes.
 
+### ReLU and AES size controls
+
+The ReLU simulator sweep was collected with verification enabled at commit
+`93b490af`, and AES at `65f6178f`. Both use the same timing settings restored
+by `17117fab` after an unsuccessful phase-sensitivity experiment, so these
+times describe the current timing configuration.
+
+| ReLU elements | Work-groups | Sim (us) | Sim growth |
+|--------------:|------------:|---------:|-----------:|
+| 16,384        | 256         | 3.100    | -          |
+| 32,768        | 512         | 8.534    | 2.753x     |
+| 65,536        | 1,024       | 14.572   | 1.708x     |
+| 131,072       | 2,048       | 27.250   | 1.870x     |
+
+The last three points admit the empirical large-grid fit
+`T = 2.195 + 0.000190826 N` us with `R^2 = 0.99986`. The 16,384-element point
+deviates; without counters its cause is unestablished, so it is excluded from
+that fit.
+
+| AES bytes | Work-groups | Sim (us) | Sim growth |
+|----------:|------------:|---------:|-----------:|
+| 1,024     | 1           | 15.447   | -          |
+| 2,048     | 2           | 15.455   | 1.001x     |
+| 4,096     | 4           | 15.476   | 1.001x     |
+| 8,192     | 8           | 16.733   | 1.081x     |
+
+The 1-4 KiB AES points are almost entirely on the modeled first-dispatch
+floor. They constrain a small-grid intercept, not AES throughput. The 8 KiB
+point is the first tested size with a clear incremental-work contribution.
+
+Randomized unpinned hardware controls tested whether grouped execution order
+caused the unusual hardware curves. Each benchmark used 12 deterministic
+shuffled rounds (seed `20260731`), one fresh serialized process per size, and
+`--warmup 0 --iters 1`. This means single-shot/no prior target launch, not
+necessarily cache-cold: the harness initializes device memory before timing.
+
+| ReLU elements | HW auto median (us) | CV | MAD (us) |
+|--------------:|--------------------:|---:|---------:|
+| 16,384        | 443.054             | 2.13% | 3.505 |
+| 32,768        | 98.010              | 9.61% | 3.431 |
+| 65,536        | 115.993             | 11.35% | 7.364 |
+| 131,072       | 155.443             | 56.29% | 0.862 |
+
+The large 131,072-element CV comes from one 524.640 us outlier; its small MAD
+shows why both robust spread and CV are reported. Randomization rules out
+grouped order as the sole cause of the 16,384-element anomaly: that size stayed
+in the 420-458 us range in every order position, while 32,768 elements stayed
+in the 90-125 us range.
+
+| AES bytes | HW auto median (us) | CV | MAD (us) |
+|----------:|--------------------:|---:|---------:|
+| 1,024     | 411.644             | 2.86% | 7.138 |
+| 2,048     | 394.057             | 4.38% | 3.131 |
+| 4,096     | 411.399             | 2.49% | 6.267 |
+| 8,192     | 400.629             | 2.85% | 9.188 |
+
+All 96 randomized runs returned zero. Immediately before and after each run,
+the policy was `auto` with 200 MHz active; temperatures were 45-47 C for ReLU
+and 44-49 C for AES. These snapshots do not observe the in-kernel clock. The
+ReLU curve is physically non-monotonic at the small end and the AES medians
+are flat and non-monotonic. These unpinned single-shot curves are unsuitable
+for throughput fitting and do not identify whether the cause is launch phase,
+initialization/cache state, grid thresholds, measurement noise, or an
+in-kernel power transient. They must not be compared with the pinned targets.
+
 ### Corrected matrix-multiplication sweep
 
 The corrected kernel uses global Y when indexing matrix A, and every output
@@ -135,6 +200,10 @@ reside in `/tmp/gfx90c-final-suite.Izkqsc`; the table below is their durable
 summary. Signed error is `HW/Sim - 1`; the acceptance gate is strict
 `abs(error) < 10%`.
 
+Commit `17117fab` restores the same timing configuration after the rejected
+dispatch experiment. A fresh exact-commit validation is still kept separate
+from this immutable historical run rather than silently relabeling artifacts.
+
 | Benchmark | Sim (us) | Pinned HW (us) | HW/Sim | Error | Gate |
 |-----------|---------:|---------------:|-------:|------:|------|
 | vectoradd | 27.261 | 29.364 | 1.0771x | +7.71% | Pass |
@@ -170,7 +239,7 @@ The immutable configuration combines these main settings:
 | Split-line loads | penalty 22, at most 2 dwords |
 | Dependent loads | issue penalty 6000, exact issue age 3, at most 2 dwords, FLAT/GLOBAL only |
 | Stores | partial-line penalty 103; wide near-stride 240; far-stride 270 at 64 lines |
-| Dispatch | subsequent launch 7500 cycles; completion 1450 cycles |
+| Dispatch | first launch 3750 cycles; subsequent launch 7500; completion 1450 |
 
 The core mechanisms are in `ee43afda`, `a8127c48`, `52e90380`, and
 `8d88b485`. The full-suite gate does not replace the size-sweep and paired
@@ -487,6 +556,25 @@ write acknowledgement. Results were neutral or slightly worse:
 
 The candidate and its temporary configuration API were removed. Store-buffer
 retirement must be measured separately from cache allocation policy.
+
+### Dispatch-overhead phase rebalance
+
+Commit `1d078dd0` tested a first-launch/completion rebalance from 3750/1450 to
+4050/1400 cycles. It moved the four-work-group AES default exactly as fixed
+cost arithmetic predicts, from 15.476 to 15.633 us, improving its signed error
+from +9.60% to +8.50%. Large-grid results were not stable under the same
+change: ReLU moved to 14.470 us and vector-add to 26.898 us even though their
+net fixed-cost change was only -12 cycles. Matrix transpose regressed from
+129.067 to 126.138 us and failed the strict gate at +11.60%.
+
+Code review confirmed that launch and completion costs are each charged once.
+The larger movements come from changing the pre-dispatch event phase and its
+downstream memory/port ordering, not literal double charging. A smaller
+3950/1425-cycle canary produced AES 15.586, ReLU 14.639, vector-add 26.897,
+and transpose 129.145 us; ReLU failed at -10.36%. Commit `17117fab` restores
+3750/1450. This rejects fixed-overhead tuning as a robust way to improve the
+narrow AES/ReLU margins; future work must measure launch behavior separately
+and validate adjacent sizes before changing the event phase.
 
 ## Remaining validation
 

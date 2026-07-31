@@ -399,6 +399,28 @@ If clock pinning is unavailable, set `ALLOW_UNPINNED_CLOCK=1` only to build or
 collect diagnostic curves. Record the observed clock for every repetition.
 Do not compare those absolute times with pinned 1600 MHz application targets.
 
+### Single-shot and power-state controls
+
+A warmed throughput sweep and a canonical one-launch measurement answer
+different questions. When the reference is a one-launch test, add a matching
+single-shot control rather than silently replacing it with a warmed batch:
+
+- run at least ten deterministic randomized rounds over the tested sizes;
+- use a fresh process/context when that matches the reference protocol;
+- select `--warmup 0 --iters 1` and persist the exact round order;
+- record every return code, temperature, policy, and clock sample immediately
+  before and after the run;
+- report median, MAD, CV, and size-normalized medians by order position.
+
+A pre/post `pp_dpm_sclk` sample does not establish the clock used while the
+kernel executed. If the size curve is flat or non-monotonic, launch phase,
+initialization/cache state, grid thresholds, noise, or an in-kernel power
+transient may dominate; the curve alone does not identify which one. Do not
+fit timing-model throughput to it. Repeat with a pinned clock and a warmed
+protocol, or collect continuous telemetry/device cycles. Also call the
+protocol *single-shot*, not automatically cache-cold; GPU memset or
+host-to-device initialization before timing may warm the cache.
+
 Run the matching legal sizes in MGPUSim with the same HSACO, input generator,
 launch geometry, and verification enabled. Existing sample flags include:
 
