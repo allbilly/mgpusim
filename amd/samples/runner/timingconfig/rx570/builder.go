@@ -80,12 +80,12 @@ func MakeBuilder() r9nano.Builder {
 		// unrestricted.
 		WithL1ToL2RequestRate(6, 1).
 		WithL1ToL2RequestBurst(8192).
-		// Dense stores can burst through 768 KiB, approximating the L2 capacity
-		// left after resident input/cache state, then share L2 ingress at one
-		// cache line per two GPU cycles. Reads and responses remain
+		// Dense stores can burst through about 740 KiB, approximating the L2
+		// capacity left after resident input/cache state, then share L2 ingress
+		// at seven cache lines per 15 GPU cycles. Reads and responses remain
 		// unrestricted on this path.
-		WithL1ToL2WriteRate(1, 2).
-		WithL1ToL2WriteBurst(12288).
+		WithL1ToL2WriteRate(7, 15).
+		WithL1ToL2WriteBurst(11840).
 		// Structural timing mechanisms adopted from the calibrated gfx90c
 		// model; numeric values are calibrated against RX 570 hardware.
 		WithRegisterScoreboard(true).
@@ -116,11 +116,13 @@ func MakeBuilder() r9nano.Builder {
 		// memory latency. An extra per-line read coalescing stall was double
 		// counting pagerank's random access cost, so its cap is disabled.
 		WithMaxCoalescingPenalty(0).
-		// Partial lines pay a write-combine/RMW cost; dense stores pay a
-		// 90-cycle issue cost once per wave instruction, independent of the
-		// number of cache-line transactions that instruction generates.
+		// Partial lines pay a write-combine/RMW cost. Scalar-width dense stores
+		// pay an 88-cycle issue cost, while dwordx4 stores pay 68 cycles because
+		// one wide instruction amortizes the front-end serialization. Both are
+		// charged once per wave instruction, independent of transaction count.
 		WithMaxWriteCoalescingPenalty(120).
-		WithFullLineWritePenalty(90).
+		WithFullLineWritePenalty(88).
+		WithWideFullLineWritePenalty(68).
 		// Wide vector accesses pay for their generated transactions, cache
 		// latency, and LDS dependencies directly. Synthetic per-line read and
 		// stride penalties fitted one matrix point but overpredicted all four

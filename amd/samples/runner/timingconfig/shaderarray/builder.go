@@ -79,6 +79,7 @@ type Builder struct {
 	maxCoalescingPenalty         int
 	maxWriteCoalescingPenalty    int
 	fullLineWritePenalty         int
+	wideFullLineWritePenalty     int
 	maxWideReadPenalty           int
 	maxWideWriteStridePenalty    int
 	registerScoreboard           bool
@@ -276,6 +277,13 @@ func (b Builder) WithMaxWriteCoalescingPenalty(n int) Builder {
 // for each wave instruction that produces a fully utilized cache-line write.
 func (b Builder) WithFullLineWritePenalty(n int) Builder {
 	b.fullLineWritePenalty = n
+	return b
+}
+
+// WithWideFullLineWritePenalty overrides the full-line issue serialization
+// cost for four-dword-per-lane vector stores.
+func (b Builder) WithWideFullLineWritePenalty(n int) Builder {
+	b.wideFullLineWritePenalty = n
 	return b
 }
 
@@ -532,6 +540,9 @@ func (b *Builder) cuSpec() cu.Spec {
 	}
 	if b.fullLineWritePenalty > 0 {
 		spec.FullLineWritePenalty = b.fullLineWritePenalty
+	}
+	if b.wideFullLineWritePenalty > 0 {
+		spec.WideFullLineWritePenalty = b.wideFullLineWritePenalty
 	}
 	if b.maxWideReadPenalty > 0 {
 		spec.MaxWideReadPenalty = b.maxWideReadPenalty

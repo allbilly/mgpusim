@@ -237,6 +237,8 @@ func (b *Builder) equipVectorMemoryUnit(cu *ComputeUnit, name string) {
 	vectorMemoryUnit.maxWriteCoalescingPenalty =
 		b.spec.MaxWriteCoalescingPenalty
 	vectorMemoryUnit.fullLineWritePenalty = b.spec.FullLineWritePenalty
+	vectorMemoryUnit.wideFullLineWritePenalty =
+		b.spec.WideFullLineWritePenalty
 	vectorMemoryUnit.maxWideReadPenalty = b.spec.MaxWideReadPenalty
 	vectorMemoryUnit.maxWideWriteStridePenalty =
 		b.spec.MaxWideWriteStridePenalty

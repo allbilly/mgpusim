@@ -109,6 +109,24 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(3))
 	})
 
+	It("can override full-line serialization for wide stores", func() {
+		vecMemUnit.fullLineWritePenalty = 7
+		vecMemUnit.wideFullLineWritePenalty = 3
+		fullMask := make([]bool, 64)
+		for i := range fullMask {
+			fullMask[i] = true
+		}
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 31
+		writeTxn := VectorMemAccessInfo{
+			Write: &memprotocol.WriteReq{DirtyMask: fullMask},
+			Inst:  inst,
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(3))
+	})
+
 	It("uses ordinary utilization cost for MUBUF scratch writes", func() {
 		vecMemUnit.maxCoalescingPenalty = 16
 		vecMemUnit.maxWriteCoalescingPenalty = 32

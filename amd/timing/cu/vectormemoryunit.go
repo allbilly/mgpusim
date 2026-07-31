@@ -30,6 +30,7 @@ type VectorMemoryUnit struct {
 	maxCoalescingPenalty      int
 	maxWriteCoalescingPenalty int
 	fullLineWritePenalty      int
+	wideFullLineWritePenalty  int
 	maxWideReadPenalty        int
 	maxWideWriteStridePenalty int
 	coalescingStallRemaining  int
@@ -201,17 +202,22 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 	}
 
 	if txn.Write != nil {
+		wideWrite := isWideVectorWrite(txn)
 		if cacheLineBytes > 0 && usefulBytes == cacheLineBytes {
 			// Full-line serialization is an instruction-issue cost, not a
 			// cache-line bandwidth cost. A wide store can generate many cache-line
 			// requests, but the vector-memory unit issues the wave instruction only
 			// once. Charging every request disproportionately penalizes wide stores.
 			if txn.Inst == nil || txn.Inst != u.lastFullLineWriteInst {
-				penalty += u.fullLineWritePenalty
+				fullLinePenalty := u.fullLineWritePenalty
+				if wideWrite && u.wideFullLineWritePenalty > 0 {
+					fullLinePenalty = u.wideFullLineWritePenalty
+				}
+				penalty += fullLinePenalty
 				u.lastFullLineWriteInst = txn.Inst
 			}
 		}
-		if isWideVectorWrite(txn) {
+		if wideWrite {
 			penalty += u.writeStridePenalty(txn.Write, cacheLineBytes)
 		} else {
 			u.hasLastWriteCacheLine = false

@@ -111,6 +111,7 @@ type Builder struct {
 	maxCoalescingPenalty             int
 	maxWriteCoalescingPenalty        int
 	fullLineWritePenalty             int
+	wideFullLineWritePenalty         int
 	maxWideReadPenalty               int
 	maxWideWriteStridePenalty        int
 	vecMemTransPipelineWidth         int
@@ -503,6 +504,13 @@ func (b Builder) WithMaxWriteCoalescingPenalty(penalty int) Builder {
 // for each wave instruction that produces a fully utilized cache-line write.
 func (b Builder) WithFullLineWritePenalty(penalty int) Builder {
 	b.fullLineWritePenalty = penalty
+	return b
+}
+
+// WithWideFullLineWritePenalty overrides the full-line issue serialization
+// cost for four-dword-per-lane vector stores.
+func (b Builder) WithWideFullLineWritePenalty(penalty int) Builder {
+	b.wideFullLineWritePenalty = penalty
 	return b
 }
 
@@ -989,6 +997,11 @@ func (b *Builder) buildSAs() {
 	if b.fullLineWritePenalty > 0 {
 		saBuilder = saBuilder.WithFullLineWritePenalty(
 			b.fullLineWritePenalty,
+		)
+	}
+	if b.wideFullLineWritePenalty > 0 {
+		saBuilder = saBuilder.WithWideFullLineWritePenalty(
+			b.wideFullLineWritePenalty,
 		)
 	}
 	if b.maxWideReadPenalty > 0 {
