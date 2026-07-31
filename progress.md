@@ -2,7 +2,7 @@
 
 **Goal:** Run modern ROCm kernels and calibrate cycle-accurate timing against the host Renoir APU (Ryzen 7 4700U, gfx90c).
 
-**Last updated:** 2026-07-30
+**Last updated:** 2026-07-31
 
 ## Status
 
@@ -15,8 +15,8 @@
 | MUBUF + private-segment scratch (VGPR spill) | Done |
 | DS b128, FLAT SADDR, missing SOP/VOP ops | Done |
 | Timing model `gfx90c/builder.go` | Done (validated preset) |
-| ISCA-10 sim vs HW (gfx90c HSACO) | Done — MARE **12.4%**, geo mean HW/Sim **0.88×** |
-| Remaining timing gaps | K-means, matrix multiplication, ReLU, NW |
+| ISCA-10 sim vs HW (gfx90c HSACO) | Current — ratio-error MARE **16.0%**, geo mean HW/Sim **1.00×** |
+| Remaining timing gaps | FIR, K-means, matrix transpose, NW |
 
 ## ISCA 2019 suite (2026-07-10)
 
@@ -335,7 +335,7 @@ matching the spec bandwidth.
 Suite MARE: 18.6% → 17.9%. Improvements: relu 22.6%→18.8%, pagerank
 15.7%→13.5%. No regressions.
 
-## Current calibration state (after CU dispatch + DRAM fixes)
+## Current calibration state (after dispatch, DRAM, and K-means fixes)
 
 | Benchmark         |     HW |    Sim |  Error |
 |-------------------|--------|--------|--------|
@@ -349,7 +349,13 @@ Suite MARE: 18.6% → 17.9%. Improvements: relu 22.6%→18.8%, pagerank
 | kmeans            | 39.220 | 50.473 | 28.7%  |
 | pagerank          |130.638 |112.948 | 13.5%  |
 | nw                |123.052 |153.630 | 24.8%  |
-| **MARE**          |        |        |**15.7%**|
+| **Mean \|Sim-HW\|/HW** |   |        |**15.7%**|
+
+The calibration `compare.py` follows the original table convention
+`error = HW/Sim - 1`; under that convention mean absolute error is **16.0%**
+and geometric mean HW/Sim is **1.00x**. The 15.7% value above uses hardware as
+the denominator and is included to make the “sim too slow/fast” percentages
+directly interpretable.
 
 ## K-means contiguous producer/consumer fix (2026-07-31)
 
