@@ -129,6 +129,12 @@ type Spec struct {
 	// exclusive with VMemReturnFanoutLaneDwordsPerCycle.
 	VMemLoadReturnLaneDwordsPerCycle int `json:"vmem_load_return_lane_dwords_per_cycle"`
 
+	// VMemWideLoadReturnLaneDwordsPerCycle models the per-wave bandwidth for
+	// retiring only the lane-dwords beyond one dword per active lane. Zero
+	// disables the model and preserves legacy immediate retirement. It is
+	// mutually exclusive with the other vector-memory return models.
+	VMemWideLoadReturnLaneDwordsPerCycle int `json:"vmem_wide_load_return_lane_dwords_per_cycle"`
+
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`

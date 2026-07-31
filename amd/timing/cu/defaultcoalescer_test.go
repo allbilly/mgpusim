@@ -117,4 +117,46 @@ var _ = Describe("Default Coalescer", func() {
 
 		Expect(memTransactions).To(HaveLen(4))
 	})
+
+	DescribeTable("counts only extra wide-load lane-dwords",
+		func(opcode int, exec uint64, alias bool, expected int) {
+			inst := insts.NewInst()
+			inst.FormatType = insts.FLAT
+			inst.Opcode = insts.Opcode(opcode)
+			inst.Dst = insts.NewVRegOperand(0, 0, 1)
+			inst.Addr = insts.NewVRegOperand(4, 4, 2)
+			dynamicInst := wavefront.NewInst(inst)
+			wf.SetDynamicInst(dynamicInst)
+			wf.SetEXEC(exec)
+
+			for lane := 0; lane < 64; lane++ {
+				addr := uint64(0x1000)
+				if !alias {
+					addr += uint64(lane * 16)
+				}
+				regAccessor.setRegValue(
+					insts.VReg(4), 2, lane, wf.VRegOffset,
+					insts.Uint64ToBytes(addr)[:8],
+				)
+			}
+
+			transactions := c.generateMemTransactions(wf)
+			cu := &ComputeUnit{vmemWideLoadReturnLaneDwordsPerCycle: 1}
+			for _, transaction := range transactions {
+				cu.accumulateWideVMemReturn(
+					dynamicInst.ID, transaction.laneInfo)
+			}
+			assembly := cu.vmemWideReturnAssemblies[dynamicInst.ID]
+			extra := assembly.laneDwords - len(assembly.activeLanes)
+
+			Expect(extra).To(Equal(expected))
+		},
+		Entry("dword full wave", 20, ^uint64(0), false, 0),
+		Entry("dwordx2 full wave", 21, ^uint64(0), false, 64),
+		Entry("dwordx4 full wave", 23, ^uint64(0), false, 192),
+		Entry("dwordx4 full-wave alias", 23, ^uint64(0), true, 192),
+		Entry("dwordx4 partial EXEC", 23, uint64(0xff), false, 24),
+		Entry("ubyte full wave", 16, ^uint64(0), false, 0),
+		Entry("ushort full wave", 18, ^uint64(0), false, 0),
+	)
 })

@@ -48,14 +48,17 @@ type ComputeUnit struct {
 	shadowInFlightScalarMemAccess []*ScalarMemAccessInfo
 	shadowInFlightVectorMemAccess []VectorMemAccessInfo
 
-	vmemReturnFanoutLaneDwordsPerCycle int
-	vmemLoadReturnLaneDwordsPerCycle   int
+	vmemReturnFanoutLaneDwordsPerCycle   int
+	vmemLoadReturnLaneDwordsPerCycle     int
+	vmemWideLoadReturnLaneDwordsPerCycle int
 
-	// vmemReturnAssemblies accumulates the selected lane-dword accounting mode
-	// across all cache-line response siblings of one dynamic vector load.
-	// Pending retirements count down independently, so unrelated loads overlap.
-	vmemReturnAssemblies   map[uint64]int
-	pendingVMemRetirements []pendingVMemLoadRetirement
+	// Return assemblies accumulate the selected lane-dword accounting mode
+	// across all cache-line response siblings of one dynamic vector load. The
+	// wide-only model services a FIFO per wave; the older models service each
+	// pending instruction independently.
+	vmemReturnAssemblies     map[uint64]int
+	vmemWideReturnAssemblies map[uint64]*vmemWideReturnAssembly
+	pendingVMemRetirements   []pendingVMemLoadRetirement
 
 	Scheduler        Scheduler
 	BranchUnit       SubComponent
@@ -86,6 +89,11 @@ type pendingVMemLoadRetirement struct {
 	wf              *wavefront.Wavefront
 	inst            *wavefront.Inst
 	remainingCycles int
+}
+
+type vmemWideReturnAssembly struct {
+	laneDwords  int
+	activeLanes map[int]struct{}
 }
 
 // Comp returns the component this middleware belongs to.
@@ -785,6 +793,9 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 			cu.vmemReturnAssemblies[inst.ID] += laneDwords
 		}
 	}
+	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+		cu.accumulateWideVMemReturn(inst.ID, info.laneInfo)
+	}
 
 	for _, laneInfo := range info.laneInfo {
 		offset := laneInfo.addrOffsetInCacheLine
@@ -858,6 +869,9 @@ func countTotalVMemLaneDwords(lanes []vectorMemAccessLaneInfo) int {
 func (cu *ComputeUnit) countVMemReturnLaneDwords(
 	lanes []vectorMemAccessLaneInfo,
 ) int {
+	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+		return 0
+	}
 	if cu.vmemLoadReturnLaneDwordsPerCycle > 0 {
 		return countTotalVMemLaneDwords(lanes)
 	}
@@ -865,10 +879,34 @@ func (cu *ComputeUnit) countVMemReturnLaneDwords(
 }
 
 func (cu *ComputeUnit) vmemReturnBandwidth() int {
+	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+		return cu.vmemWideLoadReturnLaneDwordsPerCycle
+	}
 	if cu.vmemLoadReturnLaneDwordsPerCycle > 0 {
 		return cu.vmemLoadReturnLaneDwordsPerCycle
 	}
 	return cu.vmemReturnFanoutLaneDwordsPerCycle
+}
+
+func (cu *ComputeUnit) accumulateWideVMemReturn(
+	instID uint64,
+	lanes []vectorMemAccessLaneInfo,
+) {
+	if cu.vmemWideReturnAssemblies == nil {
+		cu.vmemWideReturnAssemblies =
+			make(map[uint64]*vmemWideReturnAssembly)
+	}
+	assembly := cu.vmemWideReturnAssemblies[instID]
+	if assembly == nil {
+		assembly = &vmemWideReturnAssembly{
+			activeLanes: make(map[int]struct{}),
+		}
+		cu.vmemWideReturnAssemblies[instID] = assembly
+	}
+	for _, lane := range lanes {
+		assembly.laneDwords += lane.regCount
+		assembly.activeLanes[lane.laneID] = struct{}{}
+	}
 }
 
 func (cu *ComputeUnit) finishVectorMemLoadReturn(
@@ -881,15 +919,24 @@ func (cu *ComputeUnit) finishVectorMemLoadReturn(
 		return
 	}
 
-	duplicateLaneDwords := cu.vmemReturnAssemblies[inst.ID]
-	delete(cu.vmemReturnAssemblies, inst.ID)
-	if duplicateLaneDwords == 0 {
+	laneDwords := 0
+	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+		assembly := cu.vmemWideReturnAssemblies[inst.ID]
+		delete(cu.vmemWideReturnAssemblies, inst.ID)
+		if assembly != nil {
+			laneDwords = assembly.laneDwords - len(assembly.activeLanes)
+		}
+	} else {
+		laneDwords = cu.vmemReturnAssemblies[inst.ID]
+		delete(cu.vmemReturnAssemblies, inst.ID)
+	}
+	if laneDwords <= 0 {
 		cu.retireVectorMemLoad(wf, inst)
 		return
 	}
 
-	cycles := duplicateLaneDwords / bandwidth
-	if duplicateLaneDwords%bandwidth != 0 {
+	cycles := laneDwords / bandwidth
+	if laneDwords%bandwidth != 0 {
 		cycles++
 	}
 	cu.pendingVMemRetirements = append(
@@ -908,9 +955,23 @@ func (cu *ComputeUnit) advanceVMemLoadRetirements() bool {
 	}
 
 	remaining := cu.pendingVMemRetirements[:0]
+	var advancedWaves map[*wavefront.Wavefront]struct{}
+	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+		advancedWaves = make(map[*wavefront.Wavefront]struct{})
+	}
 	for i := range cu.pendingVMemRetirements {
 		retirement := cu.pendingVMemRetirements[i]
-		retirement.remainingCycles--
+		advance := true
+		if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+			if _, found := advancedWaves[retirement.wf]; found {
+				advance = false
+			} else {
+				advancedWaves[retirement.wf] = struct{}{}
+			}
+		}
+		if advance {
+			retirement.remainingCycles--
+		}
 		if retirement.remainingCycles <= 0 {
 			cu.retireVectorMemLoad(retirement.wf, retirement.inst)
 			continue

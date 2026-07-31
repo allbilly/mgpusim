@@ -25,3 +25,15 @@ func TestVMemLoadReturnBandwidthPropagation(t *testing.T) {
 		)
 	}
 }
+
+func TestVMemWideLoadReturnBandwidthPropagation(t *testing.T) {
+	builder := MakeBuilder().WithVMemWideLoadReturnLaneDwordsPerCycle(11)
+
+	spec := builder.cuSpec()
+	if spec.VMemWideLoadReturnLaneDwordsPerCycle != 11 {
+		t.Fatalf(
+			"expected wide vector-memory load return bandwidth 11, got %d",
+			spec.VMemWideLoadReturnLaneDwordsPerCycle,
+		)
+	}
+}

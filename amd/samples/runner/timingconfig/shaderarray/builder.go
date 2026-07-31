@@ -90,6 +90,7 @@ type Builder struct {
 	maxWideWriteStrideFarMinDistanceLines int
 	vmemReturnFanoutLaneDwordsPerCycle    int
 	vmemLoadReturnLaneDwordsPerCycle      int
+	vmemWideLoadReturnLaneDwordsPerCycle  int
 	registerScoreboard                    bool
 	scoreboardVALULatency                 int
 	valuTiming                            cu.VALUTiming
@@ -279,6 +280,13 @@ func (b Builder) WithVMemReturnFanoutLaneDwordsPerCycle(n int) Builder {
 // model.
 func (b Builder) WithVMemLoadReturnLaneDwordsPerCycle(n int) Builder {
 	b.vmemLoadReturnLaneDwordsPerCycle = n
+	return b
+}
+
+// WithVMemWideLoadReturnLaneDwordsPerCycle sets the per-wave bandwidth for
+// retiring lane-dwords beyond one dword per active lane. Zero disables it.
+func (b Builder) WithVMemWideLoadReturnLaneDwordsPerCycle(n int) Builder {
+	b.vmemWideLoadReturnLaneDwordsPerCycle = n
 	return b
 }
 
@@ -609,6 +617,8 @@ func (b *Builder) cuSpec() cu.Spec {
 		b.vmemReturnFanoutLaneDwordsPerCycle
 	spec.VMemLoadReturnLaneDwordsPerCycle =
 		b.vmemLoadReturnLaneDwordsPerCycle
+	spec.VMemWideLoadReturnLaneDwordsPerCycle =
+		b.vmemWideLoadReturnLaneDwordsPerCycle
 
 	spec.RegisterScoreboard = b.registerScoreboard
 
