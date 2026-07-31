@@ -14,6 +14,11 @@ SAMPLES="$ROOT/amd/samples"
 OUT_DIR="${1:-$ROOT/gpu_perf_scripts/calibration/rx570/sim_out}"
 SIM_JOBS="${SIM_JOBS:-1}"
 ONLY="${ONLY:-}"
+SWEEP_SIZE="${SWEEP_SIZE:-}"
+if [[ -n "$SWEEP_SIZE" && ( -z "$ONLY" || "$ONLY" == *,* ) ]]; then
+  echo "SWEEP_SIZE requires ONLY to name exactly one benchmark" >&2
+  exit 2
+fi
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
@@ -66,16 +71,16 @@ selected() {
 }
 
 specs=(
-  "vectoradd|vectoradd|-width 65536 -height 1"
-  "relu|relu|-length 65536"
-  "matrixmult|matrixmultiplication|-x 128 -y 128 -z 128"
-  "matrixtranspose|matrixtranspose|-width 512"
-  "bitonicsort|bitonicsort|-length 4096"
-  "aes|aes|-length 4096"
-  "fir|fir|-length 8192 -taps 16"
+  "vectoradd|vectoradd|-width ${SWEEP_SIZE:-65536} -height 1"
+  "relu|relu|-length ${SWEEP_SIZE:-65536}"
+  "matrixmult|matrixmultiplication|-x ${SWEEP_SIZE:-128} -y ${SWEEP_SIZE:-128} -z ${SWEEP_SIZE:-128}"
+  "matrixtranspose|matrixtranspose|-width ${SWEEP_SIZE:-512}"
+  "bitonicsort|bitonicsort|-length ${SWEEP_SIZE:-4096}"
+  "aes|aes|-length ${SWEEP_SIZE:-4096}"
+  "fir|fir|-length ${SWEEP_SIZE:-8192} -taps 16"
   "kmeans|kmeans|-points 4096 -features 16 -clusters 5 -max-iter 1"
   "pagerank|pagerank|-node 512 -sparsity 0.5 -iterations 2"
-  "nw|nw|-length 128"
+  "nw|nw|-length ${SWEEP_SIZE:-128}"
 )
 
 running=0

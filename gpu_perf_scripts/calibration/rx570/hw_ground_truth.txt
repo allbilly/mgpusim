@@ -10,6 +10,8 @@
 # The cold overhead (cold - steady) varies by benchmark due to page-fault/TLB
 # warmup costs proportional to data size, which the sim doesn't model.
 #
+# NW's old 236.330/195.281 row is intentionally omitted: it measured the
+# incorrect ascending second phase fixed by c0ee6ed0 and must be recollected.
 # Benchmark       Cold(µs)  Steady(µs)  Overhead(µs)
 vectoradd         38.240    7.101       31.139
 relu              26.881    6.837       20.044
@@ -20,4 +22,4 @@ aes               34.881    18.084      16.797
 fir               17.601    7.637       9.964
 kmeans            55.682    29.424      26.258
 pagerank          59.043    20.356      38.687
-nw                236.330   195.281     41.049
+nw                -         -           -

@@ -61,6 +61,29 @@ parallelism. All runs use:
 The `gcn3` name is intentional: this repository classifies gfx803 as
 `arch.GCN3`, even though Polaris is marketed as GCN 4.
 
+## Cross-size holdouts
+
+Use matched size sweeps to check scaling separately from the default-size
+calibration points:
+
+```bash
+./run_size_sweeps.py --mode sim --jobs 4 --output sim_size_sweep.csv
+./run_size_sweeps.py --mode hardware --jobs 1 --output hw_size_sweep.csv
+./compare_size_sweeps.py hw_size_sweep.csv sim_size_sweep.csv
+```
+
+The sweep uses four launch-compatible sizes for each of eight scalable
+families. It writes every point and its status even if an individual run
+fails, so a failed holdout cannot silently disappear. The committed simulator
+CSV contains 32 verified points. The hardware CSV currently contains only the
+four previously measured vectoradd points because this user cannot read and
+write `/dev/kfd`; hardware mode checks that access before building.
+
+The sizes and work transforms are fixed in `run_size_sweeps.py`. Do not tune
+the timing model from simulator-only curves. Collect the corresponding exact
+gfx803 hardware rows first, then judge both point error and the reported
+hardware/simulator slope ratio.
+
 ## Current steady-state result
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
@@ -74,13 +97,16 @@ The `gcn3` name is intentional: this repository classifies gfx803 as
 | fir | 7.637 | 7.454 | 2.4% |
 | kmeans | 29.424 | 26.854 | 8.7% |
 | pagerank | 20.356 | 21.812 | 7.2% |
-| nw | 195.281 | 182.112 | 6.7% |
+| nw | — | 137.432 | — |
 
-MARE is **6.3% across the nine benchmarks with steady hardware data**, and
-every measured error is below 10%. All ten benchmarks verify their output;
+MARE is **6.3% across the eight benchmarks with valid steady hardware
+data**, and every measured error is below 10%. All ten benchmarks verify their output;
 matrix transpose has only a 78.722 µs cold hardware measurement, so it is not
 included in steady MARE (its 78.548 µs simulation is 0.2% lower).
-The multi-size vector evidence is recorded in `vectoradd_size_sweep.txt`.
+NW's prior hardware measurement used an incorrect ascending second phase. The
+correct dependency order is now used by both launchers, and its hardware row
+is deliberately blank until recollected. Multi-size evidence is recorded in
+`hw_size_sweep.csv` and `sim_size_sweep.csv`.
 
 ## Main model corrections
 

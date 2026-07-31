@@ -9,4 +9,4 @@ aes 18.415
 fir 7.454
 kmeans 26.854
 pagerank 21.812
-nw 182.112
+nw 137.432

@@ -95,6 +95,18 @@ static int warmup_iters = 0;
 static bool report_components = false;
 static int cache_array_bytes = 16 * 1024;
 static int cache_num_accesses = 131072;
+static int benchmark_size = 0;
+
+static int selected_size(int default_size, int multiple,
+                         const char *benchmark) {
+  int size = benchmark_size > 0 ? benchmark_size : default_size;
+  if (size <= 0 || (multiple > 1 && size % multiple != 0)) {
+    fprintf(stderr, "%s size must be a positive multiple of %d\n", benchmark,
+            multiple);
+    std::exit(2);
+  }
+  return size;
+}
 
 template <typename F>
 static float time_iters(int iters, F &&launch) {
@@ -120,7 +132,7 @@ static void bench_vectoradd(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/amdappsdk/vectoradd/kernels_gfx90c.hsaco",
       "_Z15vectoradd_floatPfPKfS1_ii");
-  const int width = 65536, height = 1;
+  const int width = selected_size(65536, 64, "vectoradd"), height = 1;
   const int n = width * height;
   float *a, *b, *c;
   HIP_CHECK(hipMalloc(&a, n * sizeof(float)));
@@ -145,7 +157,7 @@ static void bench_relu(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/dnn/layer_benchmarks/relu/kernels_gfx90c.hsaco",
       "ReLUForward");
-  const int n = 65536;
+  const int n = selected_size(65536, 64, "relu");
   float *in, *out;
   HIP_CHECK(hipMalloc(&in, n * sizeof(float)));
   HIP_CHECK(hipMalloc(&out, n * sizeof(float)));
@@ -165,7 +177,7 @@ static void bench_matrixmult(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/amdappsdk/matrixmultiplication/kernels_gfx90c.hsaco",
       "mmmKernel_local");
-  const int N = 128;
+  const int N = selected_size(128, 32, "matrixmult");
   float4 *A, *B, *C;
   size_t bytes = size_t(N) * N * sizeof(float);
   HIP_CHECK(hipMalloc(&A, bytes));
@@ -190,7 +202,7 @@ static void bench_matrixtranspose(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/amdappsdk/matrixtranspose/kernels_gfx90c.hsaco",
       "matrixTranspose");
-  const int width = 512;
+  const int width = selected_size(512, 64, "matrixtranspose");
   const int blockSize = 16;
   const int elems = 4;
   const int wiWidth = width / elems;
@@ -222,7 +234,11 @@ static void bench_bitonicsort(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/amdappsdk/bitonicsort/kernels_gfx90c.hsaco",
       "BitonicSort");
-  const int length = 4096;
+  const int length = selected_size(4096, 64, "bitonicsort");
+  if ((length & (length - 1)) != 0) {
+    fprintf(stderr, "bitonicsort size must be a power of two\n");
+    std::exit(2);
+  }
   unsigned *d;
   HIP_CHECK(hipMalloc(&d, length * sizeof(unsigned)));
   std::vector<unsigned> h(length);
@@ -252,7 +268,7 @@ static void bench_bitonicsort(int iters) {
 static void bench_aes(int iters) {
   ModuleKernel kernel("amd/benchmarks/heteromark/aes/kernels_gfx90c.hsaco",
                       "Encrypt");
-  const int length = 4096; // bytes
+  const int length = selected_size(4096, 16, "aes"); // bytes
   unsigned char *input, *sdev;
   unsigned int *ek;
   HIP_CHECK(hipMalloc(&input, length));
@@ -278,7 +294,7 @@ static void bench_aes(int iters) {
 static void bench_fir(int iters) {
   ModuleKernel kernel("amd/benchmarks/heteromark/fir/kernels_gfx90c.hsaco",
                       "FIR");
-  const int length = 8192;
+  const int length = selected_size(8192, 256, "fir");
   const unsigned taps = 16;
   float *out, *coeff, *in, *hist;
   HIP_CHECK(hipMalloc(&out, length * sizeof(float)));
@@ -480,8 +496,8 @@ static void bench_nw(int iters) {
                        "nw_kernel1");
   ModuleKernel kernel2("amd/benchmarks/rodinia/nw/kernels_gfx90c.hsaco",
                        "nw_kernel2");
-  // Match amd/benchmarks/rodinia/nw: blockSize=64, length=128.
-  const int length = 128;
+  // Match amd/benchmarks/rodinia/nw: blockSize=64, default length=128.
+  const int length = selected_size(128, 64, "nw");
   const int B = 64;
   const int cols = length + 1;
   const int rows = length + 1;
@@ -513,9 +529,7 @@ static void bench_nw(int iters) {
                       &zero};
       kernel1.launch(grid, block, 0, args);
     }
-    // The Go gfx90c benchmark currently launches kernel2 for the same blk
-    // range as kernel1.
-    for (int blk = 1; blk <= workSize / B; blk++) {
+    for (int blk = workSize / B - 1; blk >= 1; blk--) {
       dim3 block(B);
       dim3 grid(blk);
       int zero = 0;
@@ -559,6 +573,8 @@ int main(int argc, char **argv) {
       cache_array_bytes = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--num-accesses") && i + 1 < argc)
       cache_num_accesses = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--size") && i + 1 < argc)
+      benchmark_size = atoi(argv[++i]);
   }
   bitonic_iters = iters;
   hipDeviceProp_t prop;

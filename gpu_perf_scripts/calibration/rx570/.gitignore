@@ -6,3 +6,5 @@ sim_out*/
 *.log
 *.err
 sim_result*.txt
+!hw_size_sweep.csv
+!sim_size_sweep.csv

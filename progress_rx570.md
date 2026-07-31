@@ -18,13 +18,15 @@ the exact gfx803 binaries used by the hardware harness.
 | fir | 7.637 | 7.454 | 2.4% |
 | kmeans | 29.424 | 26.854 | 8.7% |
 | pagerank | 20.356 | 21.812 | 7.2% |
-| nw | 195.281 | 182.112 | 6.7% |
+| nw | — | 137.432 | — |
 
-Steady-state MARE is **6.3%** across the nine benchmarks with steady hardware
-data, and every measured workload is below 10% error. All ten run and verify,
+Steady-state MARE is **6.3%** across the eight benchmarks with valid steady
+hardware data, and every measured workload is below 10% error. All ten run and verify,
 but matrix transpose has only a cold hardware measurement and is excluded
 from steady MARE; its simulated 78.548 µs is 0.2% below the 78.722 µs cold
-measurement. The original headline errors were vectoradd 38.0%, ReLU 21.5%,
+measurement. NW is also excluded because its old hardware timing used the
+incorrect second-phase launch order described below. The original headline
+errors were vectoradd 38.0%, ReLU 21.5%,
 and matrix multiplication 58.7%.
 
 The host clock is unpinned, so these microseconds are still diagnostic. A
@@ -128,7 +130,14 @@ the dense streaming kernels into range without applying benchmark-name rules.
 
 ### Multi-kernel dispatch cost
 
-Bitonic sort launches 78 kernels and NW launches 16. Calibrated GPU-side
+Bitonic sort launches 78 kernels. NW launches dependent anti-diagonals; its
+second phase previously ran in ascending order. That accidentally verified
+at lengths 64 and 128, but failed at the first later block for lengths 192 and
+256. Launching the second phase in descending order now verifies at all four
+sizes in both the benchmark and exact-HSACO harness. The stale NW hardware
+timing is not used for calibration and must be recollected.
+
+Calibrated GPU-side
 dispatch costs are:
 
 | Cost | Cycles |
@@ -141,6 +150,27 @@ This produces 321.0 µs for bitonic versus 350.2 µs hardware. The much larger
 10–50 µs cold-minus-steady values in the hardware file include ROCm/KFD
 first-use, page mapping, and other host-side effects; they are deliberately
 not folded into GPU execution time.
+
+## Cross-size holdout evidence
+
+The exact-HSACO harness and simulator runner now accept a single benchmark
+size, and the sweep driver records four predetermined, launch-compatible
+sizes for vectoradd, ReLU, matrix multiplication, matrix transpose, bitonic
+sort, AES, FIR, and NW. All 32 simulator points verify. Per-point failures are
+retained in the CSV and make the command fail after the other evidence has
+been collected.
+
+Only vectoradd currently has matched hardware data:
+
+| vector length | HW steady (µs) | Sim (µs) | Error |
+|---:|---:|---:|---:|
+| 4,096 | 4.400 | 4.808 | 9.3% |
+| 16,384 | 5.000 | 5.034 | 0.7% |
+| 65,536 | 7.101 | 7.387 | 4.0% |
+| 262,144 | 24.300 | 23.799 | 2.1% |
+
+No timing parameter was changed from simulator-only holdouts. The remaining
+families require matched RX 570 collection before further tuning.
 
 ## Parameter sweep evidence
 
@@ -173,6 +203,8 @@ not folded into GPU execution time.
 cd gpu_perf_scripts/calibration/rx570
 SIM_JOBS=4 ./run_sim.sh sim_out | tee sim_results.txt
 ./compare.py sim_results.txt
+./run_size_sweeps.py --mode sim --jobs 4 --output sim_size_sweep.csv
+./compare_size_sweeps.py hw_size_sweep.csv sim_size_sweep.csv
 ```
 
 The default comparison uses the recorded steady hardware column. To display

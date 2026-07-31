@@ -71,24 +71,29 @@ run_podman() {
     "$IMG" "$@"
 }
 
-echo "== generating deterministic benchmark fixtures =="
-"$GO_BIN" run "$HERE/generate_fixtures.go" -out "$OUT"
+if [[ "${RX570_REUSE_BUILD:-0}" != "1" || ! -x "$OUT/isca10_bench" ]]; then
+  echo "== generating deterministic benchmark fixtures =="
+  "$GO_BIN" run "$HERE/generate_fixtures.go" -out "$OUT"
 
-# Derive the gfx803 harness source from the gfx90c one by rewriting HSACO and
-# fixture paths. This keeps a single source of truth (the gfx90c harness) and
-# avoids a 586-line hand-maintained fork.
-GFX90C_BENCH="$ROOT/gpu_perf_scripts/calibration/gfx90c/isca10_bench.cpp"
-GFX803_BENCH="$OUT/isca10_bench_gfx803.cpp"
-sed \
-  -e 's#kernels_gfx90c\.hsaco#kernels_gfx803.hsaco#g' \
-  -e 's#calibration/gfx90c/build#calibration/rx570/build#g' \
-  -e 's#cache_latency_gfx90c\.co#cache_latency_gfx803.co#g' \
-  "$GFX90C_BENCH" > "$GFX803_BENCH"
-cp "$ROOT/gpu_perf_scripts/calibration/gfx90c/aes_tables.inc" "$OUT/aes_tables.inc"
+  # Derive the gfx803 harness source from the gfx90c one by rewriting HSACO and
+  # fixture paths. This keeps a single source of truth and avoids a maintained
+  # gfx803 source fork.
+  GFX90C_BENCH="$ROOT/gpu_perf_scripts/calibration/gfx90c/isca10_bench.cpp"
+  GFX803_BENCH="$OUT/isca10_bench_gfx803.cpp"
+  sed \
+    -e 's#kernels_gfx90c\.hsaco#kernels_gfx803.hsaco#g' \
+    -e 's#calibration/gfx90c/build#calibration/rx570/build#g' \
+    -e 's#cache_latency_gfx90c\.co#cache_latency_gfx803.co#g' \
+    "$GFX90C_BENCH" > "$GFX803_BENCH"
+  cp "$ROOT/gpu_perf_scripts/calibration/gfx90c/aes_tables.inc" \
+    "$OUT/aes_tables.inc"
 
-echo "== building exact-HSACO calibration harness for $ARCH =="
-run_podman hipcc -O3 --offload-arch="$ARCH" -std=c++17 -I"$OUT" \
-  "$GFX803_BENCH" -o "$OUT/isca10_bench"
+  echo "== building exact-HSACO calibration harness for $ARCH =="
+  run_podman hipcc -O3 --offload-arch="$ARCH" -std=c++17 -I"$OUT" \
+    "$GFX803_BENCH" -o "$OUT/isca10_bench"
+else
+  echo "== reusing exact-HSACO calibration harness =="
+fi
 
 echo "== running (clock $([ "$pinned" = "1" ] && echo pinned || echo UNPINNED/diagnostic)) =="
 run_podman env MGPUSIM_ROOT="$ROOT" "$OUT/isca10_bench" "$@"
