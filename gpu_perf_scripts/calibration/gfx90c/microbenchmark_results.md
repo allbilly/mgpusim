@@ -9,15 +9,170 @@ knob sweeps that have already been falsified.
 - GPU: Renoir integrated Radeon, gfx90c, 7 active CUs.
 - Reference application results in `hw_ground_truth.txt` were measured with
   the performance policy pinned to `high` (1600 MHz).
-- The microbenchmark measurements below were collected with the policy at
+- The diagnostic hardware measurements below were collected with the policy at
   `auto`. During the long pointer chase, repeated reads of
-  `pp_dpm_sclk` showed `200Mhz *` for the entire kernel.
+  `pp_dpm_sclk` showed `200 MHz *` for the entire kernel.
 - Therefore the microbenchmark hardware numbers are diagnostic curves and
   component ratios. They are not replacements for the pinned application
   ground truth.
 - Runs were sequential and the GPU edge temperature remained 44-47 C.
 
-## K-means feature-count sweep
+## Verified application size sweeps
+
+These sweeps change one input axis at a time while preserving the exact kernel
+binary and launch rules. Simulator outputs were verified. Hardware used the
+`auto` clock policy, so only within-hardware curve shape and growth are
+interpretable.
+
+### K-means feature and point sweeps
+
+The feature sweep holds points at 4,096 and clusters at 5:
+
+| Features | Sim (us) | Sim growth | HW auto (us) | HW growth |
+|---------:|---------:|-----------:|-------------:|----------:|
+| 4        | 16.914   | -          | 107.590      | -         |
+| 8        | 36.213   | 2.14x      | 189.685      | 1.76x     |
+| 16       | 40.439   | 1.12x      | 372.376      | 1.96x     |
+| 32       | 90.147   | 2.23x      | 740.660      | 1.99x     |
+
+The point sweep holds features at 16 and clusters at 5:
+
+| Points | Sim (us) | Sim growth | HW auto (us) | HW growth |
+|-------:|---------:|-----------:|-------------:|----------:|
+| 1,024  | 21.975   | -          | 204.677      | -         |
+| 2,048  | 29.538   | 1.34x      | 275.841      | 1.35x     |
+| 4,096  | 40.439   | 1.37x      | 372.376      | 1.35x     |
+| 8,192  | 82.660   | 2.04x      | 626.903      | 1.68x     |
+
+The default pinned 1600 MHz target is 39.220 us at 4,096 points, 16 features,
+and 5 clusters. The 372.376 us `auto` result at that same point demonstrates
+why the diagnostic hardware column is unusable for absolute calibration.
+Non-default sizes have no pinned reference. The useful observations are curve
+shape:
+
+- Hardware feature growth is close to 2x from 8 through 32 features. The
+  simulator has a plateau from 8 to 16 followed by a larger 16-to-32 step.
+- Fixed launch and setup cost is visible at the smaller point counts. The
+  simulator enters an approximately linear large-input regime more sharply
+  between 4,096 and 8,192 points than the diagnostic hardware curve.
+- A one-point timing fit would hide both effects. Feature count and point count
+  must remain independent calibration axes.
+
+### Corrected matrix-multiplication sweep
+
+The corrected kernel uses global Y when indexing matrix A, and every output
+element passes the strengthened verifier:
+
+| Matrix size | Work-groups | Sim (us) | Sim growth | HW auto (us) | HW growth |
+|------------:|------------:|---------:|-----------:|-------------:|----------:|
+| 32          | 1           | 14.444   | -          | 142.344      | -         |
+| 64          | 4           | 20.036   | 1.39x      | 264.337      | 1.86x     |
+| 128         | 16          | 42.229   | 2.11x      | 517.936      | 1.96x     |
+
+The 64-to-128 growth is close once both paths have enough work-groups to
+amortize fixed launch cost. The 32-to-64 difference shows why the
+one-work-group point must not set a saturated throughput parameter.
+
+The checked-in 39.107 us pinned target for N=128 predates the matrix-A indexing
+fix. It is stale for absolute validation of the corrected kernel. A replacement
+pinned measurement cannot currently be reacquired without sudo access to clock
+control, so no corrected absolute HW/simulator error is reported here.
+
+### Matrix-transpose width sweep
+
+The final committed configuration produced the following verified simulator
+curve:
+
+| Width | Sim (us) | Sim growth | HW auto (us) | HW growth |
+|------:|---------:|-----------:|-------------:|----------:|
+| 128   | 11.650   | -          | 33.358       | -         |
+| 256   | 35.498   | 3.047x     | 53.416       | 1.601x    |
+| 512   | 129.067  | 3.636x     | 243.543      | 4.559x    |
+
+The default width-512 point passes the pinned absolute target, but this sweep
+does **not** validate the same scaling mechanism. Fitting `T = a + bN^2` to
+the simulator's width-128 and width-256 points predicts 130.890 us at width
+512, only 1.4% above the observed 129.067 us. The simulator therefore remains
+close to fixed overhead plus quadratic work. The auto-clock hardware curve
+has a much sharper width-512 knee.
+
+The 64-line far-stride tier is an empirical fit for the canonical point, not a
+proven model of the hardware knee. A future pinned sweep around widths 320,
+384, and 448, paired with a wide-store stride microbenchmark, should determine
+whether the missing effect is cache capacity, TLB behavior, write combining,
+or another transaction-level mechanism.
+
+## Immutable full-suite validation
+
+The suite was built and run once from calibration commit `12d5269a`, with
+verification enabled and two simulator jobs. The raw artifacts currently
+reside in `/tmp/gfx90c-final-suite.Izkqsc`; the table below is their durable
+summary. Signed error is `HW/Sim - 1`; the acceptance gate is strict
+`abs(error) < 10%`.
+
+| Benchmark | Sim (us) | Pinned HW (us) | HW/Sim | Error | Gate |
+|-----------|---------:|---------------:|-------:|------:|------|
+| vectoradd | 27.261 | 29.364 | 1.0771x | +7.71% | Pass |
+| relu | 14.572 | 13.123 | 0.9006x | -9.94% | Pass |
+| matrixmult | 42.229 | 39.107 | 0.9261x | -7.39% | Not scored (stale) |
+| matrixtranspose | 129.067 | 140.773 | 1.0907x | +9.07% | Pass |
+| bitonicsort | 745.124 | 811.360 | 1.0889x | +8.89% | Pass |
+| aes | 15.476 | 16.962 | 1.0960x | +9.60% | Pass |
+| fir | 11.316 | 12.003 | 1.0607x | +6.07% | Pass |
+| kmeans | 40.439 | 39.220 | 0.9699x | -3.01% | Pass |
+| pagerank | 126.412 | 130.638 | 1.0334x | +3.34% | Pass |
+| nw | 134.211 | 123.052 | 0.9169x | -8.31% | Pass |
+
+All nine comparisons with valid pinned references pass the strict gate, with
+a MARE of 7.33%. As a non-validation sensitivity check, including the stale
+matrixmult number would produce 7.34% MARE and its numerical comparison is
+also below 10%.
+
+The matrixmult hardware target predates the global-row indexing fix and is not
+a valid absolute reference for the corrected kernel. It remains in the table
+only to make the historical comparison explicit. A corrected pinned
+measurement is still required. ReLU has only 0.06 percentage points of gate
+margin, AES 0.40, and matrixtranspose 0.93; these are passes, not evidence of
+robust prediction across sizes or clock states.
+
+The immutable configuration combines these main settings:
+
+| Mechanism | Accepted setting |
+|-----------|------------------|
+| L2 and DRAM | L2 bank latency 64 cycles; DRAM depth 9, stage latency 14 |
+| LDS and barrier | latency 4; issue interval 1; max in flight 4; barrier 4 |
+| Read coalescing | maximum penalty 13 |
+| Split-line loads | penalty 22, at most 2 dwords |
+| Dependent loads | issue penalty 6000, exact issue age 3, at most 2 dwords, FLAT/GLOBAL only |
+| Stores | partial-line penalty 103; wide near-stride 240; far-stride 270 at 64 lines |
+| Dispatch | subsequent launch 7500 cycles; completion 1450 cycles |
+
+The core mechanisms are in `ee43afda`, `a8127c48`, `52e90380`, and
+`8d88b485`. The full-suite gate does not replace the size-sweep and paired
+latency/throughput requirements below.
+
+## Separate latency from throughput
+
+Following the paired-probe principle used in
+[recent GPU microbenchmarking work](https://arxiv.org/html/2507.10789v1), an
+application size curve identifies fixed-cost, scaling, and knee mismatches but
+does not by itself distinguish dependent latency from independent throughput.
+The repository-wide procedure is in
+[`how_to_microbenchmark_amd.md`](../../../how_to_microbenchmark_amd.md). Use
+both:
+
+- a dependent chain with explicit consumption and `s_waitcnt` to expose result
+  latency; and
+- several independent operations, lanes, waves, or work-groups to expose
+  issue rate and sustainable concurrency.
+
+Disassemble the exact HSACO before interpreting either probe. Confirm the
+intended opcode, dependency chain, wait placement, unroll count, register
+usage, and absence of unintended spills or compiler-eliminated work. A timing
+parameter is supported only when it predicts the relevant slope or knee and
+survives the paired control and full-suite canaries.
+
+## Historical K-means feature-component sweep
 
 Commit `96d12f4b` parameterized the exact-HSACO hardware harness with
 `--points`, `--features`, and `--clusters`. The default 4096x16 input still
@@ -32,7 +187,8 @@ ALLOW_UNPINNED_CLOCK=1 \
   --points 4096 --features 16 --clusters 5 --warmup 2 --iters 10
 ```
 
-At 4096 points and 5 clusters:
+The earlier component-level sweep, before calibration commit `12d5269a`, used
+4,096 points and 5 clusters:
 
 | Features | HW total (us) | HW swap (us) | HW compute (us) | Sim swap (us) |
 |---------:|--------------:|-------------:|----------------:|--------------:|
@@ -113,7 +269,8 @@ The first-lap result must not be compared with a many-lap hardware average.
 Also, off-core memory does not necessarily scale with shader clock, so
 converting a 200 MHz DRAM miss to 1600 MHz GPU cycles is not a valid absolute
 calibration. A vector pointer chase and a pinned 1600 MHz hardware run remain
-the required measurements for final L2 fitting.
+required for independent absolute L2 validation, rather than as prerequisites
+for the committed application-suite fit.
 
 ## Vector cache-latency probe
 
@@ -155,9 +312,10 @@ At a 256 KiB total working set:
 The simulator and hardware curves have opposite active-lane trends for this
 larger footprint. However, off-core service time does not scale directly with
 the observed shader clock, so these unpinned numbers cannot set an absolute L2
-latency. Their safe conclusion is directional: reducing general L2/global-load
-latency to fit matmul is not supported by this probe and would also worsen
-PageRank and FIR.
+latency. Their safe conclusion is directional: an unqualified reduction of
+general L2/global-load latency to fit matmul is not supported by this probe and
+would also worsen PageRank and FIR unless their distinct access mechanisms are
+modeled separately.
 
 ## K-means producer/consumer isolation
 
@@ -199,27 +357,15 @@ before swap and defer `verifySwap()` until after compute. This removes every
 host transfer between the producer and consumer while preserving the same
 verification afterward. K-means improved from 59.096 to 50.473 us, and both
 the default one-iteration case and a three-iteration case passed CPU/RMSE
-verification. The remaining error is +28.7%, down from +50.7%.
+verification. The simulator remained 28.7% slower than hardware, improved from
+50.7% slower. With the document's signed convention, `HW/Sim - 1`, the
+remaining error at that milestone was -22.3%.
 
-## Matrix-multiplication size sweep
+## Matrix-multiplication correctness history
 
 Commit `3fe47656` parameterized the exact-HSACO harness with
-`--matrix-size`. The same tiled kernel and 8x8 work-group were measured at
-three square sizes:
-
-| Matrix size | Work-groups | Sim (us) | HW auto/200 MHz (us) | Sim growth | HW growth |
-|------------:|------------:|---------:|---------------------:|-----------:|----------:|
-| 32          | 1           | 15.866   | 145.255              | -          | -         |
-| 64          | 4           | 22.685   | 267.803              | 1.43x      | 1.84x     |
-| 128         | 16          | 45.141   | 518.458              | 1.99x      | 1.94x     |
-
-Absolute comparison remains invalid while hardware is unpinned, but the
-saturated 64-to-128 growth agrees closely. Combined with the vector pointer
-chase and the disassembly result that scratch is only 1.2% of instructions,
-this provides no support for changing general L2 latency, LDS throughput, or
-matmul-specific execution timing. The remaining pinned-reference error is
-+15.4%, already below 20%; a pinned-clock LDS/VALU component probe is required
-before another timing-model change.
+`--matrix-size`. The current corrected size results are recorded in the
+verified application-size section above.
 
 The benchmark verifier also contained an unrelated loop-variable error that
 checked only part of one row. Commit `91808957` now checks every output element
@@ -230,14 +376,16 @@ The stronger verifier then exposed a source-level bug at the first Y
 work-group boundary: `globalPosA` used local Y, causing every Y work-group to
 reuse matrix A rows 0-31. The native and OpenCL sources now use global Y and
 the gfx90c HSACO was regenerated. The corrected N=128 kernel passes full
-verification. Timing changed only 45.141 to 45.300 us in simulation and
-518.458 to 525.635 us on the same auto/200 MHz hardware state (+0.35% and
-+1.38%). The existing pinned target is retained until it can be remeasured,
-since the correction is timing-neutral within current measurement uncertainty.
+verification. Under the model used for that source-only comparison, timing
+changed only 45.141 to 45.300 us in simulation and 518.458 to 525.635 us on
+the same auto/200 MHz hardware state (+0.35% and +1.38%). Those historical
+numbers isolate the source correction; they are not the current model's size
+sweep. The old pinned target remains recorded for provenance but is stale for
+absolute validation of the corrected kernel.
 
-## Accepted general fixes
+## Earlier accepted fixes
 
-Two benchmark-driven fixes improved the K-means/matmul state:
+Three benchmark-driven fixes improved the K-means/matmul state:
 
 1. `fe4e4f8c` fixed per-die dispatch for a non-divisible CU count. The old
    algorithm assigned work to only 4 of 7 CUs. Full K-means improved from
@@ -253,14 +401,16 @@ Two benchmark-driven fixes improved the K-means/matmul state:
 
 Relative to the state at the start of this investigation:
 
-- matrix multiplication: 50.728 -> 45.141 us (HW 39.107);
+- matrix multiplication before the later source correction:
+  50.728 -> 45.141 us (historical pinned target 39.107);
 - K-means: 69.385 -> 50.473 us (HW 39.220).
 
 ## Rejected candidates
 
-### L2 bank latency 128 -> 64 cycles
+### Isolated L2 bank latency 128 -> 64 cycles
 
-Selected results:
+This historical experiment preceded the uninterrupted K-means sequence and
+matrix-index correction. Selected results:
 
 | Benchmark | 128-cycle sim (us) | 64-cycle sim (us) | HW (us) |
 |-----------|-------------------:|------------------:|--------:|
@@ -271,7 +421,11 @@ Selected results:
 
 Matmul became close and K-means improved, but full-suite MARE worsened from
 17.9% to 18.8%. PageRank and FIR, already too fast, became severe outliers.
-The candidate was reverted.
+The isolated candidate was reverted at that milestone. This result rejects a
+uniform latency change, not the accepted mechanism-separated model in
+`12d5269a`. The immutable configuration uses 64 cycles only together with
+access-class filters for split-line and dependent loads plus separate store
+stride costs.
 
 ### Vector transaction pipeline width 1 -> 4
 
@@ -309,13 +463,18 @@ write acknowledgement. Results were neutral or slightly worse:
 The candidate and its temporary configuration API were removed. Store-buffer
 retirement must be measured separately from cache allocation policy.
 
-## Next discriminating experiment
+## Remaining validation
 
-The vector and producer/consumer probes rule out broad full-wave L1V and L2
-latency reductions. The accepted uninterrupted kernel sequence recovers much
-of the K-means error; further work would require decoupling write allocation
-from lower-level write acknowledgement and validating the remaining small
-consumer reuse benefit. Matmul should remain a separate
-instruction-mix/local-memory investigation; its scratch traffic is only about
-1.2% of dynamic instructions and the vector probe does not support lowering
-general L2 latency.
+The vector and producer/consumer probes rule out broad, uniform full-wave L1V
+and L2 latency reductions. The size sweeps reinforce that K-means feature
+layout, point-count scaling, and matrix-multiplication saturation are distinct
+axes. The immutable default-size suite passes its available target gate, but
+the transpose width curve demonstrates why that is not sufficient. Candidate
+mechanisms must also survive dependent-latency and independent-throughput
+controls plus geometric sweeps around regime boundaries.
+
+The corrected matrix kernel still needs a replacement pinned N=128 hardware
+measurement when privileged clock control is available. Until then, its
+diagnostic auto-clock curve can validate scaling shape but not absolute error.
+The sharp hardware-only transpose width-512 knee and the ReLU/AES narrow gate
+margins are the highest-priority follow-up measurements.
