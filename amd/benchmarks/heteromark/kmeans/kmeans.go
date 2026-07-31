@@ -243,6 +243,12 @@ func (b *Benchmark) initMem() {
 }
 
 func (b *Benchmark) exec() {
+	if b.MaxIter > 0 {
+		b.initializeClusters()
+		b.initializeMembership()
+		b.uploadClusters()
+	}
+
 	if b.PreinitializeFeatureSwap {
 		b.preinitializeFeatureSwap()
 	} else {
@@ -251,10 +257,15 @@ func (b *Benchmark) exec() {
 	if b.MaxIter == 0 {
 		// A zero-iteration run is useful for isolating transpose/swap timing.
 		// There are no clusters or memberships from which to calculate RMSE.
+		b.verifySwap()
 		return
 	}
 	b.kmeansClustering()
 	b.gpuRMSE = b.calculateRMSE()
+	// The compute kernel reads but does not modify dFeaturesSwap. Verify the
+	// producer output after the consumer so the diagnostic D2H copy does not
+	// flush caches between the two timed kernels.
+	b.verifySwap()
 }
 
 func (b *Benchmark) preinitializeFeatureSwap() {
@@ -333,8 +344,6 @@ func (b *Benchmark) transposeFeatures() {
 	for _, q := range b.queues {
 		b.driver.DrainCommandQueue(q)
 	}
-
-	b.verifySwap()
 }
 
 func (b *Benchmark) verifySwap() {
@@ -358,10 +367,10 @@ func (b *Benchmark) kmeansClustering() {
 	numIterations := 0
 	delta := float64(1.0)
 
-	b.initializeClusters()
-	b.initializeMembership()
-
 	for delta > 0 && numIterations < b.MaxIter {
+		if numIterations > 0 {
+			b.uploadClusters()
+		}
 		delta = b.updateMembership()
 		numIterations++
 		b.updateCentroids()
@@ -381,6 +390,15 @@ func (b *Benchmark) initializeMembership() {
 	b.hMembership = make([]int32, b.NumPoints)
 	for i := 0; i < b.NumPoints; i++ {
 		b.hMembership[i] = -1
+	}
+}
+
+func (b *Benchmark) uploadClusters() {
+	for i, q := range b.queues {
+		b.driver.EnqueueMemCopyH2D(q, b.dClusters[i], b.hClusters)
+	}
+	for _, q := range b.queues {
+		b.driver.DrainCommandQueue(q)
 	}
 }
 
@@ -446,7 +464,6 @@ func (b *Benchmark) enqueueComputeKernel(q *driver.CommandQueue, gpuIndex int) {
 
 func (b *Benchmark) updateMembership() float64 {
 	for i, q := range b.queues {
-		b.driver.EnqueueMemCopyH2D(q, b.dClusters[i], b.hClusters)
 		b.enqueueComputeKernel(q, i)
 	}
 
