@@ -227,19 +227,64 @@ func (b *Benchmark) initMem() {
 		}
 	}
 
+	b.hFeatures = GenerateFeatures(b.NumPoints, b.NumFeatures)
+
+	b.driver.MemCopyH2D(b.context, b.dFeatures, b.hFeatures)
+}
+
+// GenerateFeatures returns the exact deterministic point-major feature input
+// used by the benchmark. Hardware calibration fixture generators call this
+// function so a size sweep cannot silently substitute a different C++ random
+// number generator.
+func GenerateFeatures(numPoints, numFeatures int) []float32 {
 	// Use a local random source seeded with a fixed value so the generated
 	// input is reproducible across runs. The top-level rand.Seed has been a
 	// no-op since Go 1.24, so seeding the global generator no longer yields a
-	// deterministic sequence; that made the feature data (and therefore the
-	// clustering result) differ on every run.
+	// deterministic sequence.
 	rng := rand.New(rand.NewSource(0))
-	b.hFeatures = make([]float32, b.NumPoints*b.NumFeatures)
-	for i := 0; i < b.NumPoints*b.NumFeatures; i++ {
-		b.hFeatures[i] = rng.Float32()
-		// b.hFeatures[i] = float32(i)
+	features := make([]float32, numPoints*numFeatures)
+	for i := range features {
+		features[i] = rng.Float32()
+	}
+	return features
+}
+
+// OneIterationMembership calculates the membership produced by the first
+// compute-kernel launch: clusters are initialized from the first numClusters
+// points, exactly as initializeClusters does. This is exported for generating
+// correctness fixtures for the exact-HSACO hardware path.
+func OneIterationMembership(
+	features []float32,
+	numPoints, numFeatures, numClusters int,
+) []int32 {
+	if len(features) != numPoints*numFeatures {
+		panic("kmeans: feature input has the wrong length")
+	}
+	if numClusters < 1 || numClusters > numPoints {
+		panic("kmeans: invalid cluster count")
 	}
 
-	b.driver.MemCopyH2D(b.context, b.dFeatures, b.hFeatures)
+	clusters := features[:numClusters*numFeatures]
+	membership := make([]int32, numPoints)
+	for point := 0; point < numPoints; point++ {
+		minDistance := math.MaxFloat64
+		clusterIndex := 0
+		for cluster := 0; cluster < numClusters; cluster++ {
+			distanceSquare := float64(0)
+			for feature := 0; feature < numFeatures; feature++ {
+				difference := float64(
+					features[point*numFeatures+feature] -
+						clusters[cluster*numFeatures+feature])
+				distanceSquare += difference * difference
+			}
+			if distanceSquare < minDistance {
+				minDistance = distanceSquare
+				clusterIndex = cluster
+			}
+		}
+		membership[point] = int32(clusterIndex)
+	}
+	return membership
 }
 
 func (b *Benchmark) exec() {

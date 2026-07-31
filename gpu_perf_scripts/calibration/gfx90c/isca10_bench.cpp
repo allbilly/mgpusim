@@ -11,7 +11,6 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
-#include <random>
 #include <string>
 #include <vector>
 
@@ -857,40 +856,50 @@ static void bench_kmeans(int iters) {
   const int npoints = kmeans_npoints;
   const int nfeatures = kmeans_nfeatures;
   const int nclusters = kmeans_nclusters;
+  const bool supported_points =
+      npoints == 1024 || npoints == 2048 || npoints == 4096 ||
+      npoints == 8192;
+  if (!supported_points || nfeatures != 16 || nclusters != 5) {
+    fprintf(stderr,
+            "K-means exact-fixture sweep requires --points "
+            "{1024,2048,4096,8192} --features 16 --clusters 5\n");
+    std::exit(2);
+  }
+  const std::string fixture_prefix =
+      "gpu_perf_scripts/calibration/gfx90c/build/kmeans_" +
+      std::to_string(npoints) + "_";
+  const size_t feature_count = size_t(npoints) * nfeatures;
+  const size_t cluster_count = size_t(nclusters) * nfeatures;
+  const std::vector<float> host_features = read_fixture<float>(
+      (fixture_prefix + "features.f32").c_str(), feature_count);
+  const std::vector<int> expected_membership = read_fixture<int>(
+      (fixture_prefix + "membership.i32").c_str(), size_t(npoints));
+  const std::vector<float> expected_clusters(
+      host_features.begin(), host_features.begin() + cluster_count);
+  std::vector<float> expected_swap(feature_count);
+  for (int point = 0; point < npoints; ++point)
+    for (int feature = 0; feature < nfeatures; ++feature)
+      expected_swap[size_t(feature) * npoints + point] =
+          host_features[size_t(point) * nfeatures + feature];
+
   float *feat, *feat_swap, *clusters;
   int *membership;
-  HIP_CHECK(hipMalloc(&feat, npoints * nfeatures * sizeof(float)));
-  HIP_CHECK(hipMalloc(&feat_swap, npoints * nfeatures * sizeof(float)));
-  HIP_CHECK(hipMalloc(&clusters, nclusters * nfeatures * sizeof(float)));
+  HIP_CHECK(hipMalloc(&feat, feature_count * sizeof(float)));
+  HIP_CHECK(hipMalloc(&feat_swap, feature_count * sizeof(float)));
+  HIP_CHECK(hipMalloc(&clusters, cluster_count * sizeof(float)));
   HIP_CHECK(hipMalloc(&membership, npoints * sizeof(int)));
-  std::vector<float> host_features;
-  if (npoints == 4096 && nfeatures == 16) {
-    host_features = read_fixture<float>(
-        "gpu_perf_scripts/calibration/gfx90c/build/kmeans_features.f32",
-        npoints * nfeatures);
-  } else {
-    std::mt19937 generator(0);
-    std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
-    host_features.resize(size_t(npoints) * nfeatures);
-    for (float &value : host_features)
-      value = distribution(generator);
-  }
   HIP_CHECK(hipMemcpy(feat, host_features.data(),
                       host_features.size() * sizeof(float),
                       hipMemcpyHostToDevice));
   if (kmeans_preinitialize_swap) {
-    std::vector<float> transposed(host_features.size());
-    for (int point = 0; point < npoints; ++point)
-      for (int feature = 0; feature < nfeatures; ++feature)
-        transposed[size_t(feature) * npoints + point] =
-            host_features[size_t(point) * nfeatures + feature];
-    HIP_CHECK(hipMemcpy(feat_swap, transposed.data(),
-                        transposed.size() * sizeof(float),
+    HIP_CHECK(hipMemcpy(feat_swap, expected_swap.data(),
+                        expected_swap.size() * sizeof(float),
                         hipMemcpyHostToDevice));
   }
-  HIP_CHECK(hipMemcpy(clusters, host_features.data(),
-                      nclusters * nfeatures * sizeof(float),
+  HIP_CHECK(hipMemcpy(clusters, expected_clusters.data(),
+                      expected_clusters.size() * sizeof(float),
                       hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemset(membership, 0xff, size_t(npoints) * sizeof(int)));
   dim3 block(64);
   dim3 grid((npoints + 63) / 64);
   auto launch_swap = [&] {
@@ -907,8 +916,61 @@ static void bench_kmeans(int iters) {
     };
     compute_kernel.launch(grid, block, 0, compute_args);
   };
+
+  auto verify_results = [&] {
+    std::vector<float> actual_swap(feature_count);
+    std::vector<float> actual_clusters(cluster_count);
+    std::vector<int> actual_membership(static_cast<size_t>(npoints));
+    HIP_CHECK(hipMemcpy(actual_swap.data(), feat_swap,
+                        actual_swap.size() * sizeof(float),
+                        hipMemcpyDeviceToHost));
+    HIP_CHECK(hipMemcpy(actual_membership.data(), membership,
+                        actual_membership.size() * sizeof(int),
+                        hipMemcpyDeviceToHost));
+    HIP_CHECK(hipMemcpy(actual_clusters.data(), clusters,
+                        actual_clusters.size() * sizeof(float),
+                        hipMemcpyDeviceToHost));
+
+    for (size_t i = 0; i < actual_swap.size(); ++i) {
+      if (actual_swap[i] != expected_swap[i]) {
+        fprintf(stderr,
+                "kmeans points=%d swapped feature %zu mismatch: "
+                "expected %.9g, got %.9g\n",
+                npoints, i, expected_swap[i], actual_swap[i]);
+        std::exit(3);
+      }
+    }
+    for (int point = 0; point < npoints; ++point) {
+      if (actual_membership[size_t(point)] !=
+          expected_membership[size_t(point)]) {
+        fprintf(stderr,
+                "kmeans points=%d membership %d mismatch: expected %d, "
+                "got %d\n",
+                npoints, point, expected_membership[size_t(point)],
+                actual_membership[size_t(point)]);
+        std::exit(3);
+      }
+    }
+    for (size_t i = 0; i < actual_clusters.size(); ++i) {
+      if (actual_clusters[i] != expected_clusters[i]) {
+        fprintf(stderr,
+                "kmeans points=%d cluster input %zu was modified: "
+                "expected %.9g, got %.9g\n",
+                npoints, i, expected_clusters[i], actual_clusters[i]);
+        std::exit(3);
+      }
+    }
+    fprintf(stderr,
+            "kmeans points=%d features=%d clusters=%d mode=%s "
+            "verification Passed! swapped=%zu memberships=%d clusters=%zu\n",
+            npoints, nfeatures, nclusters,
+            kmeans_preinitialize_swap ? "preinitialized" : "combined",
+            actual_swap.size(), npoints, actual_clusters.size());
+  };
+
   if (kmeans_preinitialize_swap) {
     float compute_us = time_iters(iters, launch_compute);
+    verify_results();
     printf("kmeans %.3f\n", compute_us);
     printf("kmeans_compute_preinitialized %.3f\n", compute_us);
     HIP_CHECK(hipFree(feat));
@@ -928,6 +990,7 @@ static void bench_kmeans(int iters) {
     printf("kmeans_swap %.3f\n", time_iters(iters, launch_swap));
     printf("kmeans_compute %.3f\n", time_iters(iters, launch_compute));
   }
+  verify_results();
   HIP_CHECK(hipFree(feat));
   HIP_CHECK(hipFree(feat_swap));
   HIP_CHECK(hipFree(clusters));

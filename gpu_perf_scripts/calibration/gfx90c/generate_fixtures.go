@@ -6,13 +6,20 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 
 	"github.com/sarchlab/mgpusim/v5/amd/benchmarks/amdappsdk/matrixmultiplication"
+	"github.com/sarchlab/mgpusim/v5/amd/benchmarks/heteromark/kmeans"
 	"github.com/sarchlab/mgpusim/v5/amd/benchmarks/matrix/csr"
 )
+
+var kmeansPointSweep = []int{1024, 2048, 4096, 8192}
+
+type fixture struct {
+	name string
+	data any
+}
 
 func writeBinary[T any](outputDir, name string, values []T) error {
 	path := filepath.Join(outputDir, name)
@@ -25,32 +32,35 @@ func writeBinary[T any](outputDir, name string, values []T) error {
 	return binary.Write(file, binary.LittleEndian, values)
 }
 
-func main() {
-	outputDir := flag.String("out", "build", "fixture output directory")
-	flag.Parse()
-
-	if err := os.MkdirAll(*outputDir, 0o755); err != nil {
-		panic(err)
+func generateFixtures(outputDir string) error {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
 	}
 
 	const (
-		numPoints   = 4096
 		numFeatures = 16
+		numClusters = 5
 	)
 
-	rng := rand.New(rand.NewSource(0))
-	features := make([]float32, numPoints*numFeatures)
-	for i := range features {
-		features[i] = rng.Float32()
+	outputs := make([]fixture, 0)
+	for _, numPoints := range kmeansPointSweep {
+		features := kmeans.GenerateFeatures(numPoints, numFeatures)
+		membership := kmeans.OneIterationMembership(
+			features, numPoints, numFeatures, numClusters)
+		prefix := fmt.Sprintf("kmeans_%d_", numPoints)
+		outputs = append(outputs,
+			fixture{prefix + "features.f32", features},
+			fixture{prefix + "membership.i32", membership},
+		)
+
+		// Preserve the original default-size fixture for existing scripts.
+		if numPoints == 4096 {
+			outputs = append(outputs,
+				fixture{"kmeans_features.f32", features},
+			)
+		}
 	}
 
-	type fixture struct {
-		name string
-		data any
-	}
-	outputs := []fixture{
-		{"kmeans_features.f32", features},
-	}
 	for _, size := range []uint32{32, 64, 128} {
 		matrixA, matrixB := matrixmultiplication.GenerateInputMatrices(
 			size, size, size)
@@ -85,12 +95,24 @@ func main() {
 		var err error
 		switch data := output.data.(type) {
 		case []float32:
-			err = writeBinary(*outputDir, output.name, data)
+			err = writeBinary(outputDir, output.name, data)
 		case []uint32:
-			err = writeBinary(*outputDir, output.name, data)
+			err = writeBinary(outputDir, output.name, data)
+		case []int32:
+			err = writeBinary(outputDir, output.name, data)
 		}
 		if err != nil {
-			panic(fmt.Errorf("write %s: %w", output.name, err))
+			return fmt.Errorf("write %s: %w", output.name, err)
 		}
+	}
+	return nil
+}
+
+func main() {
+	outputDir := flag.String("out", "build", "fixture output directory")
+	flag.Parse()
+
+	if err := generateFixtures(*outputDir); err != nil {
+		panic(err)
 	}
 }

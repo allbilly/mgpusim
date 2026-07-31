@@ -68,6 +68,7 @@ AUTO_VERIFICATION = {
     "matrixmult": ("marker", r"matrixmult .*verification Passed!"),
     "fp32fma": ("marker", r"fp32fma verification Passed!"),
     "vmemloadshape": ("marker", r"vmemloadshape verification Passed!"),
+    "kmeans": ("marker", r"kmeans .*verification Passed!"),
     "cache_latency": ("rc-guarded", None),
     "storestride": ("rc-guarded", None),
     "scratchspill": ("rc-guarded", None),
@@ -291,6 +292,54 @@ def validate_passthrough_args(arguments: Sequence[str]) -> list[str]:
                 f"benchmark argument {argument!r} overrides an enforced option"
             )
     return args
+
+
+def passthrough_option(
+    arguments: Sequence[str], option: str, default: str
+) -> str:
+    """Return the last value for a harness option, matching its argv parser."""
+    value = default
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == option:
+            if index + 1 >= len(arguments):
+                raise ValueError(f"{option} requires a value")
+            value = arguments[index + 1]
+            index += 2
+            continue
+        if argument.startswith(option + "="):
+            raise ValueError(
+                f"{option} must use a separate value, matching the harness parser"
+            )
+        index += 1
+    return value
+
+
+def kmeans_fixture_files(arguments: Sequence[str]) -> tuple[list[Path], list[Path]]:
+    """Resolve matched K-means fixtures and the sources that generate them."""
+    try:
+        points = int(passthrough_option(arguments, "--points", "4096"))
+        features = int(passthrough_option(arguments, "--features", "16"))
+        clusters = int(passthrough_option(arguments, "--clusters", "5"))
+    except ValueError as error:
+        raise ValueError(f"invalid K-means geometry: {error}") from error
+    if points not in (1024, 2048, 4096, 8192) or features != 16 or clusters != 5:
+        raise ValueError(
+            "K-means reference acquisition requires --points "
+            "{1024,2048,4096,8192} --features 16 --clusters 5"
+        )
+
+    fixture_prefix = HERE / "build" / f"kmeans_{points}_"
+    fixtures = [
+        Path(str(fixture_prefix) + "features.f32"),
+        Path(str(fixture_prefix) + "membership.i32"),
+    ]
+    sources = [
+        HERE / "generate_fixtures.go",
+        ROOT / "amd/benchmarks/heteromark/kmeans/kmeans.go",
+    ]
+    return fixtures, sources
 
 
 def build_container_command(
@@ -522,7 +571,24 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
     source = HERE / "isca10_bench.cpp"
     manifest_path = HERE / "hsaco_manifest.txt"
     hsaco = ROOT / BENCHMARK_HSACO[args.benchmark]
-    required_files = [binary, source, manifest_path, hsaco]
+    fixture_files: list[Path] = []
+    fixture_sources: list[Path] = []
+    if args.benchmark == "kmeans":
+        try:
+            fixture_files, fixture_sources = kmeans_fixture_files(
+                args.benchmark_args
+            )
+        except ValueError as error:
+            print(f"configuration error: {error}", file=sys.stderr)
+            return 2
+    required_files = [
+        binary,
+        source,
+        manifest_path,
+        hsaco,
+        *fixture_sources,
+        *fixture_files,
+    ]
     missing = [str(path) for path in required_files if not path.is_file()]
     if missing:
         print("missing required files: " + ", ".join(missing), file=sys.stderr)
@@ -530,6 +596,20 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
     if binary.stat().st_mtime_ns < max(source.stat().st_mtime_ns, hsaco.stat().st_mtime_ns):
         print("exact-HSACO harness binary is older than its source/code object", file=sys.stderr)
         return 2
+    if fixture_files:
+        newest_generator = max(path.stat().st_mtime_ns for path in fixture_sources)
+        stale_fixtures = [
+            str(path)
+            for path in fixture_files
+            if path.stat().st_mtime_ns < newest_generator
+        ]
+        if stale_fixtures:
+            print(
+                "K-means fixtures are older than their generator source: "
+                + ", ".join(stale_fixtures),
+                file=sys.stderr,
+            )
+            return 2
 
     output_dir = make_output_directory(args.benchmark, args.output_dir)
     metric_name = args.metric_name or args.benchmark

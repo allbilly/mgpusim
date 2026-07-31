@@ -64,6 +64,27 @@ class ParsingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             acquire.validate_passthrough_args(["--iters=2"])
 
+    def test_kmeans_fixture_selection_tracks_last_geometry_option(self):
+        fixtures, sources = acquire.kmeans_fixture_files(
+            ["--points", "1024", "--points", "8192", "--features", "16"]
+        )
+        self.assertEqual(
+            [path.name for path in fixtures],
+            ["kmeans_8192_features.f32", "kmeans_8192_membership.i32"],
+        )
+        self.assertEqual(
+            [path.name for path in sources],
+            ["generate_fixtures.go", "kmeans.go"],
+        )
+
+    def test_kmeans_fixture_selection_rejects_unmatched_geometry(self):
+        with self.assertRaisesRegex(ValueError, "reference acquisition"):
+            acquire.kmeans_fixture_files(["--points", "3072"])
+        with self.assertRaisesRegex(ValueError, "reference acquisition"):
+            acquire.kmeans_fixture_files(["--features", "32"])
+        with self.assertRaisesRegex(ValueError, "separate value"):
+            acquire.kmeans_fixture_files(["--points=8192"])
+
 
 class AcceptanceTests(unittest.TestCase):
     def assess(self, trace, **overrides):
@@ -143,6 +164,17 @@ class CommandTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             acquire.resolve_verification(args)
+
+    def test_kmeans_auto_mode_requires_explicit_success_marker(self):
+        args = argparse.Namespace(
+            verification_regex=None,
+            rc_guarded_verification=False,
+            benchmark="kmeans",
+        )
+        self.assertEqual(
+            acquire.resolve_verification(args),
+            ("marker", r"kmeans .*verification Passed!"),
+        )
 
 
 if __name__ == "__main__":
