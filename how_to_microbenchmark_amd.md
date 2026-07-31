@@ -209,6 +209,17 @@ endpoints:
 - `independent4`: four source-level independent loads precede the drain and
   bound the benefit available from memory-level parallelism.
 
+This design follows the transferable parts of *Dissecting the NVIDIA
+Blackwell Architecture with Microbenchmarks*
+([Jarmusch et al.](https://arxiv.org/html/2507.10789v1)): distinguish a true
+dependent chain from independent completion, time repeated operations, sweep
+warp pressure and access shape, report robust central values such as medians,
+and audit the final machine code. For AMD, use `s_memrealtime`/`s_memtime`
+rather than NVIDIA's `%clock64` when an in-kernel cycle measurement is needed.
+The paper's NVIDIA-specific cache, scheduler, instruction, and clock values do
+not transfer to gfx90c. It also does not justify blindly subtracting an empty
+launch from event-timed kernels.
+
 Fanout uses the matrix-like interleaved lane mapping. At fanout 8, lanes
 `0,8,...,56` share one address, lanes `1,9,...,57` share another, and so on.
 The host passes the already-computed address-group count and the kernel derives
@@ -240,6 +251,73 @@ go run ./amd/samples/vmem_load_shape \
   -report-cache-hit-rate -report-cache-latency \
   -report-dram-transaction-count -report-cpi-stack
 ```
+
+#### Zero-trip baseline and repeat slope
+
+An explicit repeat count of zero is a matched launch control. It uses the same
+checked-in HSACO, selected kernel symbol, kernarg ABI, register allocation,
+work-group geometry, prologue, epilogue, and final output store as the measured
+point, but the initial scalar branch skips every global load. The harness fully
+checks that every lane stores exact zero, and `verify_hsaco.sh` checks that the
+branch target is after all loads and before the output store. This is a
+*zero-trip control*, not a generic empty kernel: retaining the target's
+non-load instructions is intentional.
+
+```bash
+# Hardware, using the same warm-up/iteration protocol as the nonzero point.
+gpu_perf_scripts/calibration/gfx90c/build_and_run.sh \
+  --only vmemloadshape --vmem-width-dwords 4 \
+  --vmem-mode serial --vmem-alias-lanes 8 \
+  --vmem-array-bytes 8192 --vmem-repeats 0 \
+  --vmem-workgroups 1 --warmup 20 --iters 1000
+
+# Simulator. The explicit `-repeats 0` is distinct from omitting the flag,
+# which retains the default of 1024 loads per lane.
+go run ./amd/samples/vmem_load_shape \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -width-dwords 4 -mode serial -alias-lanes 8 \
+  -array-bytes 8192 -repeats 0 -workgroups 1
+```
+
+Measure a separate zero-trip baseline for every dependency symbol and
+work-group count. Keep width, aliasing, footprint, work-groups, warm-ups,
+iteration count, launch order, clock, and thermal limits identical to the
+corresponding nonzero point. The baseline may depend on symbol metadata and
+geometry; it is not one universal number for the suite.
+
+For each platform `x`, report both the raw time and
+
+```text
+B_x(mode, workgroups) = median T_x(repeats=0)
+D_x(repeats) = T_x(repeats) - B_x
+```
+
+Only interpret `D_hw / D_sim` when the difference is well above the combined
+bootstrap uncertainty of the two measurements. In particular, do not divide a
+small launch-dominated point by a noisy baseline. Preserve raw time as the
+absolute-model metric; subtraction is a diagnostic decomposition.
+
+The primary body-cost comparison is a robust slope from an equal-repeat sweep,
+for example `repeats = 0, 4, 16, 64, 256, 512, 1024` (all values are valid for
+both modes):
+
+```text
+T_x(repeats) = intercept_x + beta_x * repeats
+slope ratio = beta_hw / beta_sim
+```
+
+Fit only a visibly linear regime and bootstrap the slope ratio. Compare serial
+minus independent at the same repeat count as a paired dependency-overlap
+contrast. Compare 8 KiB and 64 KiB at the *same* repeat count before assigning
+a difference to the cache path; the equal-footprint-lap recipe below changes
+repeat count with footprint and therefore cannot isolate capacity by itself.
+
+Finally, align queue phase for raw absolute comparisons. The hardware helper
+after warm-up measures a long batch of steady queued launches, whereas the
+ordinary simulator sample contains one dispatcher-first launch. A zero-trip
+subtraction within each protocol can diagnose body cost, but it does not make
+those two raw totals equivalent. Report cold single-shot and steady queued
+results separately until the simulator records a matched multi-launch batch.
 
 For equal footprint coverage, calculate one lap as:
 

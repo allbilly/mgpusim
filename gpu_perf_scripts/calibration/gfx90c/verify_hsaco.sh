@@ -180,6 +180,36 @@ while read -r name expected _source destination symbols; do
           echo "vmemloadshape: $symbol does not issue its load set before vmcnt(0)" >&2
           failed=1
         fi
+
+        # The existing binary doubles as an exact-HSACO zero-trip control when
+        # repeats is zero. Audit that its initial scalar comparison branches
+        # around every vector load and lands before the one output store.
+        zero_cmp_line="$(grep -n -m1 '^[[:space:]]*s_cmp_eq_u32 .*[, ]0[[:space:]]*//' <<<"$disasm" | cut -d: -f1 || true)"
+        zero_branch_line="$(grep -n -m1 '^[[:space:]]*s_cbranch_scc1 ' <<<"$disasm" | cut -d: -f1 || true)"
+        zero_branch_text=""
+        [[ -n "$zero_branch_line" ]] && zero_branch_text="$(sed -n "${zero_branch_line}p" <<<"$disasm")"
+        zero_target_offset="$(sed -n 's/.*+0x\([[:xdigit:]]\+\)>.*/\1/p' <<<"$zero_branch_text")"
+        symbol_address="$(sed -n "s/^\([[:xdigit:]]\+\) <$symbol>:.*/\1/p" <<<"$disasm")"
+        last_load_address="$(sed -n "${last_load_line}s/.*\/\/ \([[:xdigit:]]\+\):.*/\1/p" <<<"$disasm")"
+        store_line="$(grep -n -m1 '^[[:space:]]*global_store_dword[[:space:]]' <<<"$disasm" | cut -d: -f1 || true)"
+        store_address=""
+        [[ -n "$store_line" ]] && store_address="$(sed -n "${store_line}s/.*\/\/ \([[:xdigit:]]\+\):.*/\1/p" <<<"$disasm")"
+        zero_branch_valid=0
+        if [[ -n "$zero_cmp_line" && -n "$zero_branch_line" &&
+              -n "$zero_target_offset" && -n "$symbol_address" &&
+              -n "$last_load_address" && -n "$store_address" &&
+              "$zero_cmp_line" -lt "$zero_branch_line" &&
+              "$zero_branch_line" -lt "$first_load_line" ]]; then
+          zero_target_address=$((16#$symbol_address + 16#$zero_target_offset))
+          if ((zero_target_address > 16#$last_load_address &&
+              zero_target_address < 16#$store_address)); then
+            zero_branch_valid=1
+          fi
+        fi
+        if [[ "$zero_branch_valid" != 1 ]]; then
+          echo "vmemloadshape: $symbol zero-repeat branch does not bypass all loads before the output store" >&2
+          failed=1
+        fi
       done
     done
   fi

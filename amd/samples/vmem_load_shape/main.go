@@ -20,6 +20,12 @@ var workgroups = flag.Int("workgroups", 16, "Number of 64-lane work-groups.")
 
 func main() {
 	flag.Parse()
+	repeatsSpecified := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "repeats" {
+			repeatsSpecified = true
+		}
+	})
 	runner := new(runner.Runner).Init()
 	benchmark := vmemloadshape.NewBenchmark(runner.Driver())
 	benchmark.Arch = runner.ArchType
@@ -28,6 +34,7 @@ func main() {
 	benchmark.AliasLanes = *aliasLanes
 	benchmark.ArrayBytes = *arrayBytes
 	benchmark.Repeats = *repeats
+	benchmark.RepeatsSpecified = repeatsSpecified
 	benchmark.Workgroups = *workgroups
 	runner.AddBenchmark(benchmark)
 	runner.Run()

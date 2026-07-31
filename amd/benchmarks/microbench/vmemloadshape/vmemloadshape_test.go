@@ -1,6 +1,9 @@
 package vmemloadshape
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestDefaults(t *testing.T) {
 	b := &Benchmark{}
@@ -42,6 +45,35 @@ func TestReferencePreservesAliasing(t *testing.T) {
 	}
 }
 
+func TestExplicitZeroRepeatsIsZeroTrip(t *testing.T) {
+	for _, mode := range []string{ModeSerial, ModeIndependent4} {
+		b := &Benchmark{WidthDwords: 4, Mode: mode, AliasLanes: 8,
+			ArrayBytes: 8 * 1024, Repeats: 0, RepeatsSpecified: true,
+			Workgroups: 1}
+		b.setDefaultsAndValidate()
+		b.initHostData()
+		if b.Repeats != 0 {
+			t.Fatalf("%s explicit zero became %d repeats", mode, b.Repeats)
+		}
+		for tid := range b.output {
+			if got := b.expectedAt(tid); got != 0 {
+				t.Fatalf("%s zero-trip lane %d expected %g, want zero", mode, tid, got)
+			}
+		}
+	}
+}
+
+func TestOutputMatchesRequiresExactFiniteZeroForZeroTrip(t *testing.T) {
+	if !outputMatches(0, 0, true) {
+		t.Fatal("exact zero did not match zero-trip output")
+	}
+	for _, got := range []float32{1, -1, float32(math.NaN()), float32(math.Inf(1))} {
+		if outputMatches(got, 0, true) {
+			t.Fatalf("zero-trip output %g unexpectedly matched", got)
+		}
+	}
+}
+
 func TestRejectsInvalidConfigurations(t *testing.T) {
 	invalid := []*Benchmark{
 		{WidthDwords: 3},
@@ -49,6 +81,7 @@ func TestRejectsInvalidConfigurations(t *testing.T) {
 		{WidthDwords: 4, Mode: ModeSerial, AliasLanes: 3},
 		{WidthDwords: 4, Mode: ModeSerial, AliasLanes: 8, ArrayBytes: 12 * 1024},
 		{WidthDwords: 4, Mode: ModeIndependent4, AliasLanes: 8, ArrayBytes: 8 * 1024, Repeats: 3},
+		{WidthDwords: 4, Mode: ModeSerial, AliasLanes: 8, ArrayBytes: 8 * 1024, Repeats: -1},
 	}
 	for _, b := range invalid {
 		assertPanics(t, b.setDefaultsAndValidate)

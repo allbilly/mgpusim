@@ -41,12 +41,15 @@ type Benchmark struct {
 	AliasLanes  int
 	ArrayBytes  int
 	Repeats     int
-	Workgroups  int
-	input       []float32
-	output      []float32
-	dInput      driver.Ptr
-	dOutput     driver.Ptr
-	useUnified  bool
+	// RepeatsSpecified distinguishes the explicit zero-trip launch control
+	// from an omitted zero value, which retains the historical 1024 default.
+	RepeatsSpecified bool
+	Workgroups       int
+	input            []float32
+	output           []float32
+	dInput           driver.Ptr
+	dOutput          driver.Ptr
+	useUnified       bool
 }
 
 //go:embed kernels_gfx90c.hsaco
@@ -79,7 +82,7 @@ func (b *Benchmark) setDefaultsAndValidate() {
 	if b.ArrayBytes == 0 {
 		b.ArrayBytes = 8 * 1024
 	}
-	if b.Repeats == 0 {
+	if b.Repeats == 0 && !b.RepeatsSpecified {
 		b.Repeats = 1024
 	}
 	if b.Workgroups == 0 {
@@ -101,8 +104,8 @@ func (b *Benchmark) setDefaultsAndValidate() {
 	if !isPowerOfTwo(b.ArrayBytes / (b.WidthDwords * 4)) {
 		log.Panic("VMEM array must contain a power-of-two number of vectors")
 	}
-	if b.Repeats <= 0 || (b.Mode == ModeIndependent4 && b.Repeats%4 != 0) {
-		log.Panic("VMEM repeats must be positive and independent4 requires a multiple of 4")
+	if b.Repeats < 0 || (b.Mode == ModeIndependent4 && b.Repeats%4 != 0) {
+		log.Panic("VMEM repeats must be nonnegative and independent4 requires a multiple of 4")
 	}
 	if b.Workgroups <= 0 || uint64(b.Workgroups) > uint64(^uint32(0))/64 {
 		log.Panic("invalid VMEM work-group count")
@@ -203,9 +206,20 @@ func (b *Benchmark) Verify() {
 	b.driver.MemCopyD2H(b.context, b.output, b.dOutput)
 	for tid, got := range b.output {
 		want := b.expectedAt(tid)
-		if math.Abs(float64(got-want)) > 1e-4 {
+		if !outputMatches(got, want, b.Repeats == 0) {
 			log.Panicf("VMEM load-shape mismatch at thread %d: got %g, want %g", tid, got, want)
 		}
 	}
 	log.Printf("Passed!\n")
+}
+
+func outputMatches(got, want float32, zeroTrip bool) bool {
+	if zeroTrip {
+		// The zero-trip control must execute no load and store an exact zero in
+		// every lane. This also rejects NaNs, which ordinary tolerance checks do
+		// not reliably catch.
+		return got == 0
+	}
+	return !math.IsNaN(float64(got)) && !math.IsInf(float64(got), 0) &&
+		math.Abs(float64(got-want)) <= 1e-4
 }

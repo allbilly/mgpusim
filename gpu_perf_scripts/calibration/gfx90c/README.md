@@ -188,6 +188,15 @@ fanout: lanes `x, x+8, ..., x+56` share an address. Sweep alias counts
 64 KiB as an L2-resident/L1-capacity point. Both host-to-device copies remain
 within the model's L2-warming DMA threshold.
 
+Pass `--vmem-repeats 0` for the exact-HSACO zero-trip launch control. It skips
+all global loads but retains the selected symbol's prologue, epilogue, launch
+geometry, and one output store; verification requires exact zero in every
+lane. Measure it with the same dependency symbol, work-group count, warm-ups,
+iterations, clock, and thermal protocol as the nonzero point. Keep raw times,
+use baseline-subtracted time only as a diagnostic with propagated uncertainty,
+and prefer a robust equal-repeat slope over a one-point subtraction. The full
+normalization and queue-phase rules are in `how_to_microbenchmark_amd.md`.
+
 For equal cache coverage, do not hold repeats blindly constant. One complete
 footprint lap requires:
 

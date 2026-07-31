@@ -496,7 +496,7 @@ static void bench_vmemloadshape(int iters) {
             "VMEM array must contain a power-of-two number of vectors\n");
     std::exit(2);
   }
-  if (vmem_repeats <= 0 ||
+  if (vmem_repeats < 0 ||
       (vmem_mode == "independent4" && vmem_repeats % 4 != 0) ||
       vmem_workgroups <= 0 || vmem_workgroups > INT32_MAX / 64) {
     fprintf(stderr, "invalid VMEM repeats or work-group count\n");
@@ -556,7 +556,12 @@ static void bench_vmemloadshape(int iters) {
   HIP_CHECK(hipMemcpy(actual.data(), device_output,
                       output_words * sizeof(float), hipMemcpyDeviceToHost));
   for (int tid = 0; tid < output_words; ++tid) {
-    if (std::fabs(actual[tid] - expected[tid]) > 1e-4f) {
+    const bool mismatch =
+        vmem_repeats == 0
+            ? actual[tid] != 0.0f
+            : (!std::isfinite(actual[tid]) ||
+               std::fabs(actual[tid] - expected[tid]) > 1e-4f);
+    if (mismatch) {
       fprintf(stderr,
               "vmemloadshape mismatch at thread %d: expected %g, got %g\n",
               tid, expected[tid], actual[tid]);
@@ -569,9 +574,13 @@ static void bench_vmemloadshape(int iters) {
           vmem_width_dwords, vmem_mode.c_str(), vmem_alias_lanes,
           vmem_array_bytes, vmem_repeats, vmem_workgroups);
   printf("vmemloadshape %.3f\n", us);
-  printf("vmemloadshape_ns_per_wave_load %.9f\n",
-         double(us) * 1000.0 /
-             double(uint64_t(vmem_workgroups) * uint64_t(vmem_repeats)));
+  if (vmem_repeats == 0) {
+    printf("vmemloadshape_zero_trip 1\n");
+  } else {
+    printf("vmemloadshape_ns_per_wave_load %.9f\n",
+           double(us) * 1000.0 /
+               double(uint64_t(vmem_workgroups) * uint64_t(vmem_repeats)));
+  }
   HIP_CHECK(hipFree(device_input));
   HIP_CHECK(hipFree(device_output));
 }
