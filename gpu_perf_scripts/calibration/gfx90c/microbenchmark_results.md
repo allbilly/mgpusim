@@ -159,6 +159,32 @@ latency. Their safe conclusion is directional: reducing general L2/global-load
 latency to fit matmul is not supported by this probe and would also worsen
 PageRank and FIR.
 
+## K-means producer/consumer isolation
+
+Commit `e8939d33` added `-preinitialize-swap` to the simulator sample and
+`--preinitialize-swap` to the exact-HSACO hardware harness. This uploads the
+same feature-major data and skips `kmeans_kernel_swap`, leaving the compute
+kernel and benchmark verification unchanged.
+
+Paired default-size results:
+
+| Path | Simulator (us) | HW auto/200 MHz (us) |
+|------|---------------:|---------------------:|
+| swap + compute | 59.096 | 377.704 |
+| swap only | 29.455 | 123.976 |
+| compute immediately after swap, by subtraction | 29.641 | 253.728 |
+| compute with preinitialized feature-major input | 27.836 | 259.321 |
+| repeated compute component | not measured | 258.467 |
+
+Within each same-clock pair, hardware compute is about 2.2% faster immediately
+after the producer, while simulator compute is about 6.5% slower. The direction
+is wrong, consistent with the model's write-around L1V policy failing to retain
+the producer's contiguous full-line stores. However, the effect is small:
+cross-kernel residency can explain only a few percent of compute time, not the
+full K-means error. The earlier write-through experiment was not a valid fix
+because that implementation also waits for lower-level write acknowledgement
+and made the producer slower.
+
 ## Accepted general fixes
 
 Two benchmark-driven fixes improved the K-means/matmul state:
@@ -231,14 +257,10 @@ retirement must be measured separately from cache allocation policy.
 
 ## Next discriminating experiment
 
-The vector fan-out probe rules out a broad full-wave L1V speedup. The remaining
-K-means-specific experiment is an exact producer/consumer pair: one kernel
-writes the feature-major buffer and the next immediately reads it with the
-same pattern as `kmeans_kernel_compute`. Compare that pair with a preinitialized
-consumer-only run.
-
-This can separate cross-kernel write residency and store-buffer completion from
-the already measured vector-load service time. Matmul should remain a separate
+The vector and producer/consumer probes rule out broad full-wave L1V and L2
+latency reductions. A focused K-means improvement would require decoupling
+write allocation from lower-level write acknowledgement, then validating both
+swap time and the small consumer reuse benefit. Matmul should remain a separate
 instruction-mix/local-memory investigation; its scratch traffic is only about
 1.2% of dynamic instructions and the vector probe does not support lowering
 general L2 latency.
