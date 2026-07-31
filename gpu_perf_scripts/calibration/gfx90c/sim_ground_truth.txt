@@ -1,10 +1,11 @@
-vectoradd 28.662
-relu 15.586
-matrixmult 45.141
-matrixtranspose 116.230
-bitonicsort 771.773
-aes 16.997
-fir 8.338
-kmeans 50.473
-pagerank 112.948
-nw 153.630
+# Collected at 12d5269a; 17117fab restores the same timing settings.
+vectoradd 27.261
+relu 14.572
+matrixmult 42.229
+matrixtranspose 129.067
+bitonicsort 745.124
+aes 15.476
+fir 11.316
+kmeans 40.439
+pagerank 126.412
+nw 134.211

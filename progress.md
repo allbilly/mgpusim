@@ -14,11 +14,44 @@
 | gfx90c HSACO for ISCA-10 benches | Done (all 10) |
 | MUBUF + private-segment scratch (VGPR spill) | Done |
 | DS b128, FLAT SADDR, missing SOP/VOP ops | Done |
-| Timing model `gfx90c/builder.go` | Done (validated preset) |
-| ISCA-10 sim vs HW (gfx90c HSACO) | Current — ratio-error MARE **16.0%**, geo mean HW/Sim **1.00×** |
-| Remaining timing gaps | FIR, K-means, matrix transpose, NW |
+| Timing model `gfx90c/builder.go` | Done (calibrated preset) |
+| ISCA-10 vs legacy pinned table | **9/9 scored comparisons pass <10%**, MARE **7.33%** |
+| Remaining validation | Fresh pinned exact-HSACO targets; narrow ReLU/AES/transpose margins |
 
-## ISCA 2019 suite (2026-07-10)
+## Current calibrated preset (2026-07-31)
+
+Against the accepted legacy pinned 1600 MHz table, all nine scored comparisons
+pass the strict `abs(HW/Sim - 1) < 10%` gate. That table used warmed,
+many-iteration native HIP kernels and predates the current exact-HSACO,
+single-shot harness, so this is a calibration score rather than fully matched
+validation. Matrix multiplication is shown only as a sensitivity comparison
+because its 39.107 us target also predates corrected global-row indexing and
+the regenerated HSACO.
+
+| Benchmark | Sim (us) | Pinned HW (us) | Signed error | Status |
+|-----------|---------:|---------------:|-------------:|--------|
+| vectoradd | 27.261 | 29.364 | +7.71% | Pass |
+| relu | 14.572 | 13.123 | -9.94% | Pass |
+| matrixmult | 42.229 | 39.107 | -7.39% | Not scored (stale target) |
+| matrixtranspose | 129.067 | 140.773 | +9.07% | Pass |
+| bitonicsort | 745.124 | 811.360 | +8.89% | Pass |
+| aes | 15.476 | 16.962 | +9.60% | Pass |
+| fir | 11.316 | 12.003 | +6.07% | Pass |
+| kmeans | 40.439 | 39.220 | -3.01% | Pass |
+| pagerank | 126.412 | 130.638 | +3.34% | Pass |
+| nw | 134.211 | 123.052 | -8.31% | Pass |
+
+Scored MARE is 7.33%. ReLU has only 0.06 percentage points of gate
+margin, AES 0.40, and transpose 0.93, so the result is a default-size pass,
+not evidence of robust accuracy across sizes. Verified application sweeps,
+negative experiments, and remaining mechanism probes are recorded in
+`gpu_perf_scripts/calibration/gfx90c/microbenchmark_results.md`.
+
+Everything below this point is a chronological investigation log. When an old
+section says "current" or "next", it describes that historical milestone; the
+handoff above is authoritative.
+
+## Historical ISCA 2019 suite (2026-07-10)
 
 Host: Renoir gfx90c @ 1600 MHz, ROCm 7.1.1 (podman).  
 Sim: `-timing -arch gcn5 -gpu gfx90c -disable-rtm -verify`.  
@@ -83,7 +116,10 @@ HW re-run on the same Renoir gfx90c (ROCm 7.1.1, podman) came back **1.4–9× s
 
 The ~4× throttle factor is consistent (200 MHz / 1600 MHz = 8× clock ratio, partially offset by fixed launch overheads on short kernels). This confirms the sim is calibrated to 1600 MHz and the throttled HW run is not a fair comparison.
 
-**Conclusion: the sim implementation is stable and reproducible — all 10 sim numbers reproduce bit-for-bit across 19 days and a repo move. The 07-10 calibration at pinned 1600 MHz (geo mean HW/Sim ≈ 1.18×) remains the accuracy reference. To get a fresh HW comparison, the GPU clock must be pinned first (`echo high | sudo tee .../power_dpm_force_performance_level`), which needs root access.**
+**Historical conclusion:** the simulator numbers were reproducible across the
+repo move. The 07-10 table is retained as the legacy calibration baseline, not
+a matched current-harness validation. A fresh comparison requires pinning the
+GPU clock and running the exact-HSACO harness.
 
 ## Timing-model improvement (2026-07-30)
 
@@ -147,7 +183,7 @@ policy is `auto` at the 200 MHz state.
 - cold/subsequent launch cost, per-kernel completion cost, and large-grid scaling
 - sparse cache-line, FLAT partial-write, MUBUF scratch, and wide-store locality timing
 
-## Open (timing model)
+## Historical open list (superseded)
 
 - **K-means:** simulator is 43.5% slow. Root cause identified via swap-only
   microbenchmark sweep (max-iter=0) and L1V cache hit-rate profiling:
@@ -335,7 +371,7 @@ matching the spec bandwidth.
 Suite MARE: 18.6% → 17.9%. Improvements: relu 22.6%→18.8%, pagerank
 15.7%→13.5%. No regressions.
 
-## Current calibration state (after dispatch, DRAM, and K-means fixes)
+## Superseded calibration state (after dispatch, DRAM, and K-means fixes)
 
 | Benchmark         |     HW |    Sim |  Error |
 |-------------------|--------|--------|--------|
@@ -415,7 +451,7 @@ had knobs that were 1.75x too fast (7/4 ratio) to compensate for the missing
 3 CUs. Fixing this requires hardware measurements to determine the correct
 per-CU throughput at 1600 MHz.
 
-## Next
+## Historical next list (superseded)
 
 1. **Hardware (critical)**: re-measure cache_latency with the GPU clock pinned
    to `high` (1600 MHz). This is the single most important measurement — it

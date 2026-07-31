@@ -3,6 +3,13 @@
 This directory keeps hardware and MGPUSim measurements reproducible for the
 ten benchmark calibration set.
 
+`hw_ground_truth.txt` is the accepted legacy pinned table. It was collected
+with warmed, many-iteration native HIP kernels before the exact-HSACO
+single-shot harness below existed. `compare.py` therefore reports a calibration
+score, not fully matched validation. Fresh pinned exact-HSACO targets are
+required for that; matrix multiplication additionally needs replacement
+because its source and HSACO were corrected after the legacy measurement.
+
 ## Rebuild and verify code objects
 
 Both paths use the embedded `kernels_gfx90c.hsaco` files. Regenerate all code
@@ -100,7 +107,9 @@ ONLY=matrixmult,matrixtranspose SIM_JOBS=2 \
 
 The comparison reports `HW/Sim`, signed error as `(HW/Sim - 1) × 100`, and
 mean absolute relative error. Positive error means the simulator is too fast;
-negative error means it is too slow.
+negative error means it is too slow. The corrected matrix-multiplication
+kernel is displayed but excluded from aggregates because its checked-in
+hardware target predates the source and HSACO correction.
 
 ## Model parameters
 

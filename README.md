@@ -52,17 +52,23 @@ This line will direct the go compiler to use your local version of Akita rather 
 
 ## ISCA 2019 Application Suite: Sim vs Hardware (gfx90c)
 
-Calibration against the host **Renoir gfx90c APU** (Ryzen 7 4700U: 7 CU, 1600 MHz max, 2 GiB VRAM) using ROCm 7.1.1 in podman (no root). Ten application benchmarks from the [ISCA 2019 MGPUSim paper](https://doi.org/10.1145/3307650.3322230) suite. Geometric mean **HW/Sim ≈ 1.18×**.
+Calibration against a **Renoir gfx90c APU** (Ryzen 7 4700U: 7 active CUs,
+1600 MHz) using the ten-application suite from the
+[ISCA 2019 MGPUSim paper](https://doi.org/10.1145/3307650.3322230). Against the
+accepted legacy pinned table, all nine scored benchmarks pass the strict
+`abs(HW/Sim - 1) < 10%` gate; scored MARE is **7.33%**. Corrected matrix
+multiplication remains unscored because its target predates the source/HSACO
+correction.
 
 ### Configuration
 
 | Setting | Simulator | Hardware |
 |---------|-----------|----------|
 | Architecture | `-arch gcn5 -gpu gfx90c` | gfx90c (Renoir iGPU, 7 CU @ 1600 MHz) |
-| Mode | `-timing -disable-rtm -verify` | `hipEvent` kernel timing |
+| Mode | `-timing -disable-rtm -verify` | legacy native HIP kernels |
 | ROCm | — | `docker.io/rocm/dev-ubuntu-24.04:7.1.1` |
-| Iterations | 1 run (Driver `kernel_time`) | 100 averaged (`bitonicsort`: 20) |
-| Power | — | `power_dpm_force_performance_level=high` (if already set) |
+| Timing | Driver `kernel_time`, verification enabled | `hipEvent` kernel timing |
+| Power | — | pinned `power_dpm_force_performance_level=high` |
 
 ### Problem sizes
 
@@ -81,18 +87,18 @@ Calibration against the host **Renoir gfx90c APU** (Ryzen 7 4700U: 7 CU, 1600 MH
 
 ### Results (kernel time, µs)
 
-| Benchmark | Sim (µs) | HW (µs) | HW / Sim |
-|-----------|----------|---------|----------|
-| vectoradd | 28.4 | 29.4 | 1.03× |
-| relu | 15.8 | 13.1 | 0.83× |
-| matrixmult | 77.1 | 39.1 | 0.51× |
-| matrixtranspose | 60.3 | 140.8 | 2.34× |
-| bitonicsort | 329.2 | 811.4 | 2.46× |
-| aes | 14.3 | 17.0 | 1.18× |
-| fir | 5.3 | 12.0 | 2.28× |
-| kmeans | 52.6 | 39.2 | 0.75× |
-| pagerank | 108.3 | 130.6 | 1.21× |
-| nw | 137.9 | 123.1 | 0.89× |
+| Benchmark | Sim (µs) | HW (µs) | Error | Status |
+|-----------|---------:|--------:|------:|--------|
+| vectoradd | 27.261 | 29.364 | +7.71% | Pass |
+| relu | 14.572 | 13.123 | -9.94% | Pass |
+| matrixmult | 42.229 | 39.107 | -7.39% | Not scored (stale HW target) |
+| matrixtranspose | 129.067 | 140.773 | +9.07% | Pass |
+| bitonicsort | 745.124 | 811.360 | +8.89% | Pass |
+| aes | 15.476 | 16.962 | +9.60% | Pass |
+| fir | 11.316 | 12.003 | +6.07% | Pass |
+| kmeans | 40.439 | 39.220 | -3.01% | Pass |
+| pagerank | 126.412 | 130.638 | +3.34% | Pass |
+| nw | 134.211 | 123.052 | -8.31% | Pass |
 
 **Sim metric:** total `kernel_time` reported by the driver (all kernel launches in the benchmark).
 
@@ -115,22 +121,22 @@ Harness: `gpu_perf_scripts/calibration/gfx90c/` (`isca10_bench.cpp`, `build_and_
 
 ### Methodology notes
 
-**Timing model (GCN5 / gfx90c):** 8-CU floorplan (4 SA × 2 CU; host reports 7 fused CUs), 1600 MHz, banked DDR4 (`DRAMBankPipelineDepth=40`), LDS latency 12, VALU scoreboard 8, CP post-kernel tax 2000 cycles, DMA-through-L2 only for transfers < 64 KB. Platform: `amd/samples/runner/timingconfig/gfx90c/builder.go`.
+All ten simulator runs use the current exact gfx90c HSACOs, deterministic
+fixtures, matching launch geometry, and output verification. The legacy
+hardware table was collected earlier with warmed, many-iteration native HIP
+kernels, so the 7.33% result is a calibration score rather than a fully
+matched validation. Every target should be reacquired with the pinned
+exact-HSACO single-shot harness; matrix multiplication is additionally invalid
+because its source changed. Signed error is `HW/Sim - 1`. ReLU, AES, and
+transpose have narrow default-size margins, and unpinned size sweeps cannot
+establish absolute cross-size accuracy.
 
-Knob sweeps (LDS 12–24, L1V 19–48, scoreboard 8–32) barely move FIR/transpose; remaining gaps need model work, not more DRAM/LDS knobs.
-
-**Known comparison gaps:**
-
-- **matrixtranspose / bitonicsort / fir** sim is fast (HW/Sim ~2.3–2.5×): LDS bank conflicts and multi-launch CPU/GPU sync on hardware are under-modeled. Bitonic is 78 launches; a global CP tax large enough to close that gap over-penalizes single-launch kernels.
-- **matrixmult** sim is slow (HW/Sim 0.51×) after switching to gfx90c HSACO with VGPR spill (MUBUF scratch); spill traffic is modeled but still over-costly vs the APU.
-- **relu / kmeans** sim is slow (HW/Sim ~0.75–0.83×): short kernels pay more banked-DRAM cost than the APU.
-- **nw** uses ROCm-compiled `kernels_gfx90c.hsaco` for `-arch gcn5` (legacy GCN3 HSACO for `-arch gcn3`); Rodinia still launches `block_size × blk` work-groups.
-
-**Kernel / harness notes:**
-
-- All 10 benches use gfx90c HSACO under `-arch gcn5`. **matrixmult** needs MUBUF `buffer_load/store_dword` + private-segment scratch (VGPR spill).
-- **bitonicsort** HW adds an OOB guard (sim tolerates invalid pairs; gfx90c faults without it).
-- GCN3-era `kernels.hsaco` objects **cannot** be loaded on gfx90c via `hipModuleLoad`; hardware must use `--offload-arch=gfx90c`.
+The timing preset is in
+`amd/samples/runner/timingconfig/gfx90c/builder.go`. Detailed size sweeps,
+counter evidence, rejected candidates, and validation provenance are in
+`gpu_perf_scripts/calibration/gfx90c/microbenchmark_results.md`. The reusable
+paired-latency/throughput and geometric-sweep procedure is in
+`how_to_microbenchmark_amd.md`.
 
 ## Default Performance Metrics Supported
 
@@ -196,4 +202,3 @@ Papers that use MGPUSim:
 ## License
 
 MIT © Project Akita Developers.
-

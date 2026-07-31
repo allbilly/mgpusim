@@ -9,6 +9,9 @@ knob sweeps that have already been falsified.
 - GPU: Renoir integrated Radeon, gfx90c, 7 active CUs.
 - Reference application results in `hw_ground_truth.txt` were measured with
   the performance policy pinned to `high` (1600 MHz).
+- Those legacy targets used warmed, many-iteration native HIP kernels and
+  predate the exact-HSACO single-shot harness. They remain the accepted
+  calibration table, but are not fully matched validation references.
 - The diagnostic hardware measurements below were collected with the policy at
   `auto`. During the long pointer chase, repeated reads of
   `pp_dpm_sclk` showed `200 MHz *` for the entire kernel.
@@ -186,13 +189,13 @@ approximately constant. This is not a sharp modeled TLB wall, but the
 application sweep is not a substitute for a dedicated translation-capacity
 probe.
 
-The default width-512 point passes the pinned absolute target. However, the
-64-line far-stride tier remains a canonical-point fit rather than a mechanism
-validated by this application sweep. A dedicated full-line store-stride probe
-is still required before interpreting it as write combining, DRAM locality,
-or another transaction-level effect.
+The default width-512 point passes its numerical comparison with the legacy
+pinned target. However, the 64-line far-stride tier remains a canonical-point
+fit rather than a mechanism validated by this application sweep. A dedicated
+full-line store-stride probe is still required before interpreting it as write
+combining, DRAM locality, or another transaction-level effect.
 
-## Immutable full-suite validation
+## Immutable full-suite comparison
 
 The suite was built and run once from calibration commit `12d5269a`, with
 verification enabled and two simulator jobs. The raw artifacts currently
@@ -201,8 +204,16 @@ summary. Signed error is `HW/Sim - 1`; the acceptance gate is strict
 `abs(error) < 10%`.
 
 Commit `17117fab` restores the same timing configuration after the rejected
-dispatch experiment. A fresh exact-commit validation is still kept separate
+dispatch experiment. A fresh exact-commit run is kept separate
 from this immutable historical run rather than silently relabeling artifacts.
+
+A fresh suite built from documentation commit `1c42d025` reproduced every
+time in the table exactly. All ten overall `.rc` and simulator `.sim.rc` files
+were zero and verification passed. Its raw artifacts are in
+`/tmp/gfx90c-final-suite-restored.N8rxNo`; the checked-in
+`sim_ground_truth.txt` is the durable timing summary. This confirms simulator
+reproducibility, while the legacy hardware-provenance limitation below still
+applies.
 
 | Benchmark | Sim (us) | Pinned HW (us) | HW/Sim | Error | Gate |
 |-----------|---------:|---------------:|-------:|------:|------|
@@ -217,10 +228,12 @@ from this immutable historical run rather than silently relabeling artifacts.
 | pagerank | 126.412 | 130.638 | 1.0334x | +3.34% | Pass |
 | nw | 134.211 | 123.052 | 0.9169x | -8.31% | Pass |
 
-All nine comparisons with valid pinned references pass the strict gate, with
-a MARE of 7.33%. As a non-validation sensitivity check, including the stale
-matrixmult number would produce 7.34% MARE and its numerical comparison is
-also below 10%.
+All nine scored comparisons against the usable legacy pinned targets pass the
+strict gate, with a MARE of 7.33%. This is a calibration score, not fully
+matched hardware validation: every target still needs a fresh pinned run with
+the exact-HSACO single-shot harness. As a non-validation sensitivity check,
+including the stale matrixmult number would produce 7.34% MARE and its
+numerical comparison is also below 10%.
 
 The matrixmult hardware target predates the global-row indexing fix and is not
 a valid absolute reference for the corrected kernel. It remains in the table

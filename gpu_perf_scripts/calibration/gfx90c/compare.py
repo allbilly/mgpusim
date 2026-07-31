@@ -5,6 +5,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
+# The checked-in matrix-multiplication hardware result predates the corrected
+# global-row indexing and regenerated HSACO. Keep it visible for provenance,
+# but do not include it in scored calibration aggregates.
+UNSCORED = {
+    "matrixmult": "stale HW target (predates corrected kernel)",
+}
+
 
 def load_pairs(path):
     out = {}
@@ -24,7 +31,10 @@ def main():
     hw = load_pairs(hw_path)
     sim = load_pairs(sim_path)
     names = list(hw.keys())
-    print(f"{'Benchmark':<18} {'Sim(µs)':>10} {'HW(µs)':>10} {'HW/Sim':>8} {'err%':>8}")
+    print(
+        f"{'Benchmark':<18} {'Sim(µs)':>10} {'HW(µs)':>10} "
+        f"{'HW/Sim':>8} {'err%':>8}  Status"
+    )
     ratios = []
     absolute_errors = []
     for k in names:
@@ -33,16 +43,26 @@ def main():
             continue
         r = hw[k] / sim[k]
         err = (r - 1.0) * 100
-        ratios.append(r)
-        absolute_errors.append(abs(err))
-        print(f"{k:<18} {sim[k]:10.1f} {hw[k]:10.1f} {r:8.2f} {err:7.1f}%")
+        if k in UNSCORED:
+            status = f"not scored: {UNSCORED[k]}"
+        else:
+            ratios.append(r)
+            absolute_errors.append(abs(err))
+            status = "pass" if abs(err) < 10.0 else "FAIL"
+        print(
+            f"{k:<18} {sim[k]:10.1f} {hw[k]:10.1f} "
+            f"{r:8.2f} {err:7.1f}%  {status}"
+        )
     if ratios:
         geo = 1.0
         for r in ratios:
             geo *= r
         geo **= 1 / len(ratios)
-        print(f"\ngeometric mean HW/Sim = {geo:.2f}x  (n={len(ratios)})")
-        print(f"mean absolute relative error = {sum(absolute_errors) / len(absolute_errors):.1f}%")
+        print(f"\nscored geometric mean HW/Sim = {geo:.2f}x  (n={len(ratios)})")
+        print(
+            "scored mean absolute relative error = "
+            f"{sum(absolute_errors) / len(absolute_errors):.1f}%"
+        )
 
 
 if __name__ == "__main__":
