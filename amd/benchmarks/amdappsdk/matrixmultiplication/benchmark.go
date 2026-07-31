@@ -83,16 +83,35 @@ func (b *Benchmark) exec() {
 func (b *Benchmark) Verify() {
 	m := CPUMatrixMultiplier{}
 	mCPU := m.Multiply(b.MatrixA, b.MatrixB)
-	for i := uint32(0); i < mCPU.Width; i++ {
-		for j := uint32(0); i < mCPU.Width; i++ {
-			index := i + j*mCPU.Width
+	if mCPU.Width != b.MatrixC.Width || mCPU.Height != b.MatrixC.Height {
+		log.Panicf("matrix dimensions differ: expected %dx%d, got %dx%d",
+			mCPU.Width, mCPU.Height, b.MatrixC.Width, b.MatrixC.Height)
+	}
 
-			if math.Abs(float64(mCPU.Data[index]-b.MatrixC.Data[index])) > 1e-3 {
-				log.Panicf("mismatch at [%d, %d]: expected %f, but get %f",
-					i, j, mCPU.Data[index], b.MatrixC.Data[index])
+	x, y, ok := firstMatrixMismatch(mCPU, b.MatrixC, 1e-3)
+	if !ok {
+		index := x + y*mCPU.Width
+		log.Panicf("mismatch at [%d, %d]: expected %f, but get %f",
+			x, y, mCPU.Data[index], b.MatrixC.Data[index])
+	}
+
+	log.Print("Passed!")
+}
+
+func firstMatrixMismatch(
+	expected, actual *Matrix,
+	tolerance float64,
+) (x, y uint32, equal bool) {
+	for y = 0; y < expected.Height; y++ {
+		for x = 0; x < expected.Width; x++ {
+			index := x + y*expected.Width
+			if math.Abs(float64(
+				expected.Data[index]-actual.Data[index],
+			)) > tolerance {
+				return x, y, false
 			}
 		}
 	}
 
-	log.Print("Passed!")
+	return 0, 0, true
 }
