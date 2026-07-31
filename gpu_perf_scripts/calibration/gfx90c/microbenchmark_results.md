@@ -931,14 +931,19 @@ process guard added in `369b01ae` and the broadened documented pattern from
 `7ffd7742`.
 
 These contrasts do not support enabling an alias-only return-fanout penalty.
-Alias-1 and alias-8 serial have nearly identical absolute scale factors, while
-the 64-KiB/8-KiB growth is 7.54x in hardware and 5.66x in simulation. The
-largest new divergence is therefore associated with the L1-capacity/L2 path,
-not duplicate-lane fanout. The serial/independent ratio also moves in the
-opposite direction from a simple non-overlapable return penalty: 1.27x in
-hardware versus 1.53x in simulation. A null-launch baseline and production
-repetitions are needed before decomposing the remaining fixed and
-footprint-dependent terms.
+Alias-1 and alias-8 serial have nearly identical absolute scale factors. The
+serialized-minus-independent paired delta, which cancels much of the common
+launch floor, is already close: 4.321 us in hardware versus 3.982 us in the
+simulator, or `HW/Sim = 1.085`. Raw serial/independent ratios differ (1.27x in
+hardware versus 1.53x in simulation), but both raw values contain a large
+fixed floor at these short durations.
+
+The 64-KiB/8-KiB raw growth is 7.54x in hardware and 5.66x in simulation, but
+the equal-lap protocol also changes repeats from 64 to 512. It therefore
+confounds footprint with eight times more dynamic load work and cannot yet
+assign the divergence to the L1-capacity/L2 path. A zero-trip launch baseline,
+equal-repeat footprint contrasts, and production repetitions are needed
+before decomposing fixed, per-load, and footprint-dependent terms.
 
 A guarded 28-work-group pilot was attempted after the three contrasts, but an
 external `pytest -k matrixmult` process restarted during readiness. The guard
@@ -956,9 +961,9 @@ artifact directory is
 No parameter is changed from the pilot contrasts. Full pinned width, alias,
 dependency, footprint, and work-group production sweeps are required first.
 A uniform L1/L2 latency change remains rejected because it cannot predict
-those signatures independently, but an L2-specific term is now a stronger
-candidate than alias-only fanout and must be tested with capacity-boundary and
-null-launch controls.
+those signatures independently. An L2-specific term remains a candidate, not
+a conclusion, and must be tested with capacity-boundary, equal-repeat, and
+zero-trip controls.
 
 ## Remaining validation
 
