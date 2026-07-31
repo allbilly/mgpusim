@@ -97,6 +97,8 @@ static int cache_array_bytes = 16 * 1024;
 static int cache_num_accesses = 131072;
 static int cache_active_lanes = 0;
 static int matrix_size = 128;
+static int fir_length = 8192;
+static int fir_taps = 16;
 static int kmeans_npoints = 4096;
 static int kmeans_nfeatures = 16;
 static int kmeans_nclusters = 5;
@@ -288,8 +290,12 @@ static void bench_aes(int iters) {
 static void bench_fir(int iters) {
   ModuleKernel kernel("amd/benchmarks/heteromark/fir/kernels_gfx90c.hsaco",
                       "FIR");
-  const int length = 8192;
-  const unsigned taps = 16;
+  const int length = fir_length;
+  const unsigned taps = unsigned(fir_taps);
+  if (length < 1 || taps < 1) {
+    fprintf(stderr, "FIR length and taps must be positive\n");
+    std::exit(2);
+  }
   float *out, *coeff, *in, *hist;
   HIP_CHECK(hipMalloc(&out, length * sizeof(float)));
   HIP_CHECK(hipMalloc(&coeff, taps * sizeof(float)));
@@ -668,6 +674,10 @@ int main(int argc, char **argv) {
       cache_active_lanes = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--matrix-size") && i + 1 < argc)
       matrix_size = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--fir-length") && i + 1 < argc)
+      fir_length = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--fir-taps") && i + 1 < argc)
+      fir_taps = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--points") && i + 1 < argc)
       kmeans_npoints = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--features") && i + 1 < argc)
