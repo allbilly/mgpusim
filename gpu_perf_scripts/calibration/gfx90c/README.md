@@ -68,7 +68,7 @@ For example, collect a steady-state matrix-multiplication batch with:
 ```bash
 python3 acquire_pinned.py \
   --forbid-process-regex \
-  'Vgfx9_compute_unit_tb|verilator_bin|pytest.*miaow_gcn4|miaow_gcn4.*pytest' \
+  'Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4' \
   --iters 1000 matrixmult
 ```
 
@@ -79,9 +79,10 @@ not match itself. If an external command line matches, the entire point is
 failed, its container is stopped, and the exact matching pattern, PID, and
 command are recorded in the batch metadata and summary. Only matching command
 lines are retained; unrelated process snapshots are not written to artifacts.
-The example guard prevents the known Verilator/MIAOW CPU workload from sharing
-package power with the integrated GPU, but no repository-specific process is
-forbidden by default.
+The example guard prevents the known Verilator/MIAOW/pytest CPU workload from
+sharing package power with the integrated GPU. It intentionally rejects any
+pytest process because the process command line need not include its working
+directory; no repository-specific process is forbidden by default.
 
 K-means can additionally report its swap and compute kernels separately:
 
