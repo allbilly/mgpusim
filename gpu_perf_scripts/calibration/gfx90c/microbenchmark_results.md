@@ -1084,6 +1084,78 @@ and disassemblies are retained at `/tmp/matmul_signature.sqlite3`,
 `/tmp/kmeans_signature.sqlite3`, `/tmp/matmul_exact.disasm`, and
 `/tmp/kmeans_exact.disasm`.
 
+### Default-off total-return candidate and size-sweep rejection
+
+Commit `b48e2559` adds a second experimental, default-off return model that
+delays final load retirement by `ceil(total lane-dwords / bandwidth)` for each
+dynamic vector load. Independent instructions and unrelated waves overlap.
+Commit `ee550591` exposes the value only through the explicit timing-calibration
+flag `-vmem-load-return-lane-dwords-per-cycle`; non-gfx90c and non-timing use is
+rejected, and the scored gfx90c platform remains at zero.
+
+The equal-repeat 8-KiB/alias-8/G1 sweep used 64 loads per lane and full output
+verification. Lower bandwidth means a larger modeled delay:
+
+| Width | Mode | Default | B=1 | B=2 | B=4 |
+|------:|------|--------:|----:|----:|----:|
+| 1 | serial | 9.343 | 11.863 | 10.583 | 9.943 |
+| 1 | independent4 | 6.695 | 7.325 | 7.005 | 6.845 |
+| 2 | serial | 10.903 | 15.983 | 13.423 | 12.143 |
+| 2 | independent4 | 6.975 | 8.245 | 7.605 | 7.285 |
+| 4 | serial | 11.450 | 21.650 | 16.530 | 13.970 |
+| 4 | independent4 | 7.468 | 10.018 | 8.738 | 8.098 |
+
+The width trend is correct, but the overlap signature rejects this model as a
+production calibration. At B=1, dwordx4 serial is close to the guarded hardware
+pilot (21.650 versus 20.282 us), while independent4 remains far too fast
+(10.018 versus 15.961 us). The simulator serial-minus-independent delta grows
+from an already-close 3.982 us at default to 11.632 us, versus 4.321 us in
+hardware. The real missing cost is therefore nearly common to the two
+same-load-count modes; it cannot be four fully overlapping per-instruction
+retirement timers.
+
+The verified matrix size sweep shows that B=1 helps the intended workload but
+is still insufficient at N=128:
+
+| Matrix N | Default | B=1 | B=2 | B=4 |
+|---------:|--------:|----:|----:|----:|
+| 32 | 14.444 | 18.973 | 16.693 | 15.553 |
+| 64 | 20.036 | 29.068 | 24.528 | 22.258 |
+| 128 | 42.229 | 60.076 | 51.123 | 46.638 |
+
+The two guarded corrected-N=128 hardware diagnostics are 73.988 and 75.712 us,
+so even the strongest legal integer setting remains about 14--16 us too fast.
+
+More importantly, the same candidate regresses matched K-means, which is
+already slightly simulator-slow against its legacy target:
+
+| Points | Default | B=1 | B=2 | B=4 | B=1 change |
+|-------:|--------:|----:|----:|----:|-----------:|
+| 1,024 | 21.975 | 25.721 | - | - | +17.0% |
+| 2,048 | 29.538 | 33.037 | 31.100 | 30.260 | +11.8% |
+| 4,096 | 40.439 | 43.806 | 41.524 | 41.134 | +8.3% |
+| 8,192 | 82.660 | 88.533 | - | - | +7.1% |
+
+All recorded application points completed exact output verification. The
+declining relative penalty with point count confirms that unrelated waves hide
+some per-instruction retirement delay, but any charge on narrow dword loads is
+still the wrong isolation boundary. At P=4096, B=1 moves the simulator from
+40.439 to 43.806 us against the 39.220-us legacy hardware target.
+
+The next candidate should therefore charge only the *extra* lane-dwords of
+wide loads and serialize that extra service within each wave while allowing
+different waves to overlap. For a full wave, dword/x2/x4 should contribute
+0/64/192 extra lane-dwords. This preserves narrow K-means, PageRank, and FIR;
+it also makes the four independent loads share one wave-owned service stream,
+which is predicted to move the dwordx4 probes to roughly 19.1/15.1 us before
+second-order event overlap. This remains a default-off hypothesis until pinned
+width and work-group slopes are available.
+
+Sweep artifacts, logs, and SQLite databases are under
+`/tmp/mgpusim-wide-sweep.VwfrQO`. No P=1024 or P=8192 B=2/B=4 values are
+reported because those redundant long-running points were intentionally
+stopped after B=1 had already rejected the model.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
