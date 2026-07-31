@@ -98,21 +98,25 @@ type Spec struct {
 	// MaxCoalescingPenalty is the maximum low-utilization penalty for reads.
 	// MaxWriteCoalescingPenalty optionally overrides it for partial-line
 	// writes, which can require write combining or read-modify-write traffic.
-	// MaxWideWriteStridePenalty models the loss of DRAM row locality and
-	// write-combiner capacity when wide stores jump between cache lines.
+	// MaxWideWriteStridePenalty is a calibrated per-gap cost for non-adjacent
+	// cache-line transactions emitted by one dynamic wide-store instruction.
+	// The optional far tier replaces, rather than adds to, this cost when the
+	// aligned-line distance reaches MaxWideWriteStrideFarMinDistanceLines.
 	MaxCoalescingPenalty int `json:"max_coalescing_penalty"`
 	// SplitLineLoadPenalty is a calibrated alignment overhead for contiguous,
 	// unaligned vector loads spanning multiple cache lines. It is not an
 	// extra-transaction counter.
-	SplitLineLoadPenalty      int  `json:"split_line_load_penalty"`
-	SplitLineLoadMaxDwords    int  `json:"split_line_load_max_dwords"`
-	DependentLoadIssuePenalty int  `json:"dependent_load_issue_penalty"`
-	DependentLoadMinAge       int  `json:"dependent_load_min_age"`
-	DependentLoadMaxAge       int  `json:"dependent_load_max_age"`
-	DependentLoadMaxDwords    int  `json:"dependent_load_max_dwords"`
-	DependentLoadFlatOnly     bool `json:"dependent_load_flat_only"`
-	MaxWriteCoalescingPenalty int  `json:"max_write_coalescing_penalty"`
-	MaxWideWriteStridePenalty int  `json:"max_wide_write_stride_penalty"`
+	SplitLineLoadPenalty                  int  `json:"split_line_load_penalty"`
+	SplitLineLoadMaxDwords                int  `json:"split_line_load_max_dwords"`
+	DependentLoadIssuePenalty             int  `json:"dependent_load_issue_penalty"`
+	DependentLoadMinAge                   int  `json:"dependent_load_min_age"`
+	DependentLoadMaxAge                   int  `json:"dependent_load_max_age"`
+	DependentLoadMaxDwords                int  `json:"dependent_load_max_dwords"`
+	DependentLoadFlatOnly                 bool `json:"dependent_load_flat_only"`
+	MaxWriteCoalescingPenalty             int  `json:"max_write_coalescing_penalty"`
+	MaxWideWriteStridePenalty             int  `json:"max_wide_write_stride_penalty"`
+	MaxWideWriteStrideFarPenalty          int  `json:"max_wide_write_stride_far_penalty"`
+	MaxWideWriteStrideFarMinDistanceLines int  `json:"max_wide_write_stride_far_min_distance_lines"`
 
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.

@@ -106,4 +106,39 @@ var _ = Describe("Builder", func() {
 				Build("GPU.CU")
 		}).To(PanicWith("cu: SplitLineLoadMaxDwords cannot be negative"))
 	})
+
+	It("rejects an incomplete wide-write far tier", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+		spec := DefaultSpec()
+		spec.MaxWideWriteStridePenalty = 20
+		spec.MaxWideWriteStrideFarPenalty = 30
+		spec.MaxWideWriteStrideFarMinDistanceLines = 1
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithSpec(spec).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: wide-write far penalty requires a distance of at least 2 lines",
+		))
+	})
+
+	It("rejects a wide-write far tier without a near tier", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+		spec := DefaultSpec()
+		spec.MaxWideWriteStrideFarPenalty = 30
+		spec.MaxWideWriteStrideFarMinDistanceLines = 4
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithSpec(spec).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: wide-write far penalty requires a near penalty",
+		))
+	})
 })

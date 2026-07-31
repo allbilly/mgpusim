@@ -407,13 +407,35 @@ func (wf *Wavefront) WideWriteInstructionStridePenalty(
 	penalty int,
 	instID uint64,
 ) int {
+	return wf.WideWriteInstructionTieredStridePenalty(
+		current, lineBytes, penalty, 0, 0, instID,
+	)
+}
+
+// WideWriteInstructionTieredStridePenalty charges a second penalty tier when
+// consecutive writes from one dynamic instruction cross a distant-line
+// threshold.
+func (wf *Wavefront) WideWriteInstructionTieredStridePenalty(
+	current, lineBytes uint64,
+	nearPenalty, farPenalty, farMinDistanceLines int,
+	instID uint64,
+) int {
 	if wf.hasWideWriteLine && wf.lastWideWriteInst != instID {
 		wf.ResetWideWriteTracking()
 	}
 	result := 0
-	if penalty > 0 && wf.hasWideWriteLine &&
-		!wideWriteLinesAreLocal(wf.lastWideWriteLine, current, lineBytes) {
-		result = penalty
+	if nearPenalty > 0 && wf.hasWideWriteLine {
+		distance := wideWriteLineDistance(
+			wf.lastWideWriteLine, current, lineBytes,
+		)
+		if distance > 1 {
+			result = nearPenalty
+			if farPenalty > 0 &&
+				farMinDistanceLines >= 2 &&
+				distance >= uint64(farMinDistanceLines) {
+				result = farPenalty
+			}
+		}
 	}
 	wf.lastWideWriteLine = current
 	wf.lastWideWriteInst = instID
@@ -429,16 +451,19 @@ func (wf *Wavefront) ResetWideWriteTracking() {
 }
 
 func wideWriteLinesAreLocal(previous, current, lineBytes uint64) bool {
+	return wideWriteLineDistance(previous, current, lineBytes) <= 1
+}
+
+func wideWriteLineDistance(previous, current, lineBytes uint64) uint64 {
 	if lineBytes == 0 {
-		return true
+		return 0
 	}
 	previous -= previous % lineBytes
 	current -= current % lineBytes
-	if previous == current {
-		return true
+	if current > previous {
+		return (current - previous) / lineBytes
 	}
-	return (current > previous && current-previous == lineBytes) ||
-		(previous > current && previous-current == lineBytes)
+	return (previous - current) / lineBytes
 }
 
 // VCC returns the vector condition code

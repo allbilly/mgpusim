@@ -60,46 +60,48 @@ type ShaderArray struct {
 type Builder struct {
 	simulation *simulation.Simulation
 
-	gpuID                     uint64
-	name                      string
-	numCUs                    int
-	freq                      timing.Freq
-	log2CacheLineSize         uint64
-	log2PageSize              uint64
-	wfPoolSize                int
-	vgprCount                 []int
-	numSinglePrecisionUnits   int
-	vecMemInstPipelineStages  int
-	vecMemTransPipelineStages int
-	vecMemTransPipelineWidth  int
-	cuMemPipelineBufferSize   int
-	l1vCacheSize              uint64
-	l1vBankLatency            int
-	memPipelineBufferSize     int
-	maxCoalescingPenalty      int
-	splitLineLoadPenalty      int
-	splitLineLoadMaxDwords    int
-	dependentLoadIssuePenalty int
-	dependentLoadMinAge       int
-	dependentLoadMaxAge       int
-	dependentLoadMaxDwords    int
-	dependentLoadFlatOnly     bool
-	maxWriteCoalescingPenalty int
-	maxWideWriteStridePenalty int
-	registerScoreboard        bool
-	scoreboardVALULatency     int
-	valuTiming                cu.VALUTiming
-	ldsPipelineLatency        int
-	ldsIssueInterval          int
-	ldsMaxInFlight            int
-	ldsBankCount              int
-	ldsBankWidth              int
-	ldsBankConflictPenalty    int
-	barrierLatency            int
-	l1AddressMapper           mem.AddressToPortMapper
-	l1TLBAddressMapper        mem.AddressToPortMapper
-	aluBuilder                func() emu.ALU
-	decoderBuilder            func() emu.Decoder
+	gpuID                                 uint64
+	name                                  string
+	numCUs                                int
+	freq                                  timing.Freq
+	log2CacheLineSize                     uint64
+	log2PageSize                          uint64
+	wfPoolSize                            int
+	vgprCount                             []int
+	numSinglePrecisionUnits               int
+	vecMemInstPipelineStages              int
+	vecMemTransPipelineStages             int
+	vecMemTransPipelineWidth              int
+	cuMemPipelineBufferSize               int
+	l1vCacheSize                          uint64
+	l1vBankLatency                        int
+	memPipelineBufferSize                 int
+	maxCoalescingPenalty                  int
+	splitLineLoadPenalty                  int
+	splitLineLoadMaxDwords                int
+	dependentLoadIssuePenalty             int
+	dependentLoadMinAge                   int
+	dependentLoadMaxAge                   int
+	dependentLoadMaxDwords                int
+	dependentLoadFlatOnly                 bool
+	maxWriteCoalescingPenalty             int
+	maxWideWriteStridePenalty             int
+	maxWideWriteStrideFarPenalty          int
+	maxWideWriteStrideFarMinDistanceLines int
+	registerScoreboard                    bool
+	scoreboardVALULatency                 int
+	valuTiming                            cu.VALUTiming
+	ldsPipelineLatency                    int
+	ldsIssueInterval                      int
+	ldsMaxInFlight                        int
+	ldsBankCount                          int
+	ldsBankWidth                          int
+	ldsBankConflictPenalty                int
+	barrierLatency                        int
+	l1AddressMapper                       mem.AddressToPortMapper
+	l1TLBAddressMapper                    mem.AddressToPortMapper
+	aluBuilder                            func() emu.ALU
+	decoderBuilder                        func() emu.Decoder
 
 	sa *ShaderArray
 
@@ -318,6 +320,16 @@ func (b Builder) WithMaxWriteCoalescingPenalty(n int) Builder {
 // WithMaxWideWriteStridePenalty sets the penalty for non-local wide stores.
 func (b Builder) WithMaxWideWriteStridePenalty(n int) Builder {
 	b.maxWideWriteStridePenalty = n
+	return b
+}
+
+// WithMaxWideWriteStrideFarPenalty sets the penalty tier used when consecutive
+// wide stores are separated by at least minDistanceLines aligned cache lines.
+func (b Builder) WithMaxWideWriteStrideFarPenalty(
+	penalty, minDistanceLines int,
+) Builder {
+	b.maxWideWriteStrideFarPenalty = penalty
+	b.maxWideWriteStrideFarMinDistanceLines = minDistanceLines
 	return b
 }
 
@@ -568,6 +580,12 @@ func (b *Builder) cuSpec() cu.Spec {
 	}
 	if b.maxWideWriteStridePenalty > 0 {
 		spec.MaxWideWriteStridePenalty = b.maxWideWriteStridePenalty
+		if b.maxWideWriteStrideFarPenalty > 0 {
+			spec.MaxWideWriteStrideFarPenalty =
+				b.maxWideWriteStrideFarPenalty
+			spec.MaxWideWriteStrideFarMinDistanceLines =
+				b.maxWideWriteStrideFarMinDistanceLines
+		}
 	}
 
 	spec.RegisterScoreboard = b.registerScoreboard

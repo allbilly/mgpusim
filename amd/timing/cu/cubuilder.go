@@ -12,38 +12,40 @@ import (
 )
 
 var defaultSpec = Spec{
-	Freq:                         1 * timing.GHz,
-	SIMDCount:                    4,
-	WfPoolSize:                   10,
-	VGPRCounts:                   []int{16384, 16384, 16384, 16384},
-	SGPRCount:                    3200,
-	LDSBytes:                     64 * 1024,
-	Log2CachelineSize:            6,
-	NumSinglePrecisionUnits:      16,
-	VecMemInstPipelineStages:     6,
-	VecMemTransPipelineStages:    10,
-	VecMemTransPipelineWidth:     1,
-	MemPipelineBufferSize:        8,
-	MaxCoalescingPenalty:         0,
-	SplitLineLoadPenalty:         0,
-	SplitLineLoadMaxDwords:       0,
-	DependentLoadIssuePenalty:    0,
-	DependentLoadMinAge:          0,
-	DependentLoadMaxAge:          0,
-	DependentLoadMaxDwords:       0,
-	DependentLoadFlatOnly:        false,
-	MaxWriteCoalescingPenalty:    0,
-	MaxWideWriteStridePenalty:    0,
-	RegisterScoreboard:           false,
-	LDSPipelineLatency:           14,
-	LDSIssueInterval:             0,
-	LDSMaxInFlight:               1,
-	LDSBankCount:                 0,
-	LDSBankWidth:                 4,
-	LDSBankConflictPenalty:       0,
-	BarrierLatency:               0,
-	InFlightVectorMemAccessLimit: 512,
-	InstBufByteSize:              256,
+	Freq:                                  1 * timing.GHz,
+	SIMDCount:                             4,
+	WfPoolSize:                            10,
+	VGPRCounts:                            []int{16384, 16384, 16384, 16384},
+	SGPRCount:                             3200,
+	LDSBytes:                              64 * 1024,
+	Log2CachelineSize:                     6,
+	NumSinglePrecisionUnits:               16,
+	VecMemInstPipelineStages:              6,
+	VecMemTransPipelineStages:             10,
+	VecMemTransPipelineWidth:              1,
+	MemPipelineBufferSize:                 8,
+	MaxCoalescingPenalty:                  0,
+	SplitLineLoadPenalty:                  0,
+	SplitLineLoadMaxDwords:                0,
+	DependentLoadIssuePenalty:             0,
+	DependentLoadMinAge:                   0,
+	DependentLoadMaxAge:                   0,
+	DependentLoadMaxDwords:                0,
+	DependentLoadFlatOnly:                 false,
+	MaxWriteCoalescingPenalty:             0,
+	MaxWideWriteStridePenalty:             0,
+	MaxWideWriteStrideFarPenalty:          0,
+	MaxWideWriteStrideFarMinDistanceLines: 0,
+	RegisterScoreboard:                    false,
+	LDSPipelineLatency:                    14,
+	LDSIssueInterval:                      0,
+	LDSMaxInFlight:                        1,
+	LDSBankCount:                          0,
+	LDSBankWidth:                          4,
+	LDSBankConflictPenalty:                0,
+	BarrierLatency:                        0,
+	InFlightVectorMemAccessLimit:          512,
+	InstBufByteSize:                       256,
 }
 
 // DefaultSpec returns a copy of the default compute-unit configuration.
@@ -177,6 +179,22 @@ func (b *Builder) mustHaveValidSpec() {
 	if b.spec.SplitLineLoadMaxDwords < 0 {
 		panic("cu: SplitLineLoadMaxDwords cannot be negative")
 	}
+	if b.spec.MaxWideWriteStridePenalty < 0 ||
+		b.spec.MaxWideWriteStrideFarPenalty < 0 {
+		panic("cu: wide-write stride penalties cannot be negative")
+	}
+	if b.spec.MaxWideWriteStrideFarPenalty > 0 &&
+		b.spec.MaxWideWriteStridePenalty == 0 {
+		panic("cu: wide-write far penalty requires a near penalty")
+	}
+	if b.spec.MaxWideWriteStrideFarPenalty > 0 &&
+		b.spec.MaxWideWriteStrideFarMinDistanceLines < 2 {
+		panic("cu: wide-write far penalty requires a distance of at least 2 lines")
+	}
+	if b.spec.MaxWideWriteStrideFarPenalty == 0 &&
+		b.spec.MaxWideWriteStrideFarMinDistanceLines != 0 {
+		panic("cu: wide-write far distance requires a far penalty")
+	}
 }
 
 func (b *Builder) fillResourceDefaults() {
@@ -272,6 +290,10 @@ func (b *Builder) equipVectorMemoryUnit(cu *ComputeUnit, name string) {
 		b.spec.MaxWriteCoalescingPenalty
 	vectorMemoryUnit.maxWideWriteStridePenalty =
 		b.spec.MaxWideWriteStridePenalty
+	vectorMemoryUnit.maxWideWriteStrideFarPenalty =
+		b.spec.MaxWideWriteStrideFarPenalty
+	vectorMemoryUnit.maxWideWriteStrideFarMinDistanceLines =
+		b.spec.MaxWideWriteStrideFarMinDistanceLines
 	cu.VectorMemUnit = vectorMemoryUnit
 
 	vectorMemoryUnit.postInstructionPipelineBuffer =

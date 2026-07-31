@@ -278,6 +278,39 @@ var _ = Describe("Vector Memory Unit", func() {
 		)).To(Equal(0))
 	})
 
+	It("can charge separate near and far wide-write penalties", func() {
+		vecMemUnit.maxWideWriteStridePenalty = 20
+		vecMemUnit.maxWideWriteStrideFarPenalty = 30
+		vecMemUnit.maxWideWriteStrideFarMinDistanceLines = 4
+		wf := wavefront.NewWavefront(nil)
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 31
+		line := func(address uint64) VectorMemAccessInfo {
+			mask := make([]bool, 64)
+			for i := range mask {
+				mask[i] = true
+			}
+			return VectorMemAccessInfo{
+				Write: &memprotocol.WriteReq{
+					Address:   address,
+					DirtyMask: mask,
+				},
+				Wavefront: wf,
+				Inst:      inst,
+			}
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			line(0x1000))).To(Equal(0))
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			line(0x10c0))).To(Equal(20))
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			line(0x11c0))).To(Equal(30))
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			line(0x10c0))).To(Equal(30))
+	})
+
 	It("only recognizes opcode 31 stores in vector-memory formats", func() {
 		inst := wavefront.NewInst(insts.NewInst())
 		inst.FormatType = insts.SOP2

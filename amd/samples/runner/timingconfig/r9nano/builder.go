@@ -55,68 +55,70 @@ const unsetCPInt = -1
 type Builder struct {
 	simulation *simulation.Simulation
 
-	gpuID                            uint64
-	name                             string
-	freq                             timing.Freq
-	numCUPerShaderArray              int
-	numShaderArray                   int
-	l2CacheSize                      uint64
-	numMemoryBank                    int
-	log2CacheLineSize                uint64
-	log2PageSize                     uint64
-	log2MemoryBankInterleavingSize   uint64
-	memAddrOffset                    uint64
-	dramSize                         uint64
-	memoryLatency                    int
-	memoryWidth                      int
-	l2BankLatency                    int
-	l2NumReqPerCycle                 int
-	l1vCacheSize                     uint64
-	l1vBankLatency                   int
-	dramBackend                      dramBackendKind
-	dramMemFreq                      timing.Freq
-	dramNumInternalBanks             int
-	dramBankPipelineWidth            int
-	dramBankPipelineDepth            int
-	dramStageLatency                 int
-	cpAlg                            string
-	cpNumDies                        int
-	cpWavefrontDispatchCycles        int
-	cpConstantKernelOverhead         int
-	cpConstantKernelLaunchOverhead   int
-	cpSubsequentKernelLaunchOverhead int
-	cpWGScalingThreshold             int
-	activeCUCount                    int
-	registerScoreboard               bool
-	scoreboardVALULatency            int
-	valuTiming                       cu.VALUTiming
-	ldsPipelineLatency               int
-	ldsIssueInterval                 int
-	ldsMaxInFlight                   int
-	ldsBankCount                     int
-	ldsBankWidth                     int
-	ldsBankConflictPenalty           int
-	barrierLatency                   int
-	maxCoalescingPenalty             int
-	splitLineLoadPenalty             int
-	splitLineLoadMaxDwords           int
-	dependentLoadIssuePenalty        int
-	dependentLoadMinAge              int
-	dependentLoadMaxAge              int
-	dependentLoadMaxDwords           int
-	dependentLoadFlatOnly            bool
-	maxWriteCoalescingPenalty        int
-	maxWideWriteStridePenalty        int
-	vecMemTransPipelineWidth         int
-	numSinglePrecisionUnits          int
-	dmaThroughL2                     bool
-	dmaThroughL2MaxBytes             uint64
-	aluBuilder                       func() emu.ALU
-	decoderBuilder                   func() emu.Decoder
-	globalStorage                    *mem.Storage
-	mmu                              *mmu.Comp
-	rdmaAddressMapper                mem.AddressToPortMapper
-	driverPort                       messaging.RemotePort
+	gpuID                                 uint64
+	name                                  string
+	freq                                  timing.Freq
+	numCUPerShaderArray                   int
+	numShaderArray                        int
+	l2CacheSize                           uint64
+	numMemoryBank                         int
+	log2CacheLineSize                     uint64
+	log2PageSize                          uint64
+	log2MemoryBankInterleavingSize        uint64
+	memAddrOffset                         uint64
+	dramSize                              uint64
+	memoryLatency                         int
+	memoryWidth                           int
+	l2BankLatency                         int
+	l2NumReqPerCycle                      int
+	l1vCacheSize                          uint64
+	l1vBankLatency                        int
+	dramBackend                           dramBackendKind
+	dramMemFreq                           timing.Freq
+	dramNumInternalBanks                  int
+	dramBankPipelineWidth                 int
+	dramBankPipelineDepth                 int
+	dramStageLatency                      int
+	cpAlg                                 string
+	cpNumDies                             int
+	cpWavefrontDispatchCycles             int
+	cpConstantKernelOverhead              int
+	cpConstantKernelLaunchOverhead        int
+	cpSubsequentKernelLaunchOverhead      int
+	cpWGScalingThreshold                  int
+	activeCUCount                         int
+	registerScoreboard                    bool
+	scoreboardVALULatency                 int
+	valuTiming                            cu.VALUTiming
+	ldsPipelineLatency                    int
+	ldsIssueInterval                      int
+	ldsMaxInFlight                        int
+	ldsBankCount                          int
+	ldsBankWidth                          int
+	ldsBankConflictPenalty                int
+	barrierLatency                        int
+	maxCoalescingPenalty                  int
+	splitLineLoadPenalty                  int
+	splitLineLoadMaxDwords                int
+	dependentLoadIssuePenalty             int
+	dependentLoadMinAge                   int
+	dependentLoadMaxAge                   int
+	dependentLoadMaxDwords                int
+	dependentLoadFlatOnly                 bool
+	maxWriteCoalescingPenalty             int
+	maxWideWriteStridePenalty             int
+	maxWideWriteStrideFarPenalty          int
+	maxWideWriteStrideFarMinDistanceLines int
+	vecMemTransPipelineWidth              int
+	numSinglePrecisionUnits               int
+	dmaThroughL2                          bool
+	dmaThroughL2MaxBytes                  uint64
+	aluBuilder                            func() emu.ALU
+	decoderBuilder                        func() emu.Decoder
+	globalStorage                         *mem.Storage
+	mmu                                   *mmu.Comp
+	rdmaAddressMapper                     mem.AddressToPortMapper
+	driverPort                            messaging.RemotePort
 
 	gpu                 *gpubuilder.GPU
 	cp                  *cp.Comp
@@ -489,6 +491,15 @@ func (b Builder) WithMaxWriteCoalescingPenalty(penalty int) Builder {
 // WithMaxWideWriteStridePenalty sets the non-local wide-store penalty.
 func (b Builder) WithMaxWideWriteStridePenalty(penalty int) Builder {
 	b.maxWideWriteStridePenalty = penalty
+	return b
+}
+
+// WithMaxWideWriteStrideFarPenalty sets the distant-line wide-store penalty.
+func (b Builder) WithMaxWideWriteStrideFarPenalty(
+	penalty, minDistanceLines int,
+) Builder {
+	b.maxWideWriteStrideFarPenalty = penalty
+	b.maxWideWriteStrideFarMinDistanceLines = minDistanceLines
 	return b
 }
 
@@ -928,6 +939,12 @@ func (b *Builder) buildSAs() {
 		saBuilder = saBuilder.WithMaxWideWriteStridePenalty(
 			b.maxWideWriteStridePenalty,
 		)
+		if b.maxWideWriteStrideFarPenalty > 0 {
+			saBuilder = saBuilder.WithMaxWideWriteStrideFarPenalty(
+				b.maxWideWriteStrideFarPenalty,
+				b.maxWideWriteStrideFarMinDistanceLines,
+			)
+		}
 	}
 	if b.vecMemTransPipelineWidth > 0 {
 		saBuilder = saBuilder.WithVecMemTransPipelineWidth(

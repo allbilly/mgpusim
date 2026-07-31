@@ -27,12 +27,14 @@ type VectorMemoryUnit struct {
 	numTransactionInFlight  uint64
 	maxInstructionsInFlight uint64
 
-	maxCoalescingPenalty      int
-	splitLineLoadPenalty      int
-	splitLineLoadMaxDwords    int
-	maxWriteCoalescingPenalty int
-	maxWideWriteStridePenalty int
-	coalescingStallRemaining  int
+	maxCoalescingPenalty                  int
+	splitLineLoadPenalty                  int
+	splitLineLoadMaxDwords                int
+	maxWriteCoalescingPenalty             int
+	maxWideWriteStridePenalty             int
+	maxWideWriteStrideFarPenalty          int
+	maxWideWriteStrideFarMinDistanceLines int
+	coalescingStallRemaining              int
 
 	instructionPipeline           queueing.Pipeline[vectorMemInst]
 	postInstructionPipelineBuffer queueing.Buffer[vectorMemInst]
@@ -219,10 +221,12 @@ func (u *VectorMemoryUnit) writeStridePenalty(
 	if txn.Inst != nil {
 		instID = txn.Inst.ID
 	}
-	return txn.Wavefront.WideWriteInstructionStridePenalty(
+	return txn.Wavefront.WideWriteInstructionTieredStridePenalty(
 		txn.Write.Address,
 		uint64(cacheLineBytes),
 		u.maxWideWriteStridePenalty,
+		u.maxWideWriteStrideFarPenalty,
+		u.maxWideWriteStrideFarMinDistanceLines,
 		instID,
 	)
 }
