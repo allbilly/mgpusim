@@ -37,7 +37,6 @@ const (
 	detailedDRAMPortBufSize = 1024 // v4 dram: WithTopPortBufferSize(1024)
 	l2TLBPortBufSize        = 1024
 	ctrlPortBufSize         = 1
-	l2CachePortBufSize      = 32 // v4 writeback: 2 * NumReqPerCycle(16)
 )
 
 // dramBackendKind selects the memory controller implementation.
@@ -71,6 +70,7 @@ type Builder struct {
 	memoryLatency                    int
 	memoryWidth                      int
 	l2BankLatency                    int
+	l2NumReqPerCycle                 int
 	l1vCacheSize                     uint64
 	l1vBankLatency                   int
 	dramBackend                      dramBackendKind
@@ -238,6 +238,13 @@ func (b Builder) WithMemoryWidth(width int) Builder {
 // the writeback cache default (10 cycles).
 func (b Builder) WithL2BankLatency(latency int) Builder {
 	b.l2BankLatency = latency
+	return b
+}
+
+// WithL2NumReqPerCycle sets how many requests each L2 bank can accept per
+// cycle. Zero keeps the writeback-cache default used by this platform.
+func (b Builder) WithL2NumReqPerCycle(numReq int) Builder {
+	b.l2NumReqPerCycle = numReq
 	return b
 }
 
@@ -887,6 +894,9 @@ func (b *Builder) buildL2Caches() {
 	spec.TotalByteSize = byteSize
 	spec.NumMSHREntry = 64
 	spec.NumReqPerCycle = 16
+	if b.l2NumReqPerCycle > 0 {
+		spec.NumReqPerCycle = b.l2NumReqPerCycle
+	}
 	if b.l2BankLatency > 0 {
 		spec.BankLatency = b.l2BankLatency
 	}
@@ -903,9 +913,10 @@ func (b *Builder) buildL2Caches() {
 			}).
 			Build(cacheName)
 
-		b.buildPort(l2, "Top", l2CachePortBufSize)
-		b.buildPort(l2, "Bottom", l2CachePortBufSize)
-		b.buildPort(l2, "Control", l2CachePortBufSize)
+		portBufSize := 2 * spec.NumReqPerCycle
+		b.buildPort(l2, "Top", portBufSize)
+		b.buildPort(l2, "Bottom", portBufSize)
+		b.buildPort(l2, "Control", portBufSize)
 
 		b.l2Caches = append(b.l2Caches, l2)
 
