@@ -47,9 +47,33 @@ The point sweep holds features at 16 and clusters at 5:
 | 4,096  | 40.439   | 1.37x      | 372.376      | 1.35x     |
 | 8,192  | 82.660   | 2.04x      | 626.903      | 1.68x     |
 
+Commit `369b01ae` repeated the simulator point sweep after adding matched
+hardware fixtures and full output verification. It also paired the normal
+swap+compute path with the preinitialized feature-major compute path:
+
+| Points | Combined (us) | Preinitialized compute (us) | Combined - preinit (us) |
+|-------:|--------------:|----------------------------:|------------------------:|
+| 1,024  | 21.975 | 14.532 | 7.443 |
+| 2,048  | 29.538 | 21.003 | 8.535 |
+| 4,096  | 40.439 | 24.066 | 16.373 |
+| 8,192  | 82.660 | 42.848 | 39.812 |
+
+Every point passed the simulator's one-iteration centroid/RMSE and transposed
+feature checks. The difference column is not a pure swap-kernel timing: it also
+contains the producer/consumer cache-state difference that preinitialization
+removes. Its increasingly large 4K/8K step nevertheless shows that the
+producer path or its residency effects, rather than compute alone, drives much
+of the large-size knee. The metric databases are retained at
+`/tmp/mgpusim-kmeans-size-369b01ae.sdDa3x` for this calibration session.
+
 The default pinned 1600 MHz target is 39.220 us at 4,096 points, 16 features,
 and 5 clusters. The 372.376 us `auto` result at that same point demonstrates
 why the diagnostic hardware column is unusable for absolute calibration.
+Against the legacy pinned target, the current 40.439 us simulator value has
+`HW/Sim = 0.970`, or -3.0% with this document's signed convention. K-means is
+therefore already inside the 10% legacy gate; the new exact-fixture pinned
+sweep is a protocol-matched confirmation and size-curve test, not a reason to
+retune the default point preemptively.
 Non-default sizes have no pinned reference. The useful observations are curve
 shape:
 
