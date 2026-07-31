@@ -21,9 +21,9 @@ the exact gfx803 binaries used by the hardware harness.
 | nw | 146.510 | 144.844 | 1.1% |
 
 Canonical-size MARE is **7.5%** across all ten freshly measured workloads.
-The stronger anti-overfit result is **6.9% MARE across 45 matched size
+The stronger anti-overfit result is **7.4% MARE across 47 matched size
 points**. Eight of the ten swept families have family MARE below 10%; the
-maximum point error is the 384-wide transpose holdout at 25.0%.
+maximum point error is the 16,384-point k-means holdout at 34.3%.
 All points run and verify.
 The original headline errors were vectoradd 38.0%, ReLU 21.5%, and matrix
 multiplication 58.7%.
@@ -118,7 +118,7 @@ cache-line request. This distinction preserves the scalar-store path while
 allowing wide stores to use the transaction bandwidth they already model.
 After the clock-warmed recollection and capacity correction, ReLU has 4.8%
 family MARE and vectoradd 8.9%. With the later k-means and PageRank holdouts,
-the complete 45-point MARE is 6.9%.
+the complete 47-point MARE is 7.4%.
 
 | vector length | HW steady (µs) | Sim (µs) | Error |
 |---:|---:|---:|---:|
@@ -190,11 +190,11 @@ not folded into GPU execution time.
 
 The exact-HSACO harness and simulator runner now accept a single benchmark
 size. The sweep driver records four predetermined, launch-compatible sizes
-for nine families, eight transpose sizes spanning its cache-capacity
-transition, plus a ReLU midpoint. K-means fixtures preserve the deterministic
+for seven families, six k-means sizes, eight transpose sizes spanning its
+cache-capacity transition, plus a ReLU midpoint. K-means fixtures preserve the deterministic
 feature stream at each point, and PageRank regenerates its deterministic CSR
 matrix for each node count. The committed hardware CSV uses the median of
-three independent processes per point. All 45 matched hardware and simulator
+three independent processes per point. All 47 matched hardware and simulator
 points are present and every simulator point verifies.
 
 | Family | MARE | Maximum error | Sim/HW slope ratio |
@@ -206,7 +206,7 @@ points are present and every simulator point verifies.
 | bitonicsort | 6.1% | 6.9% | 1.232 |
 | aes | 7.7% | 7.8% | — |
 | fir | 0.3% | 0.7% | — |
-| kmeans | 12.7% | 20.0% | 0.614 |
+| kmeans | 14.4% | 34.3% | 0.462 |
 | nw | 1.2% | 1.5% | 0.981 |
 | pagerank | 8.7% | 13.2% | 1.058 |
 
@@ -214,9 +214,11 @@ PageRank's broad 128–1024-node curve shows that its canonical residual is not
 a scaling failure: the model's fitted slope is within 5.8% of hardware and
 its four-point family MARE is 8.7%. K-means exposes a different issue. Its
 fixed launch overhead matches the flat 1024–4096 hardware region reasonably,
-but the 8192-point simulator is 20.0% fast and the fitted slope is only 61.4%
-of hardware. That residual is retained as a holdout rather than corrected
-with a benchmark- or size-specific delay.
+but the 8192- and 16,384-point simulators are 20.0% and 34.3% fast. The fitted
+slope is only 46.2% of hardware. Hardware component timing localizes the
+transition primarily to the sparse transpose/swap kernel after three
+workgroups per CU. That residual is retained as a holdout rather than
+corrected with a benchmark- or size-specific delay.
 
 The transpose correction is structural rather than benchmark-specific. A
 wide store generates up to 16 line requests but issues one wave instruction;
@@ -255,6 +257,18 @@ without a size- or benchmark-specific rule.
   vector slope but pushed pagerank to 24.769 µs. The clock-warmed evidence
   selects a 16,384-line (1 MiB) burst: one-input workloads retain their short
   overlap while vectoradd's second 1 MiB input sees sustained service.
+- K-means's new 6,144-point holdout is within 1.3%, but hardware rises sharply
+  at four workgroups/CU: the 8,192- and 16,384-point errors are 20.0% and
+  34.3%. Halving L2 issue width and reducing L1V capacity from 16 to 12 KiB
+  had essentially no effect. Reducing effective L2 capacity made the 16K
+  point too slow without fixing 8K, while applying the write limiter to all
+  L1-to-L2 traffic made the 8K simulated runtime 4.5× larger and badly regressed
+  transpose; all were rejected.
+- Reducing the CU in-flight vector-memory limit from 512 to 128 lowered the
+  new worst k-means error to 27.7%, but raised the canonical 65K vectoradd
+  error from 18.2% to 25.6% and left 47-point MARE unchanged (7.39% versus
+  7.38%). The 192-entry compromise retained most of the vector regression
+  with little k-means benefit, so the native 512-entry capacity remains.
 
 ## Reproduction
 

@@ -75,13 +75,14 @@ calibration points:
 ./compare_size_sweeps.py hw_size_sweep.csv sim_size_sweep.csv
 ```
 
-The sweep uses four launch-compatible sizes for nine scalable families,
-eight matrix-transpose sizes spanning its L2-capacity transition, plus a ReLU
-midpoint at 131K. K-means inputs are deterministic prefixes of the same random
-stream, while PageRank gets a separately generated deterministic CSR graph at
-each node count. It writes every point and its status
+The sweep uses four launch-compatible sizes for seven families, six k-means
+sizes spanning its four-workgroup-per-CU transition, eight matrix-transpose
+sizes spanning its L2-capacity transition, plus a ReLU midpoint at 131K.
+K-means inputs are deterministic prefixes of the same random stream, while
+PageRank gets a separately generated deterministic CSR graph at each node
+count. It writes every point and its status
 even if an individual run fails, so a failed holdout cannot silently
-disappear. Both committed CSV files contain all 45 matched points. Hardware
+disappear. Both committed CSV files contain all 47 matched points. Hardware
 mode checks `/dev/kfd` access, runs three independent processes per point by
 default, warms the GPU for at least 50 ms per process, and records their
 median. `--warmup-ms 0` explicitly disables the duration floor.
@@ -107,9 +108,12 @@ hardware/simulator slope ratio.
 | nw | 146.510 | 144.844 | 1.1% |
 
 Canonical-size MARE is **7.5%** across all ten remeasured benchmarks. The
-anti-overfit result is **6.9% MARE across 45 matched size points**; eight of
+anti-overfit result is **7.4% MARE across 47 matched size points**; eight of
 the ten swept families have family MARE below 10%. The maximum point error
-is the 384-wide transpose holdout at 25.0%. All points verify.
+is the 16,384-point k-means holdout at 34.3%. All points verify. This newly
+exposed residual is intentionally retained: generic cache-capacity and
+in-flight-request corrections either did not affect it or regressed
+independent vector and transpose holdouts.
 
 ## Main model corrections
 

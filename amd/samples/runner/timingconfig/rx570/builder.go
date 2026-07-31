@@ -7,7 +7,7 @@
 // are taken from the AMD RX 570 product page and corroborating spec sheets.
 // Timing latencies are calibrated against the ISCA-10 benchmark suite run on
 // the physical RX 570 (see gpu_perf_scripts/calibration/rx570/hw_ground_truth.txt).
-// The steady-state calibration achieves 6.1% MARE across 37 matched size
+// The steady-state calibration achieves 7.4% MARE across 47 matched size
 // points and 7.5% canonical-size MARE; all 10 benchmarks execute and verify.
 // Cold
 // hipEvent measurements are reported separately because they include

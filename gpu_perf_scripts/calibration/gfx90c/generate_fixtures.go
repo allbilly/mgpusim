@@ -45,7 +45,7 @@ func main() {
 	}
 
 	const numFeatures = 16
-	for _, numPoints := range []int{1024, 2048, 4096, 8192} {
+	for _, numPoints := range []int{1024, 2048, 4096, 6144, 8192, 16384} {
 		rng := rand.New(rand.NewSource(0))
 		features := make([]float32, numPoints*numFeatures)
 		for i := range features {
