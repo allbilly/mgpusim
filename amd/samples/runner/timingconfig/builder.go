@@ -34,17 +34,18 @@ const (
 type Builder struct {
 	simulation *simulation.Simulation
 
-	numGPUs            int
-	numCUPerSA         int
-	numSAPerGPU        int
-	cpuMemSize         uint64
-	gpuMemSize         uint64
-	log2PageSize       uint64
-	useMagicMemoryCopy bool
-	gpuType            string
-	switchLatency      int // PCIe/interconnect switch latency in cycles
-	d2hCycles          int
-	h2dCycles          int
+	numGPUs                          int
+	numCUPerSA                       int
+	numSAPerGPU                      int
+	cpuMemSize                       uint64
+	gpuMemSize                       uint64
+	log2PageSize                     uint64
+	useMagicMemoryCopy               bool
+	gpuType                          string
+	switchLatency                    int // PCIe/interconnect switch latency in cycles
+	d2hCycles                        int
+	h2dCycles                        int
+	vmemLoadReturnLaneDwordsPerCycle int
 
 	globalStorage     *mem.Storage
 	rdmaAddressMapper *mem.BankedAddressPortMapper
@@ -92,9 +93,24 @@ func (b Builder) WithGPUType(gpuType string) Builder {
 	return b
 }
 
+// WithVMemLoadReturnLaneDwordsPerCycle sets an experimental gfx90c
+// per-instruction bandwidth for retiring all vector-load lane-dwords. Zero
+// disables the model.
+func (b Builder) WithVMemLoadReturnLaneDwordsPerCycle(n int) Builder {
+	b.vmemLoadReturnLaneDwordsPerCycle = n
+	return b
+}
+
 // Build builds the hardware platform and returns the driver. The driver, the
 // GPUs, and all the connections register themselves with the simulation.
 func (b Builder) Build() *driver.Driver {
+	if b.vmemLoadReturnLaneDwordsPerCycle < 0 {
+		panic("timingconfig: vector-memory load return bandwidth cannot be negative")
+	}
+	if b.vmemLoadReturnLaneDwordsPerCycle > 0 && b.gpuType != "gfx90c" {
+		panic("timingconfig: vector-memory load return bandwidth is only supported for gfx90c")
+	}
+
 	b.adjustConfigForGPUType()
 	b.cpuGPUMemSizeMustEqual()
 
@@ -254,6 +270,9 @@ func (b *Builder) createGPUBuilder(
 			WithMMU(mmuComponent).
 			WithLog2PageSize(b.log2PageSize).
 			WithGlobalStorage(b.globalStorage).
+			WithVMemLoadReturnLaneDwordsPerCycle(
+				b.vmemLoadReturnLaneDwordsPerCycle,
+			).
 			WithDriverPort(driverPort)
 	default:
 		return r9nano.MakeBuilder().

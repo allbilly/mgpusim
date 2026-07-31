@@ -18,6 +18,11 @@ var archFlag = flag.String("arch", "gcn3",
 	"GPU architecture: gcn3, gcn4, gcn5, or cdna3.")
 var gpuTypeFlag = flag.String("gpu", "r9nano",
 	"GPU model for timing simulation: r9nano, polaris10, vega64, gfx90c, or mi300x.")
+var vmemLoadReturnLaneDwordsPerCycleFlag = flag.Int(
+	"vmem-load-return-lane-dwords-per-cycle",
+	0,
+	"Experimental gfx90c vector-load return bandwidth; zero disables the model.",
+)
 
 var verifyFlag = flag.Bool("verify", false, "Verify the emulation result.")
 var memTracing = flag.Bool("trace-mem", false, "Generate memory trace")
@@ -121,6 +126,15 @@ func (r *Runner) parseSimulationFlags() {
 
 	r.ArchType = parseArchFlag()
 	r.GPUType = parseGPUTypeFlag()
+	r.VMemLoadReturnLaneDwordsPerCycle =
+		*vmemLoadReturnLaneDwordsPerCycleFlag
+	if r.VMemLoadReturnLaneDwordsPerCycle < 0 {
+		panic("vector-memory load return bandwidth cannot be negative")
+	}
+	if r.VMemLoadReturnLaneDwordsPerCycle > 0 &&
+		(!r.Timing || r.GPUType != "gfx90c") {
+		panic("vector-memory load return bandwidth requires -timing -gpu gfx90c")
+	}
 	if r.Timing && r.GPUType == "r9nano" {
 		switch r.ArchType {
 		case arch.GCN4:

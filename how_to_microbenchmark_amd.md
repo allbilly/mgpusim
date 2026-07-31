@@ -259,6 +259,27 @@ go run ./amd/samples/vmem_load_shape \
   -report-dram-transaction-count -report-cpi-stack
 ```
 
+The optional wide-return model is deliberately excluded from the gfx90c
+default. Exercise it only as an explicit calibration variable, keeping every
+other simulator argument fixed:
+
+```bash
+for lane_dwords_per_cycle in 0 4 8 16 32 64; do
+  /home/fedora/.local/go/bin/go run ./amd/samples/vmem_load_shape \
+    -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+    -vmem-load-return-lane-dwords-per-cycle "$lane_dwords_per_cycle" \
+    -width-dwords 4 -mode serial -alias-lanes 8 \
+    -array-bytes 8192 -repeats 64 -workgroups 1
+done
+```
+
+Repeat the candidate sweep for widths 1, 2, and 4, both dependency modes, and
+the production matrix and K-means size sweeps. A useful value must improve the
+wide, sparse, wait-heavy matrix path without materially moving the narrow,
+high-occupancy K-means path. Do not enable a value in `gfx90c.MakeBuilder`
+until pinned hardware width and work-group slopes select it and the default
+zero setting has passed the complete regression suite.
+
 #### Zero-trip baseline and repeat slope
 
 An explicit repeat count of zero is a matched launch control. It uses the same
