@@ -874,6 +874,32 @@ completion/fanout. The simulator artifacts are retained at
 `/tmp/mgpusim-vmem-core-115d1186.XAwhv3` and
 `/tmp/mgpusim-vmem-occ-115d1186.8Mwmoo` for this calibration session.
 
+A finer verified one-lap simulator size sweep at dwordx4/serial/G1 produced:
+
+| Footprint | Alias 8 repeats | Alias 8 (us) | Alias 1 repeats | Alias 1 (us) |
+|----------:|----------------:|-------------:|----------------:|-------------:|
+| 4 KiB | 32 | 7.641 | - | - |
+| 8 KiB | 64 | 11.450 | 8 | 5.030 |
+| 16 KiB | 128 | 19.067 | 16 | 6.275 |
+| 32 KiB | 256 | 34.300 | 32 | 8.666 |
+| 64 KiB | 512 | 64.766 | 64 | 13.451 |
+
+Every point passed checksum verification and SQLite integrity checking. Cache
+counters show that every one-lap point had zero L1V read hits: alias-8 L1V
+misses grew from 64 through 1,024 transactions, while the prewarmed L2 served
+the traversal with only four misses. This curve is therefore compulsory
+traversal plus fixed overhead, not an observed L1-capacity knee. A capacity
+measurement needs multiple laps so later laps can hit L1, and the hardware and
+simulator comparison needs equal repeats so footprint is not conflated with
+dynamic instruction count.
+
+The exact bitmask-wrapped kernel also requires a power-of-two vector count.
+Requested 12-, 20-, 24-, and 48-KiB points were deliberately exercised and
+rejected with exit code 2 rather than rounded or silently changed. The
+read-only artifact, including commands, full logs, databases, rejection logs,
+and a verified SHA-256 manifest, is
+`/tmp/mgpusim-vmem-capacity-19f22e4b.9gCrTb`.
+
 An extended serial dwordx4/alias-8 sweep looked beyond the planned 28-WG
 endpoint:
 
