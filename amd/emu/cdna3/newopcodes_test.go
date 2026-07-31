@@ -139,6 +139,28 @@ func TestVOP3aOr3B32(t *testing.T) {
 	}
 }
 
+func TestVOP3aAndOrB32(t *testing.T) {
+	alu := NewALU(nil)
+	state := newMockInstState()
+	state.inst.FormatType = insts.VOP3a
+	state.inst.Opcode = 513
+	state.inst.Src0 = &insts.Operand{}
+	state.inst.Src1 = &insts.Operand{}
+	state.inst.Src2 = &insts.Operand{}
+	state.inst.Dst = &insts.Operand{}
+	state.exec = 0x1
+
+	state.setOperand(state.inst.Src0, 0, 0xf0f0f0f0)
+	state.setOperand(state.inst.Src1, 0, 0x0ff00ff0)
+	state.setOperand(state.inst.Src2, 0, 0x0000000f)
+	alu.Run(state)
+
+	if state.operands[state.inst.Dst][0] != 0x00f000ff {
+		t.Fatalf("v_and_or_b32 expected 0x00f000ff, got 0x%08x",
+			state.operands[state.inst.Dst][0])
+	}
+}
+
 func TestVOP3aLdexpF32(t *testing.T) {
 	alu := NewALU(nil)
 	state := newMockInstState()
