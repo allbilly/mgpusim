@@ -95,6 +95,9 @@ static int warmup_iters = 0;
 static bool report_components = false;
 static int cache_array_bytes = 16 * 1024;
 static int cache_num_accesses = 131072;
+static int kmeans_npoints = 4096;
+static int kmeans_nfeatures = 16;
+static int kmeans_nclusters = 5;
 
 template <typename F>
 static float time_iters(int iters, F &&launch) {
@@ -378,16 +381,27 @@ static void bench_kmeans(int iters) {
   ModuleKernel compute_kernel(
       "amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco",
       "kmeans_kernel_compute");
-  const int npoints = 4096, nfeatures = 16, nclusters = 5;
+  const int npoints = kmeans_npoints;
+  const int nfeatures = kmeans_nfeatures;
+  const int nclusters = kmeans_nclusters;
   float *feat, *feat_swap, *clusters;
   int *membership;
   HIP_CHECK(hipMalloc(&feat, npoints * nfeatures * sizeof(float)));
   HIP_CHECK(hipMalloc(&feat_swap, npoints * nfeatures * sizeof(float)));
   HIP_CHECK(hipMalloc(&clusters, nclusters * nfeatures * sizeof(float)));
   HIP_CHECK(hipMalloc(&membership, npoints * sizeof(int)));
-  std::vector<float> host_features = read_fixture<float>(
-      "gpu_perf_scripts/calibration/gfx90c/build/kmeans_features.f32",
-      npoints * nfeatures);
+  std::vector<float> host_features;
+  if (npoints == 4096 && nfeatures == 16) {
+    host_features = read_fixture<float>(
+        "gpu_perf_scripts/calibration/gfx90c/build/kmeans_features.f32",
+        npoints * nfeatures);
+  } else {
+    std::mt19937 generator(0);
+    std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
+    host_features.resize(size_t(npoints) * nfeatures);
+    for (float &value : host_features)
+      value = distribution(generator);
+  }
   HIP_CHECK(hipMemcpy(feat, host_features.data(),
                       host_features.size() * sizeof(float),
                       hipMemcpyHostToDevice));
@@ -559,6 +573,12 @@ int main(int argc, char **argv) {
       cache_array_bytes = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--num-accesses") && i + 1 < argc)
       cache_num_accesses = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--points") && i + 1 < argc)
+      kmeans_npoints = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--features") && i + 1 < argc)
+      kmeans_nfeatures = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--clusters") && i + 1 < argc)
+      kmeans_nclusters = atoi(argv[++i]);
   }
   bitonic_iters = iters;
   hipDeviceProp_t prop;
