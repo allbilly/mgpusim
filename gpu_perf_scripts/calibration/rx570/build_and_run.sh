@@ -21,7 +21,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/build"
 mkdir -p "$OUT"
 
-IMG="${ROCM_IMAGE:-docker.io/rocm/dev-ubuntu-24.04:7.1.1}"
+IMG="${ROCM_IMAGE:-docker.io/rocm/dev-ubuntu-22.04:6.2.4}"
 ARCH="${OFFLOAD_ARCH:-gfx803}"
 GO_BIN="${GO_BIN:-$(command -v go || true)}"
 if [[ -z "$GO_BIN" && -x /home/fedora/.local/go/bin/go ]]; then
@@ -65,7 +65,7 @@ fi
 run_podman() {
   podman run --rm \
     --device=/dev/kfd --device=/dev/dri \
-    --group-add=video --group-add=render \
+    --group-add=keep-groups \
     --security-opt=label=disable \
     -v "$ROOT:$ROOT:z" -w "$HERE" \
     "$IMG" "$@"
