@@ -1,0 +1,23 @@
+# RX 570 ISCA-10 hardware golden reference
+# Device: AMD Radeon RX 570 Series, 32 CUs, 1256 MHz, 1750 MHz memClock
+# Date: 2026-07-31 (cold), 2026-07-31 (steady-state)
+# Clock: unpinned (auto), measured at ~1256 MHz (boost)
+# ROCm: 6.2.4 (dev-ubuntu-22.04), HSACOs compiled with -O3 --offload-arch=gfx803
+# Note: clock was at boost (1256 MHz) during measurement, not pinned
+#
+# Cold measurements: iters=1, warmup=0 (single-shot, first launch)
+# Steady-state: iters=100, warmup=10 (warm caches, primed queues)
+# The cold overhead (cold - steady) varies by benchmark due to page-fault/TLB
+# warmup costs proportional to data size, which the sim doesn't model.
+#
+# Benchmark       Cold(µs)  Steady(µs)  Overhead(µs)
+vectoradd         38.240    7.101       31.139
+relu              26.881    6.837       20.044
+matrixmult        123.365   73.458      49.907
+matrixtranspose   78.722    -           -
+bitonicsort       371.375   350.214     21.161
+aes               34.881    18.084      16.797
+fir               17.601    7.637       9.964
+kmeans            55.682    29.424      26.258
+pagerank          59.043    20.356      38.687
+nw                236.330   195.281     41.049
