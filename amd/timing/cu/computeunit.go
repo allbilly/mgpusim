@@ -49,10 +49,11 @@ type ComputeUnit struct {
 	shadowInFlightVectorMemAccess []VectorMemAccessInfo
 
 	vmemReturnFanoutLaneDwordsPerCycle int
+	vmemLoadReturnLaneDwordsPerCycle   int
 
-	// vmemReturnAssemblies accumulates duplicate lane-dword deliveries across
-	// all cache-line response siblings of one dynamic vector load. Pending
-	// retirements count down independently, so unrelated loads overlap.
+	// vmemReturnAssemblies accumulates the selected lane-dword accounting mode
+	// across all cache-line response siblings of one dynamic vector load.
+	// Pending retirements count down independently, so unrelated loads overlap.
 	vmemReturnAssemblies   map[uint64]int
 	pendingVMemRetirements []pendingVMemLoadRetirement
 
@@ -166,7 +167,7 @@ func (cu *ComputeUnit) runPipeline() bool {
 		madeProgress = cu.LDSDecoder.Run() || madeProgress
 		madeProgress = cu.VectorMemUnit.Run() || madeProgress
 		madeProgress = cu.VectorMemDecoder.Run() || madeProgress
-		if cu.vmemReturnFanoutLaneDwordsPerCycle > 0 {
+		if cu.vmemReturnBandwidth() > 0 {
 			madeProgress = cu.advanceVMemLoadRetirements() || madeProgress
 		}
 		madeProgress = cu.Scheduler.Run() || madeProgress
@@ -775,13 +776,13 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 
 	wf := info.Wavefront
 	inst := info.Inst
-	if cu.vmemReturnFanoutLaneDwordsPerCycle > 0 {
-		duplicateLaneDwords := countDuplicateVMemLaneDwords(info.laneInfo)
-		if duplicateLaneDwords > 0 {
+	if cu.vmemReturnBandwidth() > 0 {
+		laneDwords := cu.countVMemReturnLaneDwords(info.laneInfo)
+		if laneDwords > 0 {
 			if cu.vmemReturnAssemblies == nil {
 				cu.vmemReturnAssemblies = make(map[uint64]int)
 			}
-			cu.vmemReturnAssemblies[inst.ID] += duplicateLaneDwords
+			cu.vmemReturnAssemblies[inst.ID] += laneDwords
 		}
 	}
 
@@ -846,11 +847,35 @@ func countDuplicateVMemLaneDwords(lanes []vectorMemAccessLaneInfo) int {
 	return len(lanes) - len(distinctOffsets)
 }
 
+func countTotalVMemLaneDwords(lanes []vectorMemAccessLaneInfo) int {
+	total := 0
+	for _, lane := range lanes {
+		total += lane.regCount
+	}
+	return total
+}
+
+func (cu *ComputeUnit) countVMemReturnLaneDwords(
+	lanes []vectorMemAccessLaneInfo,
+) int {
+	if cu.vmemLoadReturnLaneDwordsPerCycle > 0 {
+		return countTotalVMemLaneDwords(lanes)
+	}
+	return countDuplicateVMemLaneDwords(lanes)
+}
+
+func (cu *ComputeUnit) vmemReturnBandwidth() int {
+	if cu.vmemLoadReturnLaneDwordsPerCycle > 0 {
+		return cu.vmemLoadReturnLaneDwordsPerCycle
+	}
+	return cu.vmemReturnFanoutLaneDwordsPerCycle
+}
+
 func (cu *ComputeUnit) finishVectorMemLoadReturn(
 	wf *wavefront.Wavefront,
 	inst *wavefront.Inst,
 ) {
-	bandwidth := cu.vmemReturnFanoutLaneDwordsPerCycle
+	bandwidth := cu.vmemReturnBandwidth()
 	if bandwidth <= 0 {
 		cu.retireVectorMemLoad(wf, inst)
 		return

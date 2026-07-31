@@ -168,4 +168,46 @@ var _ = Describe("Builder", func() {
 			"cu: VMemReturnFanoutLaneDwordsPerCycle cannot be negative",
 		))
 	})
+
+	It("propagates the vector-memory load return bandwidth", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		comp := MakeBuilder().
+			WithRegistrar(reg).
+			WithVMemLoadReturnLaneDwordsPerCycle(9).
+			Build("GPU.CU")
+
+		Expect(comp.Spec().VMemLoadReturnLaneDwordsPerCycle).To(Equal(9))
+		Expect(MiddlewareOf(comp).vmemLoadReturnLaneDwordsPerCycle).To(Equal(9))
+	})
+
+	It("rejects a negative vector-memory load return bandwidth", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithVMemLoadReturnLaneDwordsPerCycle(-1).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: VMemLoadReturnLaneDwordsPerCycle cannot be negative",
+		))
+	})
+
+	It("rejects simultaneous vector-memory return bandwidth models", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithVMemReturnFanoutLaneDwordsPerCycle(7).
+				WithVMemLoadReturnLaneDwordsPerCycle(9).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: vector-memory return bandwidth models are mutually exclusive",
+		))
+	})
 })

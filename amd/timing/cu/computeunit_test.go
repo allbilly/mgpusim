@@ -102,6 +102,33 @@ var _ = DescribeTable(
 	Entry("alias 8 dwordx4", 8, 4),
 )
 
+var _ = DescribeTable(
+	"counts all vector-memory return lane-dwords independent of aliasing",
+	func(alias, width int) {
+		lanes := make([]vectorMemAccessLaneInfo, 0, 64*width)
+		uniqueLanes := 64 / alias
+		for laneID := 0; laneID < 64; laneID++ {
+			for dword := 0; dword < width; dword++ {
+				lanes = append(lanes, vectorMemAccessLaneInfo{
+					laneID:   laneID,
+					regCount: 1,
+					addrOffsetInCacheLine: uint64(
+						4 * (laneID%uniqueLanes + dword),
+					),
+				})
+			}
+		}
+
+		Expect(countTotalVMemLaneDwords(lanes)).To(Equal(64 * width))
+	},
+	Entry("alias 1 dword", 1, 1),
+	Entry("alias 8 dword", 8, 1),
+	Entry("alias 1 dwordx2", 1, 2),
+	Entry("alias 8 dwordx2", 8, 2),
+	Entry("alias 1 dwordx4", 1, 4),
+	Entry("alias 8 dwordx4", 8, 4),
+)
+
 var _ = Describe("ComputeUnit", func() {
 	var (
 		cu               *ComputeUnit
@@ -600,7 +627,68 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(wf.InFlightInsts).To(Equal(0))
 		})
 
+		It("aggregates all sibling lane-dwords and blocks waits until retirement", func() {
+			cu.vmemLoadReturnLaneDwordsPerCycle = 3
+			wf.InFlightInsts = 1
+
+			sibling := info
+			sibling.Read = &memprotocol.ReadReq{
+				MsgMeta: messaging.MsgMeta{
+					ID: timing.GetIDGenerator().Generate(),
+				},
+			}
+			cu.InFlightVectorMemAccess = append(
+				cu.InFlightVectorMemAccess, sibling)
+
+			cu.processInputFromVectorMem()
+
+			Expect(cu.vmemReturnAssemblies[inst.ID]).To(Equal(4))
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(1))
+
+			toVectorMem.incoming = append(
+				toVectorMem.incoming,
+				memprotocol.DataReadyRsp{
+					MsgMeta: messaging.MsgMeta{
+						ID:    timing.GetIDGenerator().Generate(),
+						RspTo: sibling.Read.ID,
+					},
+					Data: make([]byte, 16),
+				},
+			)
+			cu.processInputFromVectorMem()
+
+			Expect(cu.vmemReturnAssemblies).NotTo(HaveKey(inst.ID))
+			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(3))
+
+			waitInst := wavefront.NewInst(insts.NewInst())
+			waitInst.Format = insts.FormatTable[insts.SOPP]
+			waitInst.Opcode = 12
+			waitInst.VMCNT = 0
+			waitInst.LKGMCNT = 0
+			wf.SetDynamicInst(waitInst)
+			wf.State = wavefront.WfRunning
+			wf.InFlightInsts++
+			waitScheduler := NewScheduler(cu, nil, nil)
+			waitScheduler.internalExecuting = []*wavefront.Wavefront{wf}
+
+			for remaining := 2; remaining >= 0; remaining-- {
+				Expect(waitScheduler.EvaluateInternalInst()).To(BeFalse())
+				Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+				if remaining > 0 {
+					Expect(cu.pendingVMemRetirements[0].remainingCycles).
+						To(Equal(remaining))
+				}
+			}
+
+			Expect(cu.pendingVMemRetirements).To(BeEmpty())
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(0))
+			Expect(wf.OutstandingScalarMemAccess).To(Equal(0))
+			Expect(waitScheduler.EvaluateInternalInst()).To(BeTrue())
+		})
+
 		It("advances independent load retirements in parallel", func() {
+			cu.vmemLoadReturnLaneDwordsPerCycle = 4
 			otherInst := wavefront.NewInst(insts.NewInst())
 			otherInst.FormatType = insts.FLAT
 			otherWf := wavefront.NewWavefront(kernels.NewWavefront())
@@ -748,7 +836,8 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(cu.InFlightScalarMemAccess).To(BeNil())
 		})
 
-		It("preserves fanout state through flush and restart", func() {
+		It("preserves return state through flush and restart", func() {
+			cu.vmemLoadReturnLaneDwordsPerCycle = 4
 			assemblyInst := wavefront.NewInst(insts.NewInst())
 			assemblyInst.FormatType = insts.FLAT
 			assemblyWf := wavefront.NewWavefront(kernels.NewWavefront())

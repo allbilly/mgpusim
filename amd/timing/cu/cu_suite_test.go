@@ -152,6 +152,8 @@ func newTestComputeUnitWithSpec(
 	cuMW.InFlightVectorMemAccessLimit = 512
 	cuMW.vmemReturnFanoutLaneDwordsPerCycle =
 		spec.VMemReturnFanoutLaneDwordsPerCycle
+	cuMW.vmemLoadReturnLaneDwordsPerCycle =
+		spec.VMemLoadReturnLaneDwordsPerCycle
 
 	return cuMW
 }

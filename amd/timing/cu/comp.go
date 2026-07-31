@@ -123,6 +123,12 @@ type Spec struct {
 	// Zero disables the model and preserves legacy immediate retirement.
 	VMemReturnFanoutLaneDwordsPerCycle int `json:"vmem_return_fanout_lane_dwords_per_cycle"`
 
+	// VMemLoadReturnLaneDwordsPerCycle models the per-instruction bandwidth
+	// for retiring all lane-dwords returned by a vector load. Zero disables
+	// the model and preserves legacy immediate retirement. It is mutually
+	// exclusive with VMemReturnFanoutLaneDwordsPerCycle.
+	VMemLoadReturnLaneDwordsPerCycle int `json:"vmem_load_return_lane_dwords_per_cycle"`
+
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`

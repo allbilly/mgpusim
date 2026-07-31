@@ -37,6 +37,7 @@ var defaultSpec = Spec{
 	MaxWideWriteStrideFarPenalty:          0,
 	MaxWideWriteStrideFarMinDistanceLines: 0,
 	VMemReturnFanoutLaneDwordsPerCycle:    0,
+	VMemLoadReturnLaneDwordsPerCycle:      0,
 	RegisterScoreboard:                    false,
 	LDSPipelineLatency:                    14,
 	LDSIssueInterval:                      0,
@@ -97,6 +98,14 @@ func (b Builder) WithVMemReturnFanoutLaneDwordsPerCycle(n int) Builder {
 	return b
 }
 
+// WithVMemLoadReturnLaneDwordsPerCycle sets the per-instruction bandwidth
+// for retiring all lane-dwords returned by a vector load. Zero disables the
+// model.
+func (b Builder) WithVMemLoadReturnLaneDwordsPerCycle(n int) Builder {
+	b.spec.VMemLoadReturnLaneDwordsPerCycle = n
+	return b
+}
+
 // WithResources sets the shared references of the compute unit. Decoder and
 // ALU default to insts.NewDisassembler() and gcn3.NewALU(nil) when left nil.
 func (b Builder) WithResources(resources Resources) Builder {
@@ -133,6 +142,8 @@ func (b Builder) Build(name string) *Comp {
 	cuMW.InFlightVectorMemAccessLimit = b.spec.InFlightVectorMemAccessLimit
 	cuMW.vmemReturnFanoutLaneDwordsPerCycle =
 		b.spec.VMemReturnFanoutLaneDwordsPerCycle
+	cuMW.vmemLoadReturnLaneDwordsPerCycle =
+		b.spec.VMemLoadReturnLaneDwordsPerCycle
 
 	wfDispatcher := NewWfDispatcher(cuMW)
 	wfDispatcher.scoreboardEnabled = b.spec.RegisterScoreboard
@@ -208,6 +219,13 @@ func (b *Builder) mustHaveValidSpec() {
 	}
 	if b.spec.VMemReturnFanoutLaneDwordsPerCycle < 0 {
 		panic("cu: VMemReturnFanoutLaneDwordsPerCycle cannot be negative")
+	}
+	if b.spec.VMemLoadReturnLaneDwordsPerCycle < 0 {
+		panic("cu: VMemLoadReturnLaneDwordsPerCycle cannot be negative")
+	}
+	if b.spec.VMemReturnFanoutLaneDwordsPerCycle > 0 &&
+		b.spec.VMemLoadReturnLaneDwordsPerCycle > 0 {
+		panic("cu: vector-memory return bandwidth models are mutually exclusive")
 	}
 }
 

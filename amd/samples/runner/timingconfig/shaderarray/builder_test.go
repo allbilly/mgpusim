@@ -13,3 +13,15 @@ func TestVMemReturnFanoutBandwidthPropagation(t *testing.T) {
 		)
 	}
 }
+
+func TestVMemLoadReturnBandwidthPropagation(t *testing.T) {
+	builder := MakeBuilder().WithVMemLoadReturnLaneDwordsPerCycle(9)
+
+	spec := builder.cuSpec()
+	if spec.VMemLoadReturnLaneDwordsPerCycle != 9 {
+		t.Fatalf(
+			"expected vector-memory load return bandwidth 9, got %d",
+			spec.VMemLoadReturnLaneDwordsPerCycle,
+		)
+	}
+}
