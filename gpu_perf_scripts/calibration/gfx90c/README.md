@@ -57,6 +57,21 @@ K-means can additionally report its swap and compute kernels separately:
 ./build_and_run.sh --only kmeans --components --warmup 1 --iters 100
 ```
 
+The exact-HSACO harness supports application size sweeps without recompiling:
+
+```bash
+./build/isca10_bench --only relu --relu-length 32768
+./build/isca10_bench --only matrixmult --matrix-size 64
+./build/isca10_bench --only matrixtranspose --transpose-width 256
+./build/isca10_bench --only fir --fir-length 8192 --fir-taps 32
+./build/isca10_bench --only kmeans --points 2048 --features 16 --clusters 5
+./build/isca10_bench --only pagerank --pagerank-nodes 256
+./build/isca10_bench --only nw --nw-length 64
+```
+
+PageRank hardware fixtures are generated for 128, 256, and 512 nodes at
+sparsity 0.5, using the same deterministic CSR generator as the simulator.
+
 Set `ALLOW_UNPINNED_CLOCK=1` only for diagnostics; do not compare that output
 with `hw_ground_truth.txt`.
 

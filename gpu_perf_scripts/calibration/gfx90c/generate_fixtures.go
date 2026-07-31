@@ -35,8 +35,6 @@ func main() {
 	const (
 		numPoints   = 4096
 		numFeatures = 16
-		numNodes    = 512
-		numEdges    = 131072
 	)
 
 	rng := rand.New(rand.NewSource(0))
@@ -45,15 +43,32 @@ func main() {
 		features[i] = rng.Float32()
 	}
 
-	matrix := csr.MakeMatrixGenerator(numNodes, numEdges).GenerateMatrix()
-	outputs := []struct {
+	type fixture struct {
 		name string
 		data any
-	}{
+	}
+	outputs := []fixture{
 		{"kmeans_features.f32", features},
-		{"pagerank_row_offsets.u32", matrix.RowOffsets},
-		{"pagerank_columns.u32", matrix.ColumnNumbers},
-		{"pagerank_values.f32", matrix.Values},
+	}
+
+	for _, numNodes := range []uint32{128, 256, 512} {
+		numEdges := numNodes * numNodes / 2
+		matrix := csr.MakeMatrixGenerator(numNodes, numEdges).GenerateMatrix()
+		prefix := fmt.Sprintf("pagerank_%d_", numNodes)
+		outputs = append(outputs,
+			fixture{prefix + "row_offsets.u32", matrix.RowOffsets},
+			fixture{prefix + "columns.u32", matrix.ColumnNumbers},
+			fixture{prefix + "values.f32", matrix.Values},
+		)
+
+		// Preserve the original default-size fixture names for existing users.
+		if numNodes == 512 {
+			outputs = append(outputs,
+				fixture{"pagerank_row_offsets.u32", matrix.RowOffsets},
+				fixture{"pagerank_columns.u32", matrix.ColumnNumbers},
+				fixture{"pagerank_values.f32", matrix.Values},
+			)
+		}
 	}
 
 	for _, output := range outputs {

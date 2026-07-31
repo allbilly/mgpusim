@@ -96,12 +96,16 @@ static bool report_components = false;
 static int cache_array_bytes = 16 * 1024;
 static int cache_num_accesses = 131072;
 static int cache_active_lanes = 0;
+static int relu_length = 65536;
 static int matrix_size = 128;
+static int transpose_width = 512;
 static int fir_length = 8192;
 static int fir_taps = 16;
 static int kmeans_npoints = 4096;
 static int kmeans_nfeatures = 16;
 static int kmeans_nclusters = 5;
+static int pagerank_nodes = 512;
+static int nw_length = 128;
 static bool kmeans_preinitialize_swap = false;
 
 template <typename F>
@@ -153,7 +157,11 @@ static void bench_relu(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/dnn/layer_benchmarks/relu/kernels_gfx90c.hsaco",
       "ReLUForward");
-  const int n = 65536;
+  const int n = relu_length;
+  if (n < 1) {
+    fprintf(stderr, "ReLU length must be positive\n");
+    std::exit(2);
+  }
   float *in, *out;
   HIP_CHECK(hipMalloc(&in, n * sizeof(float)));
   HIP_CHECK(hipMalloc(&out, n * sizeof(float)));
@@ -202,7 +210,11 @@ static void bench_matrixtranspose(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/amdappsdk/matrixtranspose/kernels_gfx90c.hsaco",
       "matrixTranspose");
-  const int width = 512;
+  const int width = transpose_width;
+  if (width < 64 || width % 64 != 0) {
+    fprintf(stderr, "transpose width must be a positive multiple of 64\n");
+    std::exit(2);
+  }
   const int blockSize = 16;
   const int elems = 4;
   const int wiWidth = width / elems;
@@ -541,17 +553,21 @@ static void bench_pagerank(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/heteromark/pagerank/kernels_gfx90c.hsaco",
       "PageRankUpdateGpu");
-  const unsigned num_nodes = 512;
-  const unsigned num_conn = 131072;
+  const unsigned num_nodes = unsigned(pagerank_nodes);
+  if (num_nodes != 128 && num_nodes != 256 && num_nodes != 512) {
+    fprintf(stderr, "PageRank nodes must be 128, 256, or 512\n");
+    std::exit(2);
+  }
+  const unsigned num_conn = num_nodes * num_nodes / 2;
+  const std::string fixture_prefix =
+      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_" +
+      std::to_string(num_nodes) + "_";
   std::vector<unsigned> row = read_fixture<unsigned>(
-      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_row_offsets.u32",
-      num_nodes + 1);
+      (fixture_prefix + "row_offsets.u32").c_str(), num_nodes + 1);
   std::vector<unsigned> col = read_fixture<unsigned>(
-      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_columns.u32",
-      num_conn);
+      (fixture_prefix + "columns.u32").c_str(), num_conn);
   std::vector<float> val = read_fixture<float>(
-      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_values.f32",
-      num_conn);
+      (fixture_prefix + "values.f32").c_str(), num_conn);
   std::vector<float> x(num_nodes, 1.0f / num_nodes), y(num_nodes, 0);
   unsigned *drow, *dcol;
   float *dval, *dx, *dy;
@@ -591,8 +607,12 @@ static void bench_nw(int iters) {
                        "nw_kernel1");
   ModuleKernel kernel2("amd/benchmarks/rodinia/nw/kernels_gfx90c.hsaco",
                        "nw_kernel2");
-  // Match amd/benchmarks/rodinia/nw: blockSize=64, length=128.
-  const int length = 128;
+  // Match amd/benchmarks/rodinia/nw: blockSize=64.
+  const int length = nw_length;
+  if (length < 64 || length % 64 != 0) {
+    fprintf(stderr, "NW length must be a positive multiple of 64\n");
+    std::exit(2);
+  }
   const int B = 64;
   const int cols = length + 1;
   const int rows = length + 1;
@@ -672,8 +692,12 @@ int main(int argc, char **argv) {
       cache_num_accesses = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--active-lanes") && i + 1 < argc)
       cache_active_lanes = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--relu-length") && i + 1 < argc)
+      relu_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--matrix-size") && i + 1 < argc)
       matrix_size = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--transpose-width") && i + 1 < argc)
+      transpose_width = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--fir-length") && i + 1 < argc)
       fir_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--fir-taps") && i + 1 < argc)
@@ -684,6 +708,10 @@ int main(int argc, char **argv) {
       kmeans_nfeatures = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--clusters") && i + 1 < argc)
       kmeans_nclusters = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--pagerank-nodes") && i + 1 < argc)
+      pagerank_nodes = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--nw-length") && i + 1 < argc)
+      nw_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--preinitialize-swap"))
       kmeans_preinitialize_swap = true;
   }
