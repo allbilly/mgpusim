@@ -92,6 +92,7 @@ static float elapsed_us(hipEvent_t a, hipEvent_t b) {
 }
 
 static int warmup_iters = 0;
+static int warmup_min_us = 0;
 static bool report_components = false;
 static int cache_array_bytes = 16 * 1024;
 static int cache_num_accesses = 131072;
@@ -117,6 +118,29 @@ static float time_iters(int iters, F &&launch) {
     launch();
   if (warmup_iters > 0)
     HIP_CHECK(hipDeviceSynchronize());
+  if (warmup_min_us > 0) {
+    float warmed_us = 0.0f;
+    int warmup_launches = 0;
+    int batch = 64;
+    while (warmed_us < float(warmup_min_us)) {
+      HIP_CHECK(hipEventRecord(start));
+      for (int i = 0; i < batch; i++)
+        launch();
+      HIP_CHECK(hipEventRecord(stop));
+      HIP_CHECK(hipEventSynchronize(stop));
+      const float batch_us = elapsed_us(start, stop);
+      warmed_us += batch_us;
+      warmup_launches += batch;
+      if (batch_us > 0.0f && warmed_us < float(warmup_min_us)) {
+        const float remaining = float(warmup_min_us) - warmed_us;
+        batch = std::max(1, int(std::ceil(float(batch) * remaining /
+                                          batch_us)));
+        batch = std::min(batch, 1000000);
+      }
+    }
+    fprintf(stderr, "warmup launches=%d gpu_time=%.0f us\n",
+            warmup_launches, warmed_us);
+  }
   HIP_CHECK(hipEventRecord(start));
   for (int i = 0; i < iters; i++)
     launch();
@@ -565,6 +589,8 @@ int main(int argc, char **argv) {
       iters = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--warmup") && i + 1 < argc)
       warmup_iters = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--warmup-us") && i + 1 < argc)
+      warmup_min_us = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--only") && i + 1 < argc)
       only = argv[++i];
     else if (!strcmp(argv[i], "--components"))
@@ -575,6 +601,10 @@ int main(int argc, char **argv) {
       cache_num_accesses = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--size") && i + 1 < argc)
       benchmark_size = atoi(argv[++i]);
+  }
+  if (iters < 1 || warmup_iters < 0 || warmup_min_us < 0) {
+    fprintf(stderr, "iters must be positive and warmups must be non-negative\n");
+    return 2;
   }
   bitonic_iters = iters;
   hipDeviceProp_t prop;

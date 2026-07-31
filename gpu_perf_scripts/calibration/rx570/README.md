@@ -12,9 +12,11 @@ HIP-event microseconds remain diagnostic. The hardware file records both:
 - `cold`: the first timed launch, including workload-dependent ROCm/KFD
   first-use costs;
 - `steady`: the median of three independent processes, each averaging 100
-  launches after 10 warmups. This is the comparison used for the GPU model.
+  launches after 10 warmups plus at least 50 ms of GPU-active warmup. This
+  minimum duration is needed for the unpinned card to leave its idle clocks.
+  This is the comparison used for the GPU model.
 
-Cold-minus-steady ranges from about 10 to 71 µs and is not represented by a
+Cold-minus-steady ranges from about 10 to 72 µs and is not represented by a
 single simulator constant. `compare.py` therefore uses steady timing by
 default and exposes cold timing only as an explicit diagnostic.
 
@@ -36,7 +38,7 @@ compiler identity and hashes in `hsaco_manifest.txt`.
 
 ```bash
 ./build_and_run.sh
-./build_and_run.sh --warmup 20 --iters 100
+./build_and_run.sh --warmup 10 --warmup-us 50000 --iters 100
 ```
 
 The script generates deterministic k-means and pagerank fixtures, builds the
@@ -78,7 +80,8 @@ families plus a ReLU midpoint at 131K. It writes every point and its status
 even if an individual run fails, so a failed holdout cannot silently
 disappear. Both committed CSV files contain all 33 matched points. Hardware
 mode checks `/dev/kfd` access, runs three independent processes per point by
-default, and records their median.
+default, warms the GPU for at least 50 ms per process, and records their
+median. `--warmup-ms 0` explicitly disables the duration floor.
 
 The sizes and work transforms are fixed in `run_size_sweeps.py`. Do not tune
 the timing model from simulator-only curves. Collect the corresponding exact
@@ -89,21 +92,21 @@ hardware/simulator slope ratio.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 9.299 | 7.340 | 21.1% |
-| relu | 6.997 | 6.375 | 8.9% |
-| matrixmult | 52.396 | 49.350 | 5.8% |
-| matrixtranspose | 22.579 | 25.402 | 12.5% |
-| bitonicsort | 348.697 | 321.321 | 7.9% |
-| aes | 18.595 | 16.892 | 9.2% |
-| fir | 7.875 | 7.566 | 3.9% |
-| kmeans | 30.045 | 27.345 | 9.0% |
-| pagerank | 19.176 | 22.334 | 16.5% |
-| nw | 146.999 | 139.076 | 5.4% |
+| vectoradd | 6.765 | 7.340 | 8.5% |
+| relu | 7.155 | 6.286 | 12.1% |
+| matrixmult | 51.803 | 49.350 | 4.7% |
+| matrixtranspose | 16.989 | 18.288 | 7.6% |
+| bitonicsort | 347.854 | 321.321 | 7.6% |
+| aes | 18.314 | 16.892 | 7.8% |
+| fir | 7.699 | 7.566 | 1.7% |
+| kmeans | 29.615 | 27.345 | 7.7% |
+| pagerank | 19.455 | 22.168 | 13.9% |
+| nw | 146.510 | 139.076 | 5.1% |
 
-Canonical-size MARE is **10.0%** across all ten remeasured benchmarks. The
-anti-overfit result is **7.0% MARE across 33 matched size points**; all eight
-swept families have family MARE below 10%. The maximum point error is the
-65K vectoradd holdout at 21.1%. All points verify.
+Canonical-size MARE is **7.7%** across all ten remeasured benchmarks. The
+anti-overfit result is **6.1% MARE across 33 matched size points**; seven of
+the eight swept families have family MARE below 10%. The maximum point error
+is the isolated 384-wide transpose holdout at 43.8%. All points verify.
 
 ## Main model corrections
 
@@ -114,16 +117,15 @@ swept families have family MARE below 10%. The maximum point error is the
 - GDDR5 exposes four interleaved banks per 32-bit controller so unrelated
   random misses can overlap; cache and store serialization costs are modeled
   separately.
-- A shared L2-to-DRAM token bucket preserves a 625 KiB short/random burst and
+- A shared L2-to-DRAM token bucket preserves a 1 MiB short/random burst and
   limits sustained cache-line issue; the large vectoradd point remains within
-  9% across the repeated hardware median.
+  6% across the clock-warmed hardware median.
 - A write-filtered L1-to-L2 token bucket preserves the first 192 KiB of dense
-  stores, then limits sustained write ingress to three lines per five cycles.
+  stores, then limits sustained write ingress to one line per cycle.
   Reads and responses remain unrestricted.
 - Full-line write serialization is charged once per wave instruction rather
   than once per generated cache-line request. This preserves scalar-store
-  timing without penalizing a wide store 16 times; transpose family MARE falls
-  from 28.8% to 8.8% while the 33-point MARE falls from 8.6% to 7.0%.
+  timing without penalizing a wide store 16 times.
 - Sparse read coalescing no longer pays an extra per-line stall on top of the
   actual generated requests and memory latency.
 - Wide vector loads and stores use their actual cache, memory, and LDS timing;
@@ -145,5 +147,6 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned; current auto-clock microseconds remain
   diagnostic despite three-process medians.
-- Add size sweeps for k-means and pagerank, and investigate the 65K
-  vectoradd and canonical pagerank residuals without benchmark-specific timing.
+- Add size sweeps for k-means and pagerank, and investigate the isolated
+  transpose-384 and canonical pagerank residuals without benchmark-specific
+  timing.

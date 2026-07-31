@@ -139,7 +139,7 @@ def run_sim(points, jobs, timeout):
     return rows
 
 
-def run_hardware(points, warmup, iters, trials, timeout):
+def run_hardware(points, warmup, warmup_ms, iters, trials, timeout):
     if not os.access("/dev/kfd", os.R_OK | os.W_OK):
         raise SystemExit(
             "hardware mode requires read/write access to /dev/kfd; "
@@ -164,6 +164,7 @@ def run_hardware(points, warmup, iters, trials, timeout):
                         "--only", benchmark,
                         "--size", str(size),
                         "--warmup", str(warmup),
+                        "--warmup-us", str(warmup_ms * 1000),
                         "--iters", str(iters),
                     ],
                     env,
@@ -207,6 +208,10 @@ def main():
     )
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--warmup", type=int, default=10)
+    parser.add_argument(
+        "--warmup-ms", type=int, default=50,
+        help="minimum GPU-active warmup duration per hardware process",
+    )
     parser.add_argument("--iters", type=int, default=100)
     parser.add_argument(
         "--trials", type=int, default=3,
@@ -225,6 +230,8 @@ def main():
         parser.error("--timeout must be positive")
     if args.warmup < 0:
         parser.error("--warmup must not be negative")
+    if args.warmup_ms < 0:
+        parser.error("--warmup-ms must not be negative")
     if args.iters < 1:
         parser.error("--iters must be positive")
     if args.trials < 1:
@@ -246,7 +253,8 @@ def main():
         if args.jobs != 1:
             print("hardware mode is serialized; ignoring --jobs", file=sys.stderr)
         measured = run_hardware(
-            points, args.warmup, args.iters, args.trials, args.timeout
+            points, args.warmup, args.warmup_ms, args.iters, args.trials,
+            args.timeout
         )
 
     order = {(benchmark, size): i for i, (benchmark, size) in enumerate(points)}

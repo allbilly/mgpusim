@@ -7,8 +7,8 @@
 // are taken from the AMD RX 570 product page and corroborating spec sheets.
 // Timing latencies are calibrated against the ISCA-10 benchmark suite run on
 // the physical RX 570 (see gpu_perf_scripts/calibration/rx570/hw_ground_truth.txt).
-// The steady-state calibration achieves 7.0% MARE across 33 matched size
-// points and 10.0% canonical-size MARE; all 10 benchmarks execute and verify.
+// The steady-state calibration achieves 6.1% MARE across 33 matched size
+// points and 7.7% canonical-size MARE; all 10 benchmarks execute and verify.
 // Cold
 // hipEvent measurements are reported separately because they include
 // workload-dependent host/runtime first-use costs outside the GPU model.
@@ -67,16 +67,16 @@ func MakeBuilder() r9nano.Builder {
 		WithDRAMBankPipelineWidth(1).
 		WithDRAMBankPipelineDepth(1).
 		WithDRAMStageLatency(1).
-		// A shared request token bucket allows an initial 625 KiB of cache-line
+		// A shared request token bucket allows an initial 1 MiB of cache-line
 		// traffic, then limits sustained L2-to-DRAM issue to one 64-byte line
 		// per GPU cycle. This retains bank-level random-miss concurrency while
 		// matching the measured large-vector slope.
 		WithL2ToDRAMRequestRate(1, 1).
-		WithL2ToDRAMRequestBurst(10000).
+		WithL2ToDRAMRequestBurst(16384).
 		// Dense stores can burst through 192 KiB, then share the L2 ingress at
-		// three cache lines per five GPU cycles. Reads and responses remain
+		// one cache line per GPU cycle. Reads and responses remain
 		// unrestricted on this path.
-		WithL1ToL2WriteRate(3, 5).
+		WithL1ToL2WriteRate(1, 1).
 		WithL1ToL2WriteBurst(3072).
 		// Structural timing mechanisms adopted from the calibrated gfx90c
 		// model; numeric values are calibrated against RX 570 hardware.

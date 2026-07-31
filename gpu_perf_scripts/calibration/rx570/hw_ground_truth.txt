@@ -1,23 +1,24 @@
 # RX 570 ISCA-10 hardware golden reference
 # Device: AMD Radeon RX 570 Series, 32 CUs, 1256 MHz, 1750 MHz memClock
-# Date: 2026-07-31 (cold), 2026-07-31 (three-run steady medians)
+# Date: 2026-07-31 (cold), 2026-07-31 (clock-warmed steady medians)
 # Clock: unpinned (auto), measured at ~1256 MHz (boost)
 # ROCm: 6.2.4 (dev-ubuntu-22.04), HSACOs compiled with -O3 --offload-arch=gfx803
 # Note: clock was at boost (1256 MHz) during measurement, not pinned
 #
 # Cold measurements: iters=1, warmup=0 (single-shot, first launch)
-# Steady-state: median of 3 independent processes, each iters=100, warmup=10
+# Steady-state: median of 3 independent processes, each iters=100, warmup=10,
+# followed by at least 50 ms of continuous GPU-active warmup before timing.
 # The cold overhead (cold - steady) varies by benchmark due to page-fault/TLB
 # warmup costs proportional to data size, which the sim doesn't model.
 #
 # Benchmark       Cold(µs)  Steady(µs)  Overhead(µs)
-vectoradd         38.240    9.299       28.941
-relu              26.881    6.997       19.884
-matrixmult        123.365   52.396      70.969
-matrixtranspose   78.722    22.579      56.143
-bitonicsort       371.375   348.697     22.678
-aes               34.881    18.595      16.286
-fir               17.601    7.875       9.726
-kmeans            55.682    30.045      25.637
-pagerank          59.043    19.176      39.867
-nw                188.480   146.999     41.481
+vectoradd         38.240    6.765       31.475
+relu              26.881    7.155       19.726
+matrixmult        123.365   51.803      71.562
+matrixtranspose   78.722    16.989      61.733
+bitonicsort       371.375   347.854     23.521
+aes               34.881    18.314      16.567
+fir               17.601    7.699       9.902
+kmeans            55.682    29.615      26.067
+pagerank          59.043    19.455      39.588
+nw                188.480   146.510     41.970
