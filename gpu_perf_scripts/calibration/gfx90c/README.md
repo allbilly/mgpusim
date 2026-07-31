@@ -80,12 +80,17 @@ with `hw_ground_truth.txt`.
 Run the full verified suite:
 
 ```bash
+set -o pipefail
 SIM_JOBS=4 ./run_sim.sh sim_out | tee sim_results.txt
 ./compare.py sim_results.txt
 ```
 
 `SIM_JOBS` controls independent benchmark processes, not simulated GPU
-parallelism. Restrict a sweep with a comma-separated `ONLY` list:
+parallelism. Each benchmark writes `<name>.rc` for its overall status and
+`<name>.sim.rc` for the simulator process status if that process ran. The
+runner finishes all launched jobs and exits nonzero if any build, simulation,
+or metric extraction fails. Restrict a sweep with a comma-separated `ONLY`
+list:
 
 ```bash
 ONLY=matrixmult,matrixtranspose SIM_JOBS=2 \
