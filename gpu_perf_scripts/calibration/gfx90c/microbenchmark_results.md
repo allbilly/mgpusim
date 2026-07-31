@@ -115,6 +115,50 @@ converting a 200 MHz DRAM miss to 1600 MHz GPU cycles is not a valid absolute
 calibration. A vector pointer chase and a pinned 1600 MHz hardware run remain
 the required measurements for final L2 fitting.
 
+## Vector cache-latency probe
+
+Commit `47755a8d` added a one-wave vector probe in which each active lane
+follows a disjoint randomized cycle of 64-byte-spaced nodes. The checked-in
+gfx90c HSACO is a loadable code object shared by MGPUSim and the HIP harness.
+Its dependent loop was verified to contain `global_load_dword` followed by
+`s_waitcnt vmcnt(0)`; metadata reports a 32-byte kernarg segment, zero spills,
+and zero private memory.
+
+Times below use 256 and 1,024 dependent iterations. The slope is
+`(time_1024 - time_256) / 768`, which removes most fixed dispatch and cold-start
+cost.
+
+At a 16 KiB total working set:
+
+| Active lanes | Sim 256 (us) | Sim 1024 (us) | Sim slope (ns) | HW 256 (us) | HW 1024 (us) | HW slope (ns) |
+|-------------:|-------------:|--------------:|---------------:|------------:|-------------:|--------------:|
+| 1            | 38.368       | 109.731       | 92.9           | 457.254     | 1,426.796    | 1,262.4       |
+| 8            | 39.185       | 142.595       | 134.6          | 354.789     | 1,324.216    | 1,262.3       |
+| 64           | 57.130       | 214.810       | 205.3          | 429.581     | 1,676.100    | 1,623.1       |
+
+The hardware policy was still `auto`, and sysfs showed 200 MHz before and
+after the sweep. For this L1-resident test only, converting the slopes to
+shader-clock cycles gives an informative diagnostic: the 64-lane wave is
+approximately 329 simulated cycles versus 325 observed cycles. The simulator
+undercharges partially active waves, but the fully active vector-L1 path used
+by the default K-means kernels is already close. This falsifies a broad
+full-wave VMEM latency reduction as the K-means fix.
+
+At a 256 KiB total working set:
+
+| Active lanes | Sim 256 (us) | Sim 1024 (us) | Sim slope (ns) | HW 256 (us) | HW 1024 (us) | HW slope (ns) |
+|-------------:|-------------:|--------------:|---------------:|------------:|-------------:|--------------:|
+| 1            | 148.251      | 558.775       | 534.5          | 539.458     | 2,111.968    | 2,047.5       |
+| 8            | 144.285      | 351.015       | 269.2          | 626.161     | 2,444.148    | 2,367.2       |
+| 64           | 83.718       | 225.318       | 184.4          | 766.972     | 3,019.284    | 2,932.7       |
+
+The simulator and hardware curves have opposite active-lane trends for this
+larger footprint. However, off-core service time does not scale directly with
+the observed shader clock, so these unpinned numbers cannot set an absolute L2
+latency. Their safe conclusion is directional: reducing general L2/global-load
+latency to fit matmul is not supported by this probe and would also worsen
+PageRank and FIR.
+
 ## Accepted general fixes
 
 Two benchmark-driven fixes improved the K-means/matmul state:
@@ -187,15 +231,14 @@ retirement must be measured separately from cache allocation policy.
 
 ## Next discriminating experiment
 
-Add a vector probe in which each active lane follows its own randomized chain.
-Sweep active lanes and working-set size, time with a device cycle counter, and
-run the exact code object on hardware and simulator. Pair it with a producer
-kernel that writes the consumer's buffer.
+The vector fan-out probe rules out a broad full-wave L1V speedup. The remaining
+K-means-specific experiment is an exact producer/consumer pair: one kernel
+writes the feature-major buffer and the next immediately reads it with the
+same pattern as `kmeans_kernel_compute`. Compare that pair with a preinitialized
+consumer-only run.
 
-That experiment can separate:
-
-- vector fan-out/return latency;
-- cache-line transaction throughput;
-- cross-kernel write residency;
-- store-buffer completion versus lower-level acknowledgement;
-- scalar-cache behavior from the vector path used by K-means and matmul.
+This can separate cross-kernel write residency and store-buffer completion from
+the already measured vector-load service time. Matmul should remain a separate
+instruction-mix/local-memory investigation; its scratch traffic is only about
+1.2% of dynamic instructions and the vector probe does not support lowering
+general L2 latency.
