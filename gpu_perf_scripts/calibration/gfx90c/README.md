@@ -66,8 +66,22 @@ is still single-shot and is therefore diagnostic against new warmed targets.
 For example, collect a steady-state matrix-multiplication batch with:
 
 ```bash
-./build_and_run.sh --only matrixmult --warmup 20 --iters 1000
+python3 acquire_pinned.py \
+  --forbid-process-regex \
+  'Vgfx9_compute_unit_tb|verilator_bin|pytest.*miaow_gcn4|miaow_gcn4.*pytest' \
+  --iters 1000 matrixmult
 ```
+
+`--forbid-process-regex` is optional and repeatable. The collector checks each
+configured expression before and throughout every batch, excluding its own PID
+and ancestor command lines so the expression in the collector invocation does
+not match itself. If an external command line matches, the entire point is
+failed, its container is stopped, and the exact matching pattern, PID, and
+command are recorded in the batch metadata and summary. Only matching command
+lines are retained; unrelated process snapshots are not written to artifacts.
+The example guard prevents the known Verilator/MIAOW CPU workload from sharing
+package power with the integrated GPU, but no repository-specific process is
+forbidden by default.
 
 K-means can additionally report its swap and compute kernels separately:
 

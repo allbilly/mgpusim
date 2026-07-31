@@ -1,4 +1,6 @@
 import argparse
+import contextlib
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -128,6 +130,86 @@ class AcceptanceTests(unittest.TestCase):
         self.assertIn("temperature", joined)
         self.assertIn("marker", joined)
 
+    def test_rejects_forbidden_process_with_exact_evidence(self):
+        match = acquire.ForbiddenProcessMatch(
+            pattern="verilator", pid=4321, command="/opt/bin/verilator --build"
+        )
+        result = self.assess(
+            [sample(), sample(), sample()], forbidden_process_match=match
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("pid=4321", " ".join(result.reasons))
+        self.assertIn("/opt/bin/verilator --build", " ".join(result.reasons))
+
+
+class ProcessGuardTests(unittest.TestCase):
+    def test_disabled_guard_does_not_scan_processes(self):
+        def unexpected_snapshot():
+            self.fail("disabled process guard must not scan /proc")
+
+        guard = acquire.ForbiddenProcessGuard(
+            [], snapshotter=unexpected_snapshot, collector_pid=100
+        )
+        self.assertIsNone(guard.check())
+
+    def test_excludes_collector_and_ancestor_but_matches_external_process(self):
+        processes = [
+            acquire.ProcessSnapshot(100, 50, "collector --forbid-process-regex busy"),
+            acquire.ProcessSnapshot(50, 1, "shell busy"),
+            acquire.ProcessSnapshot(1, 0, "init"),
+            acquire.ProcessSnapshot(200, 1, "worker busy --repeat"),
+        ]
+        guard = acquire.ForbiddenProcessGuard(
+            ["busy"], snapshotter=lambda: processes, collector_pid=100
+        )
+        self.assertEqual(guard.excluded_pids, {1, 50, 100})
+        self.assertEqual(
+            guard.check(),
+            acquire.ForbiddenProcessMatch(
+                pattern="busy", pid=200, command="worker busy --repeat"
+            ),
+        )
+
+        processes.pop()
+        self.assertIsNone(guard.check())
+
+    def test_require_clear_raises_structured_match(self):
+        processes = [
+            acquire.ProcessSnapshot(100, 1, "collector"),
+            acquire.ProcessSnapshot(1, 0, "init"),
+            acquire.ProcessSnapshot(777, 1, "Vgfx9_compute_unit_tb test"),
+        ]
+        guard = acquire.ForbiddenProcessGuard(
+            [r"Vgfx9_compute_unit_tb|verilator_bin"],
+            snapshotter=lambda: processes,
+            collector_pid=100,
+        )
+        with self.assertRaises(acquire.ForbiddenProcessError) as caught:
+            guard.require_clear()
+        self.assertEqual(caught.exception.match.pid, 777)
+        self.assertIn("command='Vgfx9_compute_unit_tb test'", str(caught.exception))
+
+    def test_readiness_checks_guard_before_sysfs(self):
+        match = acquire.ForbiddenProcessMatch("busy", 888, "busy worker")
+        processes = [
+            acquire.ProcessSnapshot(100, 1, "collector"),
+            acquire.ProcessSnapshot(1, 0, "init"),
+            acquire.ProcessSnapshot(888, 1, "busy worker"),
+        ]
+        guard = acquire.ForbiddenProcessGuard(
+            ["busy"], snapshotter=lambda: processes, collector_pid=100
+        )
+        with self.assertRaises(acquire.ForbiddenProcessError) as caught:
+            acquire.wait_until_ready(
+                policy_file=Path("/does/not/exist/policy"),
+                temperature_file=Path("/does/not/exist/temp"),
+                start_temperature_millidegrees=50_000,
+                deadline=1.0,
+                next_eligible_time=0.0,
+                process_guard=guard,
+            )
+        self.assertEqual(caught.exception.match, match)
+
 
 class CommandTests(unittest.TestCase):
     def test_reference_defaults_are_strict(self):
@@ -138,6 +220,27 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(args.max_start_temp_c, 50.0)
         self.assertEqual(args.max_temp_c, 58.0)
         self.assertEqual(args.min_active_samples, 10)
+        self.assertEqual(args.forbid_process_regex, [])
+
+    def test_process_guard_regex_is_repeatable_and_validated(self):
+        args = acquire.parse_args(
+            [
+                "--forbid-process-regex",
+                "verilator_bin",
+                "--forbid-process-regex",
+                "pytest.*miaow_gcn4",
+                "matrixmult",
+            ]
+        )
+        self.assertEqual(
+            args.forbid_process_regex,
+            ["verilator_bin", "pytest.*miaow_gcn4"],
+        )
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                acquire.parse_args(
+                    ["--forbid-process-regex", "[invalid", "matrixmult"]
+                )
 
     def test_command_enforces_serial_batch_options_and_passes_geometry(self):
         command = acquire.build_container_command(

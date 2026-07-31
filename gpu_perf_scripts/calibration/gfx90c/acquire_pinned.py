@@ -11,6 +11,7 @@ import math
 import os
 import random
 import re
+import shlex
 import statistics
 import subprocess
 import sys
@@ -19,7 +20,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 
 HERE = Path(__file__).resolve().parent
@@ -94,6 +95,115 @@ class BatchAssessment:
     active_samples: int
     active_interval_samples: int
     maximum_temperature_millidegrees: int | None
+
+
+@dataclass(frozen=True)
+class ProcessSnapshot:
+    pid: int
+    parent_pid: int
+    command: str
+
+
+@dataclass(frozen=True)
+class ForbiddenProcessMatch:
+    pattern: str
+    pid: int
+    command: str
+
+
+class ForbiddenProcessError(RuntimeError):
+    def __init__(self, match: ForbiddenProcessMatch):
+        self.match = match
+        super().__init__(format_forbidden_process_match(match))
+
+
+def format_forbidden_process_match(match: ForbiddenProcessMatch) -> str:
+    return (
+        f"forbidden process matched {match.pattern!r}: "
+        f"pid={match.pid} command={match.command!r}"
+    )
+
+
+def read_process_snapshot(proc_root: Path = Path("/proc")) -> list[ProcessSnapshot]:
+    """Read live command lines without retaining unrelated process contents."""
+    snapshots: list[ProcessSnapshot] = []
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError:
+        return snapshots
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+            after_name = stat[stat.rfind(")") + 1 :].split()
+            parent_pid = int(after_name[1])
+            argv = [
+                part.decode(errors="replace")
+                for part in (entry / "cmdline").read_bytes().split(b"\0")
+                if part
+            ]
+            if argv:
+                command = shlex.join(argv)
+            else:
+                command = f"[{(entry / 'comm').read_text().strip()}]"
+        except (OSError, ValueError, IndexError):
+            # Processes can disappear between directory enumeration and reads.
+            continue
+        snapshots.append(
+            ProcessSnapshot(
+                pid=int(entry.name), parent_pid=parent_pid, command=command
+            )
+        )
+    return snapshots
+
+
+def process_lineage_pids(
+    snapshots: Sequence[ProcessSnapshot], start_pid: int
+) -> set[int]:
+    parents = {process.pid: process.parent_pid for process in snapshots}
+    lineage: set[int] = set()
+    pid = start_pid
+    while pid > 0 and pid not in lineage:
+        lineage.add(pid)
+        pid = parents.get(pid, 0)
+    return lineage
+
+
+class ForbiddenProcessGuard:
+    def __init__(
+        self,
+        patterns: Sequence[str],
+        *,
+        snapshotter: Callable[[], Sequence[ProcessSnapshot]] = read_process_snapshot,
+        collector_pid: int | None = None,
+    ) -> None:
+        self.patterns = tuple(patterns)
+        self._compiled = tuple(re.compile(pattern) for pattern in self.patterns)
+        self._snapshotter = snapshotter
+        initial = list(snapshotter()) if self._compiled else []
+        self.excluded_pids = process_lineage_pids(
+            initial, os.getpid() if collector_pid is None else collector_pid
+        )
+
+    def check(self) -> ForbiddenProcessMatch | None:
+        if not self._compiled:
+            return None
+        for process in self._snapshotter():
+            if process.pid in self.excluded_pids:
+                continue
+            for pattern, compiled in zip(self.patterns, self._compiled):
+                if compiled.search(process.command):
+                    return ForbiddenProcessMatch(
+                        pattern=pattern,
+                        pid=process.pid,
+                        command=process.command,
+                    )
+        return None
+
+    def require_clear(self) -> None:
+        if match := self.check():
+            raise ForbiddenProcessError(match)
 
 
 def sha256_file(path: Path) -> str:
@@ -208,6 +318,7 @@ def assess_batch(
     minimum_active_samples: int,
     sampling_error: str | None = None,
     thermal_abort: bool = False,
+    forbidden_process_match: ForbiddenProcessMatch | None = None,
 ) -> BatchAssessment:
     reasons: list[str] = []
     if returncode != 0:
@@ -216,6 +327,8 @@ def assess_batch(
         reasons.append(f"sampling failed: {sampling_error}")
     if thermal_abort:
         reasons.append("thermal limit reached during the container run")
+    if forbidden_process_match:
+        reasons.append(format_forbidden_process_match(forbidden_process_match))
     if not trace:
         reasons.append("no policy/clock/temperature samples were captured")
 
@@ -449,8 +562,11 @@ def wait_until_ready(
     start_temperature_millidegrees: int,
     deadline: float,
     next_eligible_time: float,
+    process_guard: ForbiddenProcessGuard | None = None,
 ) -> None:
     while True:
+        if process_guard:
+            process_guard.require_clear()
         policy = policy_file.read_text().strip()
         if policy != REQUIRED_POLICY:
             raise RuntimeError(
@@ -505,6 +621,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--metric-name")
     parser.add_argument("--verification-regex")
     parser.add_argument(
+        "--forbid-process-regex",
+        action="append",
+        default=[],
+        metavar="REGEX",
+        help=(
+            "reject the point if a non-ancestor process command line matches; "
+            "repeat for multiple patterns"
+        ),
+    )
+    parser.add_argument(
         "--rc-guarded-verification",
         action="store_true",
         help="assert that this harness path exits nonzero on every mismatch",
@@ -531,8 +657,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("active samples and bootstrap resamples must be positive")
     try:
         args.benchmark_args = validate_passthrough_args(args.benchmark_args)
+        for pattern in args.forbid_process_regex:
+            re.compile(pattern)
     except ValueError as error:
         parser.error(str(error))
+    except re.error as error:
+        parser.error(f"invalid --forbid-process-regex: {error}")
     return args
 
 
@@ -557,6 +687,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
     args = parse_args(argv)
     try:
         verification_mode, verification_pattern = resolve_verification(args)
+        process_guard = ForbiddenProcessGuard(args.forbid_process_regex)
         device_sysfs = discover_device_sysfs(args.device_sysfs)
         temperature_file = discover_temperature_file(
             device_sysfs, args.temperature_file
@@ -645,6 +776,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         "required_active_clock_mhz": REQUIRED_CLOCK_MHZ,
         "verification_mode": verification_mode,
         "verification_pattern": verification_pattern,
+        "forbidden_process_patterns": list(process_guard.patterns),
         "image": args.image,
         "device_sysfs": str(device_sysfs),
         "temperature_file": str(temperature_file),
@@ -664,8 +796,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
     last_end = time.monotonic() - args.cooldown_seconds
     overall_status = "complete"
     fatal_reason: str | None = None
+    forbidden_process_matches: list[dict[str, object]] = []
 
     for batch in range(1, args.batches + 1):
+        prefix = output_dir / f"batch_{batch:03d}"
+        metadata_path = prefix.with_suffix(".json")
         try:
             wait_until_ready(
                 policy_file=policy_file,
@@ -673,6 +808,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
                 start_temperature_millidegrees=start_limit,
                 deadline=time.monotonic() + args.ready_timeout_seconds,
                 next_eligible_time=last_end + args.cooldown_seconds,
+                process_guard=process_guard,
             )
             pre_sample = read_trace_sample(
                 policy_file, clock_file, temperature_file
@@ -683,17 +819,61 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
                 raise RuntimeError(
                     "temperature rose above the start threshold before launch"
                 )
+            process_guard.require_clear()
+        except KeyboardInterrupt:
+            overall_status = "interrupted"
+            fatal_reason = f"operator interrupted during batch {batch} readiness"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "batch": batch,
+                        "accepted": False,
+                        "phase": "readiness",
+                        "status": "interrupted",
+                        "reasons": [fatal_reason],
+                        "forbidden_process_patterns": list(process_guard.patterns),
+                        "forbidden_process_match": None,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            break
         except (OSError, RuntimeError, ValueError) as error:
             print(f"batch {batch}: readiness failed: {error}", file=sys.stderr)
             overall_status = "failed"
             fatal_reason = f"batch {batch} readiness failed: {error}"
+            forbidden_match = (
+                error.match if isinstance(error, ForbiddenProcessError) else None
+            )
+            if forbidden_match:
+                forbidden_process_matches.append(asdict(forbidden_match))
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "batch": batch,
+                        "accepted": False,
+                        "phase": "readiness",
+                        "status": "failed",
+                        "reasons": [fatal_reason],
+                        "forbidden_process_patterns": list(process_guard.patterns),
+                        "forbidden_process_match": (
+                            None
+                            if forbidden_match is None
+                            else asdict(forbidden_match)
+                        ),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
             break
 
-        prefix = output_dir / f"batch_{batch:03d}"
         stdout_path = prefix.with_suffix(".stdout.txt")
         stderr_path = prefix.with_suffix(".stderr.txt")
         trace_path = prefix.with_suffix(".trace.tsv")
-        metadata_path = prefix.with_suffix(".json")
         container_name = f"gfx90c-pinned-{run_identifier}-{batch:03d}"
         command = build_container_command(
             podman=args.podman,
@@ -709,6 +889,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         trace: list[TraceSample] = []
         sampling_error: str | None = None
         thermal_abort = False
+        forbidden_process_match: ForbiddenProcessMatch | None = None
+        operator_interrupted = False
         started_utc = datetime.now(timezone.utc).isoformat()
         with (
             stdout_path.open("wb") as stdout_file,
@@ -727,18 +909,20 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
                 ]
             )
             trace_file.flush()
+            process: subprocess.Popen | None = None
             try:
                 process = subprocess.Popen(
                     command, stdout=stdout_file, stderr=stderr_file
                 )
-            except OSError as error:
-                process = None
-                returncode = 127
-                sampling_error = f"container launch failed: {error}"
-            if process is not None:
-                try:
+                if process is not None:
                     while process.poll() is None:
                         try:
+                            if match := process_guard.check():
+                                forbidden_process_match = match
+                                stop_container(
+                                    args.podman, container_name, process
+                                )
+                                break
                             sample = read_trace_sample(
                                 policy_file, clock_file, temperature_file
                             )
@@ -775,10 +959,20 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
                             stop_container(args.podman, container_name, process)
                             break
                         time.sleep(args.sample_interval_seconds)
-                except KeyboardInterrupt:
+                    returncode = process.wait()
+            except OSError as error:
+                returncode = 127
+                sampling_error = f"container launch failed: {error}"
+            except KeyboardInterrupt:
+                operator_interrupted = True
+                sampling_error = "operator interrupted the container run"
+                if process is not None and process.poll() is None:
                     stop_container(args.podman, container_name, process)
-                    raise
-                returncode = process.wait()
+                returncode = (
+                    130
+                    if process is None or process.returncode is None
+                    else process.returncode
+                )
         last_end = time.monotonic()
         try:
             post_sample = read_trace_sample(
@@ -808,6 +1002,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
             minimum_active_samples=args.min_active_samples,
             sampling_error=sampling_error,
             thermal_abort=thermal_abort,
+            forbidden_process_match=forbidden_process_match,
         )
         reasons = list(assessment.reasons)
         if metric_error:
@@ -826,6 +1021,13 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
             "metric_us": metric,
             "accepted": accepted,
             "reasons": reasons,
+            "operator_interrupted": operator_interrupted,
+            "forbidden_process_patterns": list(process_guard.patterns),
+            "forbidden_process_match": (
+                None
+                if forbidden_process_match is None
+                else asdict(forbidden_process_match)
+            ),
             "assessment": asdict(assessment),
             "pre_sample": asdict(pre_sample),
             "post_sample": None if post_sample is None else asdict(post_sample),
@@ -855,8 +1057,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
             f"active_samples={assessment.active_samples} "
             f"max_temp_mC={assessment.maximum_temperature_millidegrees}"
         )
+        if forbidden_process_match:
+            forbidden_process_matches.append(asdict(forbidden_process_match))
         if not accepted:
-            overall_status = "failed"
+            overall_status = "interrupted" if operator_interrupted else "failed"
             fatal_reason = f"batch {batch} rejected: {'; '.join(reasons)}"
             break
 
@@ -881,6 +1085,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         "accepted_batches": len(accepted_values),
         "artifact_directory": str(output_dir),
         "failure_reason": fatal_reason,
+        "forbidden_process_patterns": list(process_guard.patterns),
+        "forbidden_process_matches": forbidden_process_matches,
     }
     if len(accepted_values) == args.batches:
         summary["statistics"] = summarize(
@@ -896,4 +1102,19 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except KeyboardInterrupt:
+        print(
+            json.dumps(
+                {
+                    "status": "interrupted",
+                    "failure_reason": "operator interrupted outside a batch",
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        exit_code = 130
+    raise SystemExit(exit_code)
