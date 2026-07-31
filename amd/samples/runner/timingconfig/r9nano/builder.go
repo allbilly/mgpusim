@@ -98,6 +98,9 @@ type Builder struct {
 	ldsBankConflictPenalty           int
 	barrierLatency                   int
 	maxCoalescingPenalty             int
+	splitLineLoadPenalty             int
+	dependentLoadIssuePenalty        int
+	dependentLoadMaxAge              int
 	maxWriteCoalescingPenalty        int
 	maxWideWriteStridePenalty        int
 	vecMemTransPipelineWidth         int
@@ -423,6 +426,23 @@ func (b Builder) WithBarrierLatency(latency int) Builder {
 // penalty in cycles.
 func (b Builder) WithMaxCoalescingPenalty(penalty int) Builder {
 	b.maxCoalescingPenalty = penalty
+	return b
+}
+
+// WithSplitLineLoadPenalty sets a calibrated alignment overhead for an
+// unaligned contiguous load spanning multiple cache lines.
+func (b Builder) WithSplitLineLoadPenalty(penalty int) Builder {
+	b.splitLineLoadPenalty = penalty
+	return b
+}
+
+// WithDependentLoadIssuePenalty sets the delay for a vector load whose
+// address is derived from a recently completed vector load.
+func (b Builder) WithDependentLoadIssuePenalty(
+	penalty, maxAge int,
+) Builder {
+	b.dependentLoadIssuePenalty = penalty
+	b.dependentLoadMaxAge = maxAge
 	return b
 }
 
@@ -849,6 +869,17 @@ func (b *Builder) buildSAs() {
 	if b.maxCoalescingPenalty > 0 {
 		saBuilder = saBuilder.WithMaxCoalescingPenalty(
 			b.maxCoalescingPenalty,
+		)
+	}
+	if b.splitLineLoadPenalty > 0 {
+		saBuilder = saBuilder.WithSplitLineLoadPenalty(
+			b.splitLineLoadPenalty,
+		)
+	}
+	if b.dependentLoadIssuePenalty > 0 {
+		saBuilder = saBuilder.WithDependentLoadIssuePenalty(
+			b.dependentLoadIssuePenalty,
+			b.dependentLoadMaxAge,
 		)
 	}
 	if b.maxWriteCoalescingPenalty > 0 {

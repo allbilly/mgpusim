@@ -132,11 +132,58 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.computeCoalescingPenalty(readTxn)).To(Equal(0))
 	})
 
+	It("penalizes only contiguous loads split by cache-line alignment", func() {
+		vecMemUnit.splitLineLoadPenalty = 22
+		contiguous := func(start uint64, words int) []VectorMemAccessInfo {
+			byLine := make(map[uint64]*VectorMemAccessInfo)
+			for i := 0; i < words; i++ {
+				address := start + uint64(4*i)
+				line := address &^ uint64(63)
+				txn := byLine[line]
+				if txn == nil {
+					txn = &VectorMemAccessInfo{
+						Read: &memprotocol.ReadReq{
+							Address:        line,
+							AccessByteSize: 64,
+						},
+					}
+					byLine[line] = txn
+				}
+				txn.laneInfo = append(txn.laneInfo,
+					vectorMemAccessLaneInfo{
+						addrOffsetInCacheLine: address - line,
+					})
+			}
+			result := make([]VectorMemAccessInfo, 0, len(byLine))
+			for line := uint64(0); line <= start+uint64(4*words); line += 64 {
+				if txn := byLine[line]; txn != nil {
+					result = append(result, *txn)
+				}
+			}
+			return result
+		}
+
+		Expect(vecMemUnit.computeSplitLineLoadPenalty(
+			contiguous(4, 15))).To(Equal(0))
+		Expect(vecMemUnit.computeSplitLineLoadPenalty(
+			contiguous(4, 16))).To(Equal(22))
+		Expect(vecMemUnit.computeSplitLineLoadPenalty(
+			contiguous(4, 17))).To(Equal(22))
+		Expect(vecMemUnit.computeSplitLineLoadPenalty(
+			contiguous(0, 17))).To(Equal(0))
+
+		noncontiguous := contiguous(4, 17)
+		noncontiguous[1].laneInfo[0].addrOffsetInCacheLine += 4
+		Expect(vecMemUnit.computeSplitLineLoadPenalty(
+			noncontiguous)).To(Equal(0))
+	})
+
 	It("penalizes non-local but not adjacent write cache lines", func() {
 		vecMemUnit.maxWideWriteStridePenalty = 20
 		inst := wavefront.NewInst(insts.NewInst())
 		inst.FormatType = insts.FLAT
 		inst.Opcode = 31
+		wf := wavefront.NewWavefront(nil)
 		fullLine := func(address uint64) VectorMemAccessInfo {
 			mask := make([]bool, 64)
 			for i := range mask {
@@ -147,7 +194,8 @@ var _ = Describe("Vector Memory Unit", func() {
 					Address:   address,
 					DirtyMask: mask,
 				},
-				Inst: inst,
+				Wavefront: wf,
+				Inst:      inst,
 			}
 		}
 
@@ -159,9 +207,37 @@ var _ = Describe("Vector Memory Unit", func() {
 			fullLine(0x1800))).To(Equal(20))
 	})
 
-	It("compares aligned cache lines for write locality", func() {
-		Expect(cacheLinesAreLocal(0x1004, 0x107c, 64)).To(BeTrue())
-		Expect(cacheLinesAreLocal(0x103c, 0x1804, 64)).To(BeFalse())
+	It("tracks wide write locality independently for each wave", func() {
+		vecMemUnit.maxWideWriteStridePenalty = 20
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 31
+		wf1 := wavefront.NewWavefront(nil)
+		wf2 := wavefront.NewWavefront(nil)
+		fullLine := func(
+			wf *wavefront.Wavefront,
+			address uint64,
+		) VectorMemAccessInfo {
+			mask := make([]bool, 64)
+			for i := range mask {
+				mask[i] = true
+			}
+			return VectorMemAccessInfo{
+				Write: &memprotocol.WriteReq{
+					Address:   address,
+					DirtyMask: mask,
+				},
+				Wavefront: wf,
+				Inst:      inst,
+			}
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			fullLine(wf1, 0x1000))).To(Equal(0))
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			fullLine(wf2, 0x8000))).To(Equal(0))
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			fullLine(wf1, 0x1040))).To(Equal(0))
 	})
 
 	It("only recognizes opcode 31 stores in vector-memory formats", func() {

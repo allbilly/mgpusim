@@ -4,8 +4,11 @@ import "github.com/sarchlab/mgpusim/v5/amd/timing/wavefront"
 
 // An IssueArbiter decides which wavefront can issue instruction
 type IssueArbiter struct {
-	lastSIMDID        int
-	scoreboardEnabled bool
+	lastSIMDID                int
+	scoreboardEnabled         bool
+	dependentLoadIssuePenalty int
+	dependentLoadMaxAge       int
+	timingProgress            bool
 }
 
 // NewIssueArbiter returns a newly created IssueArbiter
@@ -20,6 +23,7 @@ func NewIssueArbiter() *IssueArbiter {
 func (a *IssueArbiter) Arbitrate(
 	wfPools []*WavefrontPool,
 ) []*wavefront.Wavefront {
+	a.timingProgress = false
 	if a.isAllWfPoolsEmpty(wfPools) {
 		return []*wavefront.Wavefront{}
 	}
@@ -42,6 +46,15 @@ func (a *IssueArbiter) Arbitrate(
 				}
 			}
 
+			if wf.StallRecentLoadAddress(
+				wf.InstToIssue.Inst,
+				a.dependentLoadIssuePenalty,
+				a.dependentLoadMaxAge,
+			) {
+				a.timingProgress = true
+				continue
+			}
+
 			if typeMask[wf.InstToIssue.ExeUnit] == false {
 				wfToIssue = append(wfToIssue, wf)
 				typeMask[wf.InstToIssue.ExeUnit] = true
@@ -52,6 +65,13 @@ func (a *IssueArbiter) Arbitrate(
 	a.lastSIMDID = (a.lastSIMDID + 1) % len(wfPools)
 
 	return wfToIssue
+}
+
+// MadeTimingProgress reports whether arbitration advanced a modeled
+// dependency countdown. The scheduler uses this to remain clocked while a
+// wave-local issue delay is the CU's only active work.
+func (a *IssueArbiter) MadeTimingProgress() bool {
+	return a.timingProgress
 }
 
 func (a *IssueArbiter) moveToNextSIMD(wfPools []*WavefrontPool) {

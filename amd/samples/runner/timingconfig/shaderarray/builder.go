@@ -77,6 +77,9 @@ type Builder struct {
 	l1vBankLatency            int
 	memPipelineBufferSize     int
 	maxCoalescingPenalty      int
+	splitLineLoadPenalty      int
+	dependentLoadIssuePenalty int
+	dependentLoadMaxAge       int
 	maxWriteCoalescingPenalty int
 	maxWideWriteStridePenalty int
 	registerScoreboard        bool
@@ -252,6 +255,23 @@ func (b Builder) WithMemPipelineBufferSize(size int) Builder {
 // transaction penalty in cycles for each CU.
 func (b Builder) WithMaxCoalescingPenalty(n int) Builder {
 	b.maxCoalescingPenalty = n
+	return b
+}
+
+// WithSplitLineLoadPenalty sets a calibrated alignment overhead for an
+// unaligned contiguous load spanning multiple cache lines.
+func (b Builder) WithSplitLineLoadPenalty(n int) Builder {
+	b.splitLineLoadPenalty = n
+	return b
+}
+
+// WithDependentLoadIssuePenalty sets the delay for a vector load whose
+// address is derived from a vector load completed within maxAge instructions.
+func (b Builder) WithDependentLoadIssuePenalty(
+	penalty, maxAge int,
+) Builder {
+	b.dependentLoadIssuePenalty = penalty
+	b.dependentLoadMaxAge = maxAge
 	return b
 }
 
@@ -497,6 +517,13 @@ func (b *Builder) cuSpec() cu.Spec {
 
 	if b.maxCoalescingPenalty > 0 {
 		spec.MaxCoalescingPenalty = b.maxCoalescingPenalty
+	}
+	if b.splitLineLoadPenalty > 0 {
+		spec.SplitLineLoadPenalty = b.splitLineLoadPenalty
+	}
+	if b.dependentLoadIssuePenalty > 0 {
+		spec.DependentLoadIssuePenalty = b.dependentLoadIssuePenalty
+		spec.DependentLoadMaxAge = b.dependentLoadMaxAge
 	}
 	if b.maxWriteCoalescingPenalty > 0 {
 		spec.MaxWriteCoalescingPenalty = b.maxWriteCoalescingPenalty

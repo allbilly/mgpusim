@@ -59,4 +59,21 @@ var _ = Describe("Builder", func() {
 		Expect(view.ControlPort()).To(
 			Equal(messaging.RemotePort("GPU.CU.Ctrl")))
 	})
+
+	It("rejects an invalid dependent-load timing configuration", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+		spec := DefaultSpec()
+		spec.DependentLoadIssuePenalty = 1
+		spec.DependentLoadMaxAge = 0
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithSpec(spec).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: DependentLoadMaxAge must be positive when dependency tracking is enabled",
+		))
+	})
 })

@@ -2,8 +2,8 @@ package cu
 
 import (
 	"log"
+	"sort"
 
-	"github.com/sarchlab/akita/v5/mem/memprotocol"
 	"github.com/sarchlab/akita/v5/messaging"
 	"github.com/sarchlab/akita/v5/queueing"
 	"github.com/sarchlab/akita/v5/timing"
@@ -28,11 +28,10 @@ type VectorMemoryUnit struct {
 	maxInstructionsInFlight uint64
 
 	maxCoalescingPenalty      int
+	splitLineLoadPenalty      int
 	maxWriteCoalescingPenalty int
 	maxWideWriteStridePenalty int
 	coalescingStallRemaining  int
-	lastWriteCacheLine        uint64
-	hasLastWriteCacheLine     bool
 
 	instructionPipeline           queueing.Pipeline[vectorMemInst]
 	postInstructionPipelineBuffer queueing.Buffer[vectorMemInst]
@@ -199,9 +198,9 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 
 	if txn.Write != nil {
 		if isWideVectorWrite(txn) {
-			penalty += u.writeStridePenalty(txn.Write, cacheLineBytes)
-		} else {
-			u.hasLastWriteCacheLine = false
+			penalty += u.writeStridePenalty(txn, cacheLineBytes)
+		} else if txn.Wavefront != nil {
+			txn.Wavefront.ResetWideWriteTracking()
 		}
 	}
 
@@ -209,23 +208,17 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 }
 
 func (u *VectorMemoryUnit) writeStridePenalty(
-	req *memprotocol.WriteReq,
+	txn VectorMemAccessInfo,
 	cacheLineBytes int,
 ) int {
-	current := req.Address
-	penalty := 0
-	if u.maxWideWriteStridePenalty > 0 &&
-		u.hasLastWriteCacheLine &&
-		!cacheLinesAreLocal(
-			u.lastWriteCacheLine,
-			current,
-			uint64(cacheLineBytes),
-		) {
-		penalty = u.maxWideWriteStridePenalty
+	if txn.Wavefront == nil {
+		return 0
 	}
-	u.lastWriteCacheLine = current
-	u.hasLastWriteCacheLine = true
-	return penalty
+	return txn.Wavefront.WideWriteStridePenalty(
+		txn.Write.Address,
+		uint64(cacheLineBytes),
+		u.maxWideWriteStridePenalty,
+	)
 }
 
 func isWideVectorWrite(txn VectorMemAccessInfo) bool {
@@ -235,21 +228,6 @@ func isWideVectorWrite(txn VectorMemAccessInfo) bool {
 		(txn.Inst.FormatType == insts.FLAT ||
 			txn.Inst.FormatType == insts.MUBUF) &&
 		txn.Inst.Opcode == 31
-}
-
-func cacheLinesAreLocal(previous, current, lineBytes uint64) bool {
-	if lineBytes == 0 {
-		return true
-	}
-
-	previous -= previous % lineBytes
-	current -= current % lineBytes
-	if previous == current {
-		return true
-	}
-
-	return (current > previous && current-previous == lineBytes) ||
-		(previous > current && previous-current == lineBytes)
 }
 
 func transactionByteUtilization(txn VectorMemAccessInfo) (
@@ -373,6 +351,9 @@ func (u *VectorMemoryUnit) executeFlatLoad(
 		return false
 	}
 
+	u.coalescingStallRemaining +=
+		u.computeSplitLineLoadPenalty(transactions)
+
 	// The in-flight vector-memory-access budget admitted this instruction's
 	// transactions: mark the resolution of any wait for a free slot, then open
 	// the subtask that records the coalescing / transaction-issue work until
@@ -402,6 +383,51 @@ func (u *VectorMemoryUnit) executeFlatLoad(
 	}
 
 	return true
+}
+
+// computeSplitLineLoadPenalty applies an alignment heuristic, not a count of
+// extra cache-line transactions.
+func (u *VectorMemoryUnit) computeSplitLineLoadPenalty(
+	transactions []VectorMemAccessInfo,
+) int {
+	if u.splitLineLoadPenalty <= 0 || len(transactions) < 2 {
+		return 0
+	}
+
+	addresses := make(map[uint64]struct{})
+	cacheLineBytes := 0
+	for _, txn := range transactions {
+		if txn.Read == nil {
+			return 0
+		}
+		if cacheLineBytes == 0 {
+			cacheLineBytes = int(txn.Read.AccessByteSize)
+		}
+		for _, lane := range txn.laneInfo {
+			addresses[txn.Read.Address+lane.addrOffsetInCacheLine] = struct{}{}
+		}
+	}
+	if cacheLineBytes <= 0 || len(addresses) < 2 {
+		return 0
+	}
+
+	sortedAddresses := make([]uint64, 0, len(addresses))
+	for address := range addresses {
+		sortedAddresses = append(sortedAddresses, address)
+	}
+	sort.Slice(sortedAddresses, func(i, j int) bool {
+		return sortedAddresses[i] < sortedAddresses[j]
+	})
+	for i := 1; i < len(sortedAddresses); i++ {
+		if sortedAddresses[i]-sortedAddresses[i-1] != 4 {
+			return 0
+		}
+	}
+
+	if sortedAddresses[0]%uint64(cacheLineBytes) == 0 {
+		return 0
+	}
+	return u.splitLineLoadPenalty
 }
 
 func (u *VectorMemoryUnit) executeFlatStore(
@@ -518,6 +544,9 @@ func (u *VectorMemoryUnit) Flush() {
 	u.numInstInFlight = 0
 	u.numTransactionInFlight = 0
 	u.coalescingStallRemaining = 0
-	u.lastWriteCacheLine = 0
-	u.hasLastWriteCacheLine = false
+	for _, pool := range u.cu.WfPools {
+		for _, wf := range pool.wfs {
+			wf.ResetWideWriteTracking()
+		}
+	}
 }

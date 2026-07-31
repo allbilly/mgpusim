@@ -68,6 +68,10 @@ type Wavefront struct {
 	OutstandingScalarMemAccess int
 	OutstandingVectorMemAccess int
 
+	MemoryDependency  *MemoryDependencyState
+	lastWideWriteLine uint64
+	hasWideWriteLine  bool
+
 	// InFlightInsts counts this wavefront's instruction tasks currently in
 	// flight (issued but not yet completed). When it is zero the wavefront has
 	// nothing executing — a real gap — and its fetch/issue stalls are
@@ -79,6 +83,16 @@ type Wavefront struct {
 	// When register scoreboard is enabled, this contains a *cu.Scoreboard
 	// (stored as interface{} to avoid circular imports).
 	ScoreboardData interface{}
+}
+
+// MemoryDependencyState is allocated only on platforms that model short
+// vector-load-to-address dependencies.
+type MemoryDependencyState struct {
+	InstructionIssueSequence uint64
+	MemoryDerivedVGPR        [256]uint64
+	DependencyStallPC        uint64
+	DependencyStallRemaining int
+	DependencyStallActive    bool
 }
 
 // NewWavefront creates a new Wavefront of the timing package, wrapping the
@@ -108,6 +122,181 @@ func (wf *Wavefront) DynamicInst() *Inst {
 // SetDynamicInst sets the dynamic inst to execute
 func (wf *Wavefront) SetDynamicInst(i *Inst) {
 	wf.inst = i
+}
+
+// EnableMemoryDependencyTracking enables recent vector-load provenance.
+func (wf *Wavefront) EnableMemoryDependencyTracking() {
+	if wf.MemoryDependency == nil {
+		wf.MemoryDependency = new(MemoryDependencyState)
+	}
+}
+
+// TrackIssuedInstruction propagates recent vector-load provenance through
+// VGPR-producing instructions. The timestamp is an instruction sequence,
+// allowing the timing model to recognize short load-to-address dependency
+// chains without tagging a benchmark or opcode sequence.
+func (wf *Wavefront) TrackIssuedInstruction(inst *insts.Inst) {
+	state := wf.MemoryDependency
+	if state == nil {
+		return
+	}
+	// A dynamic instruction reaching the issue point re-arms dependency
+	// detection, including EXEC=0 instructions that perform no lane work.
+	state.DependencyStallActive = false
+	state.DependencyStallRemaining = 0
+	if wf.EXEC() == 0 {
+		return
+	}
+	state.InstructionIssueSequence++
+
+	if inst.ExeUnit == insts.ExeUnitVMem {
+		if isVectorMemoryLoad(inst) && wf.EXEC() == ^uint64(0) {
+			wf.setMemoryDerivedStamp(inst.Dst, 0)
+		}
+		return
+	}
+
+	stamp := uint64(0)
+	for _, operand := range []*insts.Operand{
+		inst.Src0, inst.Src1, inst.Src2,
+		inst.Addr, inst.Data, inst.Base, inst.Offset,
+	} {
+		if candidate := wf.memoryDerivedStamp(operand); candidate > stamp {
+			stamp = candidate
+		}
+	}
+	if wf.EXEC() != ^uint64(0) {
+		if previous := wf.memoryDerivedStamp(inst.Dst); previous > stamp {
+			stamp = previous
+		}
+	}
+	wf.setMemoryDerivedStamp(inst.Dst, stamp)
+}
+
+// StallRecentLoadAddress delays a short load-to-address dependency on this
+// wave only. Returning true means the instruction must not issue this cycle;
+// other ready waves remain eligible.
+func (wf *Wavefront) StallRecentLoadAddress(
+	inst *insts.Inst,
+	penalty, maxAge int,
+) bool {
+	if penalty <= 0 || wf.EXEC() == 0 || !isVectorMemoryLoad(inst) {
+		return false
+	}
+	state := wf.MemoryDependency
+	if state == nil {
+		return false
+	}
+
+	if !state.DependencyStallActive || state.DependencyStallPC != wf.PC() {
+		state.DependencyStallActive = true
+		state.DependencyStallPC = wf.PC()
+		state.DependencyStallRemaining = 0
+		if wf.AddressDependsOnRecentLoad(inst, uint64(maxAge)) {
+			state.DependencyStallRemaining = penalty
+		}
+	}
+	if state.DependencyStallRemaining <= 0 {
+		return false
+	}
+	state.DependencyStallRemaining--
+	return true
+}
+
+// MarkMemoryLoadDestination marks the destination of a completed vector load.
+func (wf *Wavefront) MarkMemoryLoadDestination(inst *insts.Inst) {
+	state := wf.MemoryDependency
+	if state == nil {
+		return
+	}
+	stamp := state.InstructionIssueSequence
+	if stamp == 0 {
+		stamp = 1
+	}
+	if wf.EXEC() != ^uint64(0) {
+		if previous := wf.memoryDerivedStamp(inst.Dst); previous > stamp {
+			stamp = previous
+		}
+	}
+	wf.setMemoryDerivedStamp(inst.Dst, stamp)
+}
+
+// AddressDependsOnRecentLoad reports whether a vector-memory address reads a
+// VGPR derived from a recently completed vector load.
+func (wf *Wavefront) AddressDependsOnRecentLoad(
+	inst *insts.Inst,
+	maxAge uint64,
+) bool {
+	state := wf.MemoryDependency
+	if state == nil {
+		return false
+	}
+	stamp := uint64(0)
+	for _, operand := range []*insts.Operand{inst.Addr, inst.Base, inst.Offset} {
+		if candidate := wf.memoryDerivedStamp(operand); candidate > stamp {
+			stamp = candidate
+		}
+	}
+	if stamp == 0 || state.InstructionIssueSequence < stamp {
+		return false
+	}
+	return state.InstructionIssueSequence-stamp <= maxAge
+}
+
+func (wf *Wavefront) memoryDerivedStamp(operand *insts.Operand) uint64 {
+	state := wf.MemoryDependency
+	if state == nil {
+		return 0
+	}
+	if operand == nil || operand.OperandType != insts.RegOperand ||
+		operand.Register == nil || !operand.Register.IsVReg() {
+		return 0
+	}
+	base := operand.Register.RegIndex()
+	count := operand.RegCount
+	if count < 1 {
+		count = 1
+	}
+	stamp := uint64(0)
+	for i := 0; i < count && base+i < len(state.MemoryDerivedVGPR); i++ {
+		if state.MemoryDerivedVGPR[base+i] > stamp {
+			stamp = state.MemoryDerivedVGPR[base+i]
+		}
+	}
+	return stamp
+}
+
+func (wf *Wavefront) setMemoryDerivedStamp(
+	operand *insts.Operand,
+	stamp uint64,
+) {
+	state := wf.MemoryDependency
+	if state == nil {
+		return
+	}
+	if operand == nil || operand.OperandType != insts.RegOperand ||
+		operand.Register == nil || !operand.Register.IsVReg() {
+		return
+	}
+	base := operand.Register.RegIndex()
+	count := operand.RegCount
+	if count < 1 {
+		count = 1
+	}
+	for i := 0; i < count && base+i < len(state.MemoryDerivedVGPR); i++ {
+		state.MemoryDerivedVGPR[base+i] = stamp
+	}
+}
+
+func isVectorMemoryLoad(inst *insts.Inst) bool {
+	switch inst.FormatType {
+	case insts.FLAT:
+		return inst.Opcode >= 16 && inst.Opcode <= 23
+	case insts.MUBUF:
+		return inst.Opcode >= 20 && inst.Opcode <= 23
+	default:
+		return false
+	}
 }
 
 // ManagedInst returns the wrapped Inst
@@ -143,6 +332,41 @@ func (wf *Wavefront) EXEC() uint64 {
 // SetEXEC sets the exec mask
 func (wf *Wavefront) SetEXEC(v uint64) {
 	wf.exec = v
+}
+
+// WideWriteStridePenalty tracks store locality per wavefront, preventing
+// unrelated waves from perturbing one another's timing.
+func (wf *Wavefront) WideWriteStridePenalty(
+	current, lineBytes uint64,
+	penalty int,
+) int {
+	result := 0
+	if penalty > 0 && wf.hasWideWriteLine &&
+		!wideWriteLinesAreLocal(wf.lastWideWriteLine, current, lineBytes) {
+		result = penalty
+	}
+	wf.lastWideWriteLine = current
+	wf.hasWideWriteLine = true
+	return result
+}
+
+// ResetWideWriteTracking ends the current wide-store stream.
+func (wf *Wavefront) ResetWideWriteTracking() {
+	wf.lastWideWriteLine = 0
+	wf.hasWideWriteLine = false
+}
+
+func wideWriteLinesAreLocal(previous, current, lineBytes uint64) bool {
+	if lineBytes == 0 {
+		return true
+	}
+	previous -= previous % lineBytes
+	current -= current % lineBytes
+	if previous == current {
+		return true
+	}
+	return (current > previous && current-previous == lineBytes) ||
+		(previous > current && previous-current == lineBytes)
 }
 
 // VCC returns the vector condition code

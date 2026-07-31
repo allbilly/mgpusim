@@ -238,6 +238,11 @@ func (s *SchedulerImpl) DoIssue() bool {
 
 	if s.isPaused == false {
 		wfs := s.issueArbiter.Arbitrate(s.cu.WfPools)
+		if reporter, ok := s.issueArbiter.(interface {
+			MadeTimingProgress() bool
+		}); ok {
+			madeProgress = reporter.MadeTimingProgress()
+		}
 		for _, wf := range wfs {
 			if wf.InstToIssue.ExeUnit == insts.ExeUnitSpecial {
 				madeProgress = s.issueToInternal(wf) || madeProgress
@@ -249,6 +254,7 @@ func (s *SchedulerImpl) DoIssue() bool {
 			if unit.CanAcceptWave() {
 				wf.SetDynamicInst(wf.InstToIssue)
 				wf.InstToIssue = nil
+				wf.TrackIssuedInstruction(wf.DynamicInst().Inst)
 
 				s.cu.logInstTask(wf, wf.DynamicInst(), false)
 
@@ -285,6 +291,7 @@ func (s *SchedulerImpl) DoIssue() bool {
 func (s *SchedulerImpl) issueToInternal(wf *wavefront.Wavefront) bool {
 	wf.SetDynamicInst(wf.InstToIssue)
 	wf.InstToIssue = nil
+	wf.TrackIssuedInstruction(wf.DynamicInst().Inst)
 	s.internalExecuting = append(s.internalExecuting, wf)
 	wf.State = wavefront.WfRunning
 

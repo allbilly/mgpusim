@@ -25,6 +25,9 @@ var defaultSpec = Spec{
 	VecMemTransPipelineWidth:     1,
 	MemPipelineBufferSize:        8,
 	MaxCoalescingPenalty:         0,
+	SplitLineLoadPenalty:         0,
+	DependentLoadIssuePenalty:    0,
+	DependentLoadMaxAge:          0,
 	MaxWriteCoalescingPenalty:    0,
 	MaxWideWriteStridePenalty:    0,
 	RegisterScoreboard:           false,
@@ -116,6 +119,8 @@ func (b Builder) Build(name string) *Comp {
 
 	wfDispatcher := NewWfDispatcher(cuMW)
 	wfDispatcher.scoreboardEnabled = b.spec.RegisterScoreboard
+	wfDispatcher.memoryDependencyTrackingEnabled =
+		b.spec.DependentLoadIssuePenalty > 0
 	cuMW.WfDispatcher = wfDispatcher
 
 	for i := 0; i < numWfPools; i++ {
@@ -151,6 +156,13 @@ func (b *Builder) mustHaveValidSpec() {
 	if len(b.spec.VGPRCounts) != b.spec.SIMDCount {
 		panic("cu: VGPRCounts must have a length that equals to the SIMDCount")
 	}
+	if b.spec.DependentLoadIssuePenalty < 0 {
+		panic("cu: DependentLoadIssuePenalty cannot be negative")
+	}
+	if b.spec.DependentLoadIssuePenalty > 0 &&
+		b.spec.DependentLoadMaxAge < 1 {
+		panic("cu: DependentLoadMaxAge must be positive when dependency tracking is enabled")
+	}
 }
 
 func (b *Builder) fillResourceDefaults() {
@@ -168,6 +180,9 @@ func (b *Builder) equipScheduler(cu *ComputeUnit) {
 	fetchArbitor.InstBufByteSize = b.spec.InstBufByteSize
 	issueArbitor := new(IssueArbiter)
 	issueArbitor.scoreboardEnabled = b.spec.RegisterScoreboard
+	issueArbitor.dependentLoadIssuePenalty =
+		b.spec.DependentLoadIssuePenalty
+	issueArbitor.dependentLoadMaxAge = b.spec.DependentLoadMaxAge
 	scheduler := NewScheduler(cu, fetchArbitor, issueArbitor)
 	scheduler.scoreboardEnabled = b.spec.RegisterScoreboard
 	scheduler.scoreboardVALULatency = b.spec.ScoreboardVALULatency
@@ -234,6 +249,7 @@ func (b *Builder) equipVectorMemoryUnit(cu *ComputeUnit, name string) {
 	}
 	vectorMemoryUnit := NewVectorMemoryUnit(cu, coalescer)
 	vectorMemoryUnit.maxCoalescingPenalty = b.spec.MaxCoalescingPenalty
+	vectorMemoryUnit.splitLineLoadPenalty = b.spec.SplitLineLoadPenalty
 	vectorMemoryUnit.maxWriteCoalescingPenalty =
 		b.spec.MaxWriteCoalescingPenalty
 	vectorMemoryUnit.maxWideWriteStridePenalty =

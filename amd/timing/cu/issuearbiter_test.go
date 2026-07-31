@@ -100,4 +100,28 @@ var _ = Describe("IssueArbiter", func() {
 		Expect(issueCandidate).To(ContainElement(BeIdenticalTo(wf2)))
 		Expect(issueCandidate).To(ContainElement(BeIdenticalTo(wf3)))
 	})
+
+	It("reports progress while advancing a dependency stall", func() {
+		arbiter.dependentLoadIssuePenalty = 3
+		arbiter.dependentLoadMaxAge = 12
+		wf := wavefront.NewWavefront(nil)
+		wf.EnableMemoryDependencyTracking()
+		wf.SetEXEC(^uint64(0))
+		wf.State = wavefront.WfReady
+		wf.MemoryDependency.MemoryDerivedVGPR[2] = 1
+		wf.MemoryDependency.InstructionIssueSequence = 1
+		wf.InstToIssue = wavefront.NewInst(insts.NewInst())
+		wf.InstToIssue.ExeUnit = insts.ExeUnitVMem
+		wf.InstToIssue.FormatType = insts.FLAT
+		wf.InstToIssue.Opcode = 20
+		wf.InstToIssue.Addr = insts.NewVRegOperand(0, 2, 1)
+		wfPools[0].AddWf(wf)
+
+		for i := 0; i < 3; i++ {
+			Expect(arbiter.Arbitrate(wfPools)).To(BeEmpty())
+			Expect(arbiter.MadeTimingProgress()).To(BeTrue())
+		}
+		Expect(arbiter.Arbitrate(wfPools)).To(ConsistOf(wf))
+		Expect(arbiter.MadeTimingProgress()).To(BeFalse())
+	})
 })

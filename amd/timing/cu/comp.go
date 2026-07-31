@@ -100,7 +100,13 @@ type Spec struct {
 	// writes, which can require write combining or read-modify-write traffic.
 	// MaxWideWriteStridePenalty models the loss of DRAM row locality and
 	// write-combiner capacity when wide stores jump between cache lines.
-	MaxCoalescingPenalty      int `json:"max_coalescing_penalty"`
+	MaxCoalescingPenalty int `json:"max_coalescing_penalty"`
+	// SplitLineLoadPenalty is a calibrated alignment overhead for contiguous,
+	// unaligned vector loads spanning multiple cache lines. It is not an
+	// extra-transaction counter.
+	SplitLineLoadPenalty      int `json:"split_line_load_penalty"`
+	DependentLoadIssuePenalty int `json:"dependent_load_issue_penalty"`
+	DependentLoadMaxAge       int `json:"dependent_load_max_age"`
 	MaxWriteCoalescingPenalty int `json:"max_write_coalescing_penalty"`
 	MaxWideWriteStridePenalty int `json:"max_wide_write_stride_penalty"`
 

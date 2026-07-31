@@ -799,6 +799,7 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 	// vmcnt/lgkmcnt, end the inst task, and mark the data wait only once no
 	// transaction for this instruction is still in flight.
 	if !cu.hasInFlightVectorMemFor(info.Inst) {
+		wf.MarkMemoryLoadDestination(info.Inst.Inst)
 		wf.OutstandingVectorMemAccess--
 		if info.Inst.FormatType == insts.FLAT ||
 			info.Inst.FormatType == insts.MUBUF {

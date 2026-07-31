@@ -23,8 +23,9 @@ type WfDispatcher interface {
 type WfDispatcherImpl struct {
 	cu *ComputeUnit
 
-	Latency           int
-	scoreboardEnabled bool
+	Latency                         int
+	scoreboardEnabled               bool
+	memoryDependencyTrackingEnabled bool
 }
 
 // NewWfDispatcher creates a default WfDispatcher
@@ -45,6 +46,9 @@ func (d *WfDispatcherImpl) DispatchWf(
 
 	if d.scoreboardEnabled {
 		wf.ScoreboardData = NewScoreboard()
+	}
+	if d.memoryDependencyTrackingEnabled {
+		wf.EnableMemoryDependencyTracking()
 	}
 }
 

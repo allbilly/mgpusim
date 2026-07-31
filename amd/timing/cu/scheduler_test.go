@@ -147,6 +147,30 @@ var _ = Describe("Scheduler", func() {
 		Expect(wf.IsFetching).To(BeFalse())
 	})
 
+	It("keeps ticking while a dependent-load delay counts down", func() {
+		dependencyArbiter := NewIssueArbiter()
+		dependencyArbiter.dependentLoadIssuePenalty = 10
+		dependencyArbiter.dependentLoadMaxAge = 12
+		scheduler.issueArbiter = dependencyArbiter
+
+		wf := wavefront.NewWavefront(nil)
+		wf.EnableMemoryDependencyTracking()
+		wf.SetEXEC(^uint64(0))
+		wf.State = wavefront.WfReady
+		wf.MemoryDependency.MemoryDerivedVGPR[2] = 1
+		wf.MemoryDependency.InstructionIssueSequence = 1
+		wf.InstToIssue = wavefront.NewInst(insts.NewInst())
+		wf.InstToIssue.ExeUnit = insts.ExeUnitVMem
+		wf.InstToIssue.FormatType = insts.FLAT
+		wf.InstToIssue.Opcode = 20
+		wf.InstToIssue.Addr = insts.NewVRegOperand(0, 2, 1)
+		cu.WfPools[0].AddWf(wf)
+
+		for i := 0; i < 6; i++ {
+			Expect(scheduler.DoIssue()).To(BeTrue())
+		}
+	})
+
 	It("should issue", func() {
 		wfs := make([]*wavefront.Wavefront, 0)
 		issueDirs := []insts.ExeUnit{
