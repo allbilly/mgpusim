@@ -900,6 +900,34 @@ read-only artifact, including commands, full logs, databases, rejection logs,
 and a verified SHA-256 manifest, is
 `/tmp/mgpusim-vmem-capacity-19f22e4b.9gCrTb`.
 
+Commit `7f47e2a4` then enabled an exact zero-trip control without changing the
+HSACO. A same-repeat simulator sweep separated launch floor, compulsory
+traversal, and reuse for dwordx4/alias-8/G1:
+
+| Mode/footprint | R0 | R4 | R16 | R64 | R256 | R512 | R1024 |
+|----------------|---:|---:|----:|----:|-----:|-----:|------:|
+| serial, 8 KiB | 3.800 | 4.405 | 5.791 | 11.450 | 27.521 | 48.948 | 91.803 |
+| serial, 64 KiB | 3.800 | 4.405 | 5.791 | 11.450 | 34.300 | 64.766 | 123.966 |
+| independent4, 8 KiB | 3.848 | 4.145 | 4.793 | 7.468 | 17.086 | 29.911 | 55.561 |
+| independent4, 64 KiB | 3.848 | 4.145 | 4.793 | 7.468 | 18.328 | 32.808 | 60.488 |
+
+All 28 points passed full output verification and SQLite integrity checking.
+Zero-trip floors are footprint-independent. Equal-repeat 8-KiB and 64-KiB
+times are identical through R64 because neither has completed a full 8-KiB
+lap. At R256, R512, and R1024, the 64-KiB minus 8-KiB deltas are 6.779,
+15.818, and 32.163 us for serial but only 1.242, 2.897, and 4.927 us for
+independent4.
+
+Cache counters explain the split. The 64-KiB point has zero L1V hits through
+R1024. Across the steady R256-to-R1024 increment, the 8-KiB point has 1,344
+L1V hits and 192 misses, or an 87.5% hit rate. The serial path exposes miss
+service in the dependency chain while independent4 overlaps most of it. The
+primary mechanism to compare on hardware is therefore dependency-exposed
+L1-miss service versus overlapped miss throughput, not duplicate-lane fanout.
+Phase-specific robust fits and their residuals, all raw cache metrics, exact
+commands, and a verified 66-file SHA-256 manifest are retained in the
+read-only artifact `/tmp/mgpusim-vmem-repeat-slope-7f47e2a4.Xvfdq1`.
+
 An extended serial dwordx4/alias-8 sweep looked beyond the planned 28-WG
 endpoint:
 
@@ -914,17 +942,18 @@ the serialized VMEM completion cost well beyond the production matrix grid of
 16 work-groups. The extended artifacts are at
 `/tmp/mgpusim-vmem-knee-115d1186.L9PP64`.
 
-Code-path inspection explains why fanout is a strong missing-mechanism
-candidate. The coalescer retains every destination lane/dword in each returned
-line, but the CU writes all of them to an immediate, unlimited register file in
-one tick. Up to 16 response messages can complete per CU tick. There is no
+Before the hardware contrasts, code-path inspection made fanout a plausible
+missing-mechanism candidate. The coalescer retains every destination
+lane/dword in each returned line, but the CU writes all of them to an
+immediate, unlimited register file in one tick. Up to 16 response messages can
+complete per CU tick. There is no
 return-crossbar, lane-fanout, or per-SIMD VGPR-writeback service cost. The model
 decrements `OutstandingVectorMemAccess` once only after the final transaction
 of the instruction returns, and `vmcnt(0)` waits on that instruction count.
 Consequently cache-line arrival is modeled, while delivery of a returned word
 to one versus eight destination lanes is free.
 
-The first hardware comparison should therefore test two mechanisms in order:
+The planned first hardware comparison therefore tested two mechanisms in order:
 
 1. an alias-aware, overlapable completion delay, predicted to penalize serial
    more than independent4 and alias-8 more than alias-1; and
