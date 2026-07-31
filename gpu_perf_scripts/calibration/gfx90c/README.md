@@ -92,6 +92,9 @@ The exact-HSACO harness supports application size sweeps without recompiling:
   --scratch-workgroups 16 --warmup 20 --iters 1000
 ./build/isca10_bench --only fp32fma --fma-blocks 28 \
   --fma-threads 256 --fmas 4096 --warmup 20 --iters 2000
+./build/isca10_bench --only vmemloadshape --vmem-width-dwords 4 \
+  --vmem-mode serial --vmem-alias-lanes 8 --vmem-array-bytes 65536 \
+  --vmem-repeats 512 --vmem-workgroups 1 --warmup 20 --iters 1000
 ```
 
 The store-stride probe is explicit-only and is not part of the scored
@@ -130,6 +133,34 @@ Consequently this probe identifies issue throughput but cannot identify FMA
 result latency at or below four issue intervals. Do not tune result latency
 from it; that requires a separate one-accumulator dependent-chain HSACO.
 
+The VMEM load-shape probe is explicit-only and is not part of the scored ten.
+Its six exact-HSACO symbols cross load widths `dword`, `dwordx2`, and
+`dwordx4` with a serialized load/`vmcnt(0)` chain and a four-load independent
+endpoint. `--vmem-alias-lanes 8` reproduces the matrix kernel's interleaved
+fanout: lanes `x, x+8, ..., x+56` share an address. Sweep alias counts
+`1, 2, 4, 8`; 1 is no aliasing. Use 8 KiB as a clean L1-resident point and
+64 KiB as an L2-resident/L1-capacity point. Both host-to-device copies remain
+within the model's L2-warming DMA threshold.
+
+For equal cache coverage, do not hold repeats blindly constant. One complete
+footprint lap requires:
+
+```text
+repeats = (array_bytes / (4 * width_dwords)) /
+          (64 / alias_lanes)
+```
+
+Round upward to a multiple of four for `independent4`. Start capacity/latency
+points at one work-group, then sweep `1, 7, 16, 28` work-groups only for the
+matrix-like dwordx4/alias-8 point. The harness verifies every thread's checksum
+after timing and reports `vmemloadshape_ns_per_wave_load`; concurrent waves
+make that normalization a throughput diagnostic, not instruction latency.
+`repeats` is the number of load instructions per lane, so one
+`independent4` loop trip contributes four repeats to that denominator.
+The independent endpoint bounds available overlap; it is not the exact
+production schedule, whose authoritative HSACO mixes serialized loads with a
+two-load window.
+
 Run the identical simulator points with, for example:
 
 ```bash
@@ -137,6 +168,13 @@ go run ./amd/samples/fp32_throughput \
   -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
   -num-blocks 28 -threads-per-block 256 -fmas 4096 \
   -report-inst-count -report-busy-time -report-cpi-stack
+
+go run ./amd/samples/vmem_load_shape \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -width-dwords 4 -mode serial -alias-lanes 8 \
+  -array-bytes 65536 -repeats 512 -workgroups 1 \
+  -report-cache-hit-rate -report-cache-latency \
+  -report-dram-transaction-count -report-cpi-stack
 ```
 
 PageRank hardware fixtures are generated for 128, 256, and 512 nodes at

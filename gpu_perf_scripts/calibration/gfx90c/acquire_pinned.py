@@ -44,6 +44,9 @@ BENCHMARK_HSACO = {
     "fp32fma": (
         "amd/benchmarks/microbench/fp32throughput/kernels_gfx90c.hsaco"
     ),
+    "vmemloadshape": (
+        "amd/benchmarks/microbench/vmemloadshape/kernels_gfx90c.hsaco"
+    ),
     "cache_latency": (
         "amd/benchmarks/microbench/cachelatency/kernels_gfx90c.hsaco"
     ),
@@ -64,6 +67,7 @@ BENCHMARK_HSACO = {
 AUTO_VERIFICATION = {
     "matrixmult": ("marker", r"matrixmult .*verification Passed!"),
     "fp32fma": ("marker", r"fp32fma verification Passed!"),
+    "vmemloadshape": ("marker", r"vmemloadshape verification Passed!"),
     "cache_latency": ("rc-guarded", None),
     "storestride": ("rc-guarded", None),
     "scratchspill": ("rc-guarded", None),

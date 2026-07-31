@@ -199,6 +199,80 @@ Record latency, generated memory transactions, and cache hit rate in both
 hardware tooling and MGPUSim. This isolates line formation and request issue
 width from raw cache latency.
 
+### Exact-HSACO load width, fanout, and wait sweep
+
+The checked-in gfx90c VMEM probe turns that design into six stable kernel
+symbols. It crosses 4-, 8-, and 16-byte global loads with two dependency
+endpoints:
+
+- `serial`: each load drains through `vmcnt(0)` before its value is consumed;
+- `independent4`: four source-level independent loads precede the drain and
+  bound the benefit available from memory-level parallelism.
+
+Fanout uses the matrix-like interleaved lane mapping. At fanout 8, lanes
+`0,8,...,56` share one address, lanes `1,9,...,57` share another, and so on.
+The host passes the already-computed address-group count and the kernel derives
+its power-of-two mask with one subtraction, avoiding a runtime integer divide
+that would contaminate the loop.
+
+Use 8 KiB and 64 KiB for the first capacity comparison. Eight KiB is safely
+inside the 16 KiB L1V; 64 KiB exceeds L1V but remains below the current
+128 KiB DMA-through-L2 limit. A 256 KiB initialization would bypass modeled
+L2 and silently change cache state relative to warmed hardware.
+
+Run one hardware point with:
+
+```bash
+gpu_perf_scripts/calibration/gfx90c/build_and_run.sh \
+  --only vmemloadshape --vmem-width-dwords 4 \
+  --vmem-mode serial --vmem-alias-lanes 8 \
+  --vmem-array-bytes 65536 --vmem-repeats 512 \
+  --vmem-workgroups 1 --warmup 20 --iters 1000
+```
+
+Run the identical simulator point with:
+
+```bash
+go run ./amd/samples/vmem_load_shape \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -width-dwords 4 -mode serial -alias-lanes 8 \
+  -array-bytes 65536 -repeats 512 -workgroups 1 \
+  -report-cache-hit-rate -report-cache-latency \
+  -report-dram-transaction-count -report-cpi-stack
+```
+
+For equal footprint coverage, calculate one lap as:
+
+```text
+vector_elements = array_bytes / (4 * width_dwords)
+address_groups = 64 / alias_lanes
+repeats_per_lap = vector_elements / address_groups
+```
+
+Use the same lap count at every width/fanout point, rounding repeats upward to
+a multiple of four for `independent4`. The minimal discriminating matrix is:
+
+- widths 1, 2, 4 dwords at fanout 8;
+- fanouts 1 and 8 at dwordx4;
+- both dependency modes;
+- both 8 KiB and 64 KiB footprints;
+- one work-group for the cache comparison.
+
+Then hold dwordx4, fanout 8, footprint, and repeat count fixed while sweeping
+`1, 7, 16, 28` work-groups. This separates a per-wave load-return discrepancy
+from sparse-grid/CU-fill behavior. Report raw launch time, the provided
+`ns_per_wave_load` normalization, cache transactions, hit rates, and CPI stack.
+Here `repeats` counts load instructions per lane: each `independent4` loop trip
+contains four repeats/loads, and the normalization uses that total load count.
+Do not interpret the normalization as latency once multiple waves overlap.
+
+The independent endpoint is deliberately a bound, not a transcription of the
+production loop. The authoritative matrix HSACO serializes its A loads and
+mixes serialized B loads with an initial two-load window. If only the two
+endpoints diverge, add a fixed `window2` symbol before fitting a model term.
+Always rerun `verify_hsaco.sh`: it checks width-specific opcodes, static load
+counts, load-before-drain ordering, wave64 metadata, and absence of spills.
+
 For store locality, avoid mapping one 16-byte lane store to each distant line:
 that creates partial-line transactions and measures read-modify-write or
 write-combine cost as well as stride. The checked-in gfx90c probe groups four

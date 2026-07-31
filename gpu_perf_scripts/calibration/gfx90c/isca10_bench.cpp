@@ -106,6 +106,12 @@ static int scratch_workgroups = 16;
 static int fma_blocks = 4;
 static int fma_threads = 256;
 static int fma_count = 256;
+static int vmem_width_dwords = 4;
+static std::string vmem_mode = "serial";
+static int vmem_alias_lanes = 8;
+static int vmem_array_bytes = 8 * 1024;
+static int vmem_repeats = 1024;
+static int vmem_workgroups = 16;
 static int relu_length = 65536;
 static int matrix_size = 128;
 static int transpose_width = 512;
@@ -463,6 +469,112 @@ static void bench_fp32fma(int iters) {
   printf("fp32fma_ns_per_wave_fma %.9f\n",
          double(us) * 1000.0 / double(wave_fmas));
   HIP_CHECK(hipFree(output));
+}
+
+static bool is_power_of_two(uint32_t value) {
+  return value != 0 && (value & (value - 1)) == 0;
+}
+
+static void bench_vmemloadshape(int iters) {
+  if (vmem_width_dwords != 1 && vmem_width_dwords != 2 &&
+      vmem_width_dwords != 4) {
+    fprintf(stderr, "VMEM width must be 1, 2, or 4 dwords\n");
+    std::exit(2);
+  }
+  if (vmem_mode != "serial" && vmem_mode != "independent4") {
+    fprintf(stderr, "VMEM mode must be serial or independent4\n");
+    std::exit(2);
+  }
+  if (vmem_alias_lanes != 1 && vmem_alias_lanes != 2 &&
+      vmem_alias_lanes != 4 && vmem_alias_lanes != 8) {
+    fprintf(stderr, "VMEM alias lanes must be 1, 2, 4, or 8\n");
+    std::exit(2);
+  }
+  const int vector_bytes = vmem_width_dwords * int(sizeof(float));
+  if (vmem_array_bytes <= 0 || vmem_array_bytes % vector_bytes != 0 ||
+      !is_power_of_two(uint32_t(vmem_array_bytes / vector_bytes))) {
+    fprintf(stderr,
+            "VMEM array must contain a power-of-two number of vectors\n");
+    std::exit(2);
+  }
+  if (vmem_repeats <= 0 ||
+      (vmem_mode == "independent4" && vmem_repeats % 4 != 0) ||
+      vmem_workgroups <= 0 || vmem_workgroups > INT32_MAX / 64) {
+    fprintf(stderr, "invalid VMEM repeats or work-group count\n");
+    std::exit(2);
+  }
+
+  std::string symbol = "vmem_load_dword";
+  if (vmem_width_dwords > 1)
+    symbol += "x" + std::to_string(vmem_width_dwords);
+  symbol += "_" + vmem_mode;
+  ModuleKernel kernel(
+      "amd/benchmarks/microbench/vmemloadshape/kernels_gfx90c.hsaco",
+      symbol.c_str());
+
+  const int input_words = vmem_array_bytes / int(sizeof(float));
+  const int output_words = vmem_workgroups * 64;
+  std::vector<float> input(input_words), expected(output_words);
+  for (int i = 0; i < input_words; ++i)
+    input[i] = float(i % 13 + 1);
+  const uint32_t vector_elements =
+      uint32_t(vmem_array_bytes / vector_bytes);
+  const uint32_t address_groups = uint32_t(64 / vmem_alias_lanes);
+  const uint32_t address_mask = address_groups - 1;
+  const uint32_t vector_mask = vector_elements - 1;
+  for (int tid = 0; tid < output_words; ++tid) {
+    const uint32_t workgroup = uint32_t(tid / 64);
+    const uint32_t lane = uint32_t(tid & 63);
+    const uint32_t address_group = lane & address_mask;
+    float sum = 0.0f;
+    for (int repeat = 0; repeat < vmem_repeats; ++repeat) {
+      const uint32_t index =
+          ((workgroup + uint32_t(repeat)) * address_groups +
+           address_group) &
+          vector_mask;
+      for (int component = 0; component < vmem_width_dwords; ++component)
+        sum += input[size_t(index) * vmem_width_dwords + component];
+    }
+    expected[tid] = sum;
+  }
+
+  float *device_input, *device_output;
+  HIP_CHECK(hipMalloc(&device_input, vmem_array_bytes));
+  HIP_CHECK(hipMalloc(&device_output, output_words * sizeof(float)));
+  HIP_CHECK(hipMemcpy(device_input, input.data(), vmem_array_bytes,
+                      hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemset(device_output, 0, output_words * sizeof(float)));
+  uint32_t repeats = uint32_t(vmem_repeats);
+  constexpr uint32_t threads_per_block = 64;
+  float us = time_iters(iters, [&] {
+    void *args[] = {&device_input,   &device_output, &repeats,
+                    (void *)&vector_elements, (void *)&address_groups,
+                    (void *)&threads_per_block};
+    kernel.launch(dim3(vmem_workgroups), dim3(threads_per_block), 0, args);
+  });
+
+  std::vector<float> actual(output_words);
+  HIP_CHECK(hipMemcpy(actual.data(), device_output,
+                      output_words * sizeof(float), hipMemcpyDeviceToHost));
+  for (int tid = 0; tid < output_words; ++tid) {
+    if (std::fabs(actual[tid] - expected[tid]) > 1e-4f) {
+      fprintf(stderr,
+              "vmemloadshape mismatch at thread %d: expected %g, got %g\n",
+              tid, expected[tid], actual[tid]);
+      std::exit(3);
+    }
+  }
+  fprintf(stderr,
+          "vmemloadshape verification Passed! width=%d mode=%s alias=%d "
+          "bytes=%d repeats=%d workgroups=%d\n",
+          vmem_width_dwords, vmem_mode.c_str(), vmem_alias_lanes,
+          vmem_array_bytes, vmem_repeats, vmem_workgroups);
+  printf("vmemloadshape %.3f\n", us);
+  printf("vmemloadshape_ns_per_wave_load %.9f\n",
+         double(us) * 1000.0 /
+             double(uint64_t(vmem_workgroups) * uint64_t(vmem_repeats)));
+  HIP_CHECK(hipFree(device_input));
+  HIP_CHECK(hipFree(device_output));
 }
 
 static uint64_t splitmix64_next(uint64_t &state) {
@@ -984,6 +1096,18 @@ int main(int argc, char **argv) {
       fma_threads = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--fmas") && i + 1 < argc)
       fma_count = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--vmem-width-dwords") && i + 1 < argc)
+      vmem_width_dwords = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--vmem-mode") && i + 1 < argc)
+      vmem_mode = argv[++i];
+    else if (!strcmp(argv[i], "--vmem-alias-lanes") && i + 1 < argc)
+      vmem_alias_lanes = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--vmem-array-bytes") && i + 1 < argc)
+      vmem_array_bytes = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--vmem-repeats") && i + 1 < argc)
+      vmem_repeats = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--vmem-workgroups") && i + 1 < argc)
+      vmem_workgroups = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--relu-length") && i + 1 < argc)
       relu_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--matrix-size") && i + 1 < argc)
@@ -1037,5 +1161,7 @@ int main(int argc, char **argv) {
     bench_scratchspill(iters);
   if (only == "fp32fma")
     bench_fp32fma(iters);
+  if (only == "vmemloadshape")
+    bench_vmemloadshape(iters);
   return 0;
 }
