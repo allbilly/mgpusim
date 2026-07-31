@@ -78,6 +78,7 @@ type Builder struct {
 	memPipelineBufferSize        int
 	maxCoalescingPenalty         int
 	maxWriteCoalescingPenalty    int
+	fullLineWritePenalty         int
 	maxWideReadPenalty           int
 	maxWideWriteStridePenalty    int
 	registerScoreboard           bool
@@ -268,6 +269,13 @@ func (b Builder) WithMaxCoalescingPenalty(n int) Builder {
 // WithMaxWriteCoalescingPenalty sets the maximum partial-line write penalty.
 func (b Builder) WithMaxWriteCoalescingPenalty(n int) Builder {
 	b.maxWriteCoalescingPenalty = n
+	return b
+}
+
+// WithFullLineWritePenalty sets the serialization cost for a fully utilized
+// cache-line write transaction.
+func (b Builder) WithFullLineWritePenalty(n int) Builder {
+	b.fullLineWritePenalty = n
 	return b
 }
 
@@ -521,6 +529,9 @@ func (b *Builder) cuSpec() cu.Spec {
 	}
 	if b.maxWriteCoalescingPenalty > 0 {
 		spec.MaxWriteCoalescingPenalty = b.maxWriteCoalescingPenalty
+	}
+	if b.fullLineWritePenalty > 0 {
+		spec.FullLineWritePenalty = b.fullLineWritePenalty
 	}
 	if b.maxWideReadPenalty > 0 {
 		spec.MaxWideReadPenalty = b.maxWideReadPenalty

@@ -10,6 +10,7 @@ type valuClass int
 
 const (
 	valuDefault valuClass = iota
+	valuBitwise
 	valuFMA
 	valuIntegerMultiply
 	valuTranscendental
@@ -28,6 +29,12 @@ func classifyVALU(inst *insts.Inst) valuClass {
 	} {
 		if strings.Contains(name, token) {
 			return valuTranscendental
+		}
+	}
+
+	for _, token := range []string{"_xor_", "_and_", "_or_"} {
+		if strings.Contains(name, token) {
+			return valuBitwise
 		}
 	}
 
@@ -61,6 +68,11 @@ func GetVALUTiming(
 	resultLatency = spec.DefaultResultLatency
 
 	switch classifyVALU(inst) {
+	case valuBitwise:
+		issueInterval = firstPositive(
+			spec.BitwiseIssueInterval, issueInterval)
+		resultLatency = firstPositive(
+			spec.BitwiseResultLatency, resultLatency)
 	case valuFMA:
 		issueInterval = firstPositive(spec.FMAIssueInterval, issueInterval)
 		resultLatency = firstPositive(spec.FMAResultLatency, resultLatency)

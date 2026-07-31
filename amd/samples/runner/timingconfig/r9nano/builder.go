@@ -100,6 +100,7 @@ type Builder struct {
 	barrierLatency                   int
 	maxCoalescingPenalty             int
 	maxWriteCoalescingPenalty        int
+	fullLineWritePenalty             int
 	maxWideReadPenalty               int
 	maxWideWriteStridePenalty        int
 	vecMemTransPipelineWidth         int
@@ -433,6 +434,13 @@ func (b Builder) WithMaxCoalescingPenalty(penalty int) Builder {
 // WithMaxWriteCoalescingPenalty sets the maximum partial-line write penalty.
 func (b Builder) WithMaxWriteCoalescingPenalty(penalty int) Builder {
 	b.maxWriteCoalescingPenalty = penalty
+	return b
+}
+
+// WithFullLineWritePenalty sets the serialization cost for a fully utilized
+// cache-line write transaction.
+func (b Builder) WithFullLineWritePenalty(penalty int) Builder {
+	b.fullLineWritePenalty = penalty
 	return b
 }
 
@@ -873,6 +881,11 @@ func (b *Builder) buildSAs() {
 	if b.maxWriteCoalescingPenalty > 0 {
 		saBuilder = saBuilder.WithMaxWriteCoalescingPenalty(
 			b.maxWriteCoalescingPenalty,
+		)
+	}
+	if b.fullLineWritePenalty > 0 {
+		saBuilder = saBuilder.WithFullLineWritePenalty(
+			b.fullLineWritePenalty,
 		)
 	}
 	if b.maxWideReadPenalty > 0 {

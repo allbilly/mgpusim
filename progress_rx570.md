@@ -9,22 +9,23 @@ the exact gfx803 binaries used by the hardware harness.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 7.101 | 7.898 | 11.2% |
-| relu | 6.837 | 5.902 | 13.7% |
-| matrixmult | 73.458 | 74.388 | 1.3% |
-| matrixtranspose | — | 72.515 | — |
-| bitonicsort | 350.214 | 355.086 | 1.4% |
-| aes | 18.084 | 20.243 | 11.9% |
-| fir | 7.637 | 5.814 | 23.9% |
-| kmeans | 29.424 | 25.982 | 11.7% |
-| pagerank | 20.356 | 24.983 | 22.7% |
-| nw | 195.281 | 170.430 | 12.7% |
+| vectoradd | 7.101 | 7.271 | 2.4% |
+| relu | 6.837 | 6.273 | 8.2% |
+| matrixmult | 73.458 | 80.310 | 9.3% |
+| matrixtranspose | — | 77.155 | — |
+| bitonicsort | 350.214 | 320.428 | 8.5% |
+| aes | 18.084 | 18.616 | 2.9% |
+| fir | 7.637 | 7.692 | 0.7% |
+| kmeans | 29.424 | 26.731 | 9.2% |
+| pagerank | 20.356 | 22.303 | 9.6% |
+| nw | 195.281 | 180.161 | 7.7% |
 
-Steady-state MARE is **12.3%** across the nine benchmarks with steady hardware
-data. All ten run and verify, but matrix transpose has only a cold hardware
-measurement and is excluded from steady MARE. The original headline errors
-were vectoradd 38.0%, ReLU 21.5%, and matrix multiplication 58.7%; matrix is
-now 1.3%, and no measured steady-state workload exceeds 23.9%.
+Steady-state MARE is **6.5%** across the nine benchmarks with steady hardware
+data, and every measured workload is below 10% error. All ten run and verify,
+but matrix transpose has only a cold hardware measurement and is excluded
+from steady MARE; its simulated 77.155 µs is 2.0% below the 78.722 µs cold
+measurement. The original headline errors were vectoradd 38.0%, ReLU 21.5%,
+and matrix multiplication 58.7%.
 
 The host clock is unpinned, so these microseconds are still diagnostic. A
 cycle-counter probe or pinned rerun is needed for reference-quality absolute
@@ -63,22 +64,28 @@ to 44.0 µs without materially regressing the suite. Increasing the CU request
 cap alone from 128 to 512 did not fix vector throughput, confirming L2
 admission was the bottleneck.
 
-### Latency and bandwidth were conflated
+### Random-load latency and bank concurrency were conflated
 
 The old simple-banked DRAM used 16 internal pipelines per controller and
 400 ns pipeline latency. Lowering that latency helped pagerank but made
 streaming workloads much too fast because the model still exposed excessive
 parallel line service.
 
-The final configuration separates the two:
+The suite configuration uses:
 
 - eight external 32-bit controller channels;
-- one serialized internal pipeline per controller;
-- 250 MHz line-service clock, or 128 GB/s aggregate for 64-byte lines;
-- 40-cycle depth, or 160 ns access latency.
+- four interleaved internal banks per controller;
+- a 250 MHz shallow line-service pipeline;
+- separate cache, coalescing, and dense-store issue costs.
 
-This moved exact pagerank from 42.9 to 25.0 µs while retaining a finite
-streaming bandwidth ceiling.
+This moves exact pagerank from 42.9 to 22.3 µs without serializing unrelated
+random misses. It is calibrated for the suite input sizes. A 262,144-element
+vector run is still too fast (12.839 µs versus 24.3 µs hardware), so the
+large-size bandwidth slope is an explicit remaining limitation rather than
+being hidden in the headline result. Dividing the service clock by four
+bracketed the large-vector target on the slow side but over-serialized the
+suite (12.367 µs vectoradd and 32.891 µs pagerank), so that configuration was
+rejected.
 
 ### Sparse reads were charged twice
 
@@ -92,8 +99,20 @@ write and wide-store penalties remain.
 
 The exact gfx803 matrix kernel uses `flat_load_dwordx4` and became VMem-bound
 in the simulator. A configurable wide-read serialization cost, 126 cycles per
-generated line for these x4 loads, brings matrix execution to 74.4 µs versus
-73.5 µs hardware. It does not penalize ordinary dword streaming loads.
+generated line for these x4 loads, brings matrix execution to 80.3 µs versus
+73.5 µs hardware, within the 10% target. It does not penalize ordinary dword
+streaming loads.
+
+### AES and dense stores need distinct issue timing
+
+AES is dominated by bitwise vector operations. Classifying vector XOR, AND,
+and OR separately from the four-cycle default VALU class models their
+one-cycle issue/result timing and reduces AES from 20.243 to 18.616 µs.
+
+Partial stores and fully utilized cache-line stores also have different
+costs. The model now keeps the partial-line write-combine/RMW cap and adds a
+small independent full-line store serialization cost. That mechanism brings
+the dense streaming kernels into range without applying benchmark-name rules.
 
 ### Multi-kernel dispatch cost
 
@@ -102,11 +121,11 @@ dispatch costs are:
 
 | Cost | Cycles |
 |---|---:|
-| first launch | 1,000 |
+| first launch | 2,690 |
 | subsequent launch | 1,300 |
 | completion/post-kernel | 2,500 |
 
-This produces 355.1 µs for bitonic versus 350.2 µs hardware. The much larger
+This produces 320.4 µs for bitonic versus 350.2 µs hardware. The much larger
 10–50 µs cold-minus-steady values in the hardware file include ROCm/KFD
 first-use, page mapping, and other host-side effects; they are deliberately
 not folded into GPU execution time.
@@ -125,6 +144,13 @@ not folded into GPU execution time.
   width 1 retained.
 - Exact modern HSACO changed several bottlenecks, most notably matrix and NW,
   demonstrating that legacy-object calibration was not transferable.
+- A one-bank 250 MHz DRAM candidate brought the 262,144-element vector case
+  to 21.703 µs, but made pagerank 25.066 µs; four banks preserve the
+  random-miss concurrency needed by the suite.
+- Four banks at 62.5 MHz produced 36.620 µs for the large vector, but
+  over-serialized the default vectoradd and pagerank cases; rejected.
+- Full-line store cost 8 cycles and L1V latency 56 cycles jointly put
+  vectoradd, ReLU, k-means, and pagerank below 10%.
 
 ## Reproduction
 
@@ -143,8 +169,9 @@ the deliberately unmatched cold runtime measurement:
 
 ## Remaining work
 
-- FIR is 23.9% fast and pagerank is 22.7% slow. Addressing them should use
-  general compute/memory overlap mechanisms, not benchmark-name exceptions.
+- Add a controller-wide bandwidth token shared by the internal DRAM banks.
+  This should retain random-miss concurrency while enforcing the RX 570's
+  large streaming bandwidth slope.
 - Add `s_memtime` cycle-counter measurements and rerun with a pinned clock.
 - The current user cannot access `/dev/kfd` (`root:render`, mode 0660), so new
   hardware collection needs render-group access or administrator help.

@@ -10,6 +10,8 @@ func TestGetVALUTimingClassOverrides(t *testing.T) {
 	spec := VALUTiming{
 		DefaultIssueInterval:         4,
 		DefaultResultLatency:         4,
+		BitwiseIssueInterval:         2,
+		BitwiseResultLatency:         2,
 		FMAIssueInterval:             4,
 		FMAResultLatency:             5,
 		IntegerMultiplyIssueInterval: 4,
@@ -19,6 +21,15 @@ func TestGetVALUTimingClassOverrides(t *testing.T) {
 		FP64IssueInterval:            8,
 		FP64ResultLatency:            8,
 	}
+
+	t.Run("bitwise", func(t *testing.T) {
+		inst := insts.NewInst()
+		inst.InstName = "v_xor_b32"
+		issue, latency := GetVALUTiming(inst, 16, spec)
+		if issue != 2 || latency != 2 {
+			t.Fatalf("got (%d,%d), want (2,2)", issue, latency)
+		}
+	})
 
 	tests := []struct {
 		name       string

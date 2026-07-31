@@ -65,22 +65,21 @@ The `gcn3` name is intentional: this repository classifies gfx803 as
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 7.101 | 7.898 | 11.2% |
-| relu | 6.837 | 5.902 | 13.7% |
-| matrixmult | 73.458 | 74.388 | 1.3% |
-| matrixtranspose | — | 72.515 | — |
-| bitonicsort | 350.214 | 355.086 | 1.4% |
-| aes | 18.084 | 20.243 | 11.9% |
-| fir | 7.637 | 5.814 | 23.9% |
-| kmeans | 29.424 | 25.982 | 11.7% |
-| pagerank | 20.356 | 24.983 | 22.7% |
-| nw | 195.281 | 170.430 | 12.7% |
+| vectoradd | 7.101 | 7.271 | 2.4% |
+| relu | 6.837 | 6.273 | 8.2% |
+| matrixmult | 73.458 | 80.310 | 9.3% |
+| matrixtranspose | — | 77.155 | — |
+| bitonicsort | 350.214 | 320.428 | 8.5% |
+| aes | 18.084 | 18.616 | 2.9% |
+| fir | 7.637 | 7.692 | 0.7% |
+| kmeans | 29.424 | 26.731 | 9.2% |
+| pagerank | 20.356 | 22.303 | 9.6% |
+| nw | 195.281 | 180.161 | 7.7% |
 
-MARE is **12.3% across the nine benchmarks with steady hardware data**. Every
-one of the ten benchmarks verifies its output; matrix transpose has only a
-78.722 µs cold hardware measurement, so it is not included in steady MARE.
-The largest remaining errors are FIR (23.9%) and pagerank (22.7%); the
-original 38–59% vector/matrix errors are gone.
+MARE is **6.5% across the nine benchmarks with steady hardware data**, and
+every measured error is below 10%. All ten benchmarks verify their output;
+matrix transpose has only a 78.722 µs cold hardware measurement, so it is not
+included in steady MARE (its 77.155 µs simulation is 2.0% lower).
 
 ## Main model corrections
 
@@ -88,12 +87,15 @@ original 38–59% vector/matrix errors are gone.
 - Missing gfx803 scalar operations and `v_mad_u16` are implemented.
 - L2 bank service is restored to 16 requests/cycle; the earlier low cap
   created a superlinear large-vector queue bottleneck.
-- GDDR5 uses one serialized pipeline per 32-bit controller, 160 ns modeled
-  latency, and a calibrated 128 GB/s aggregate line-service ceiling.
+- GDDR5 exposes four interleaved banks per 32-bit controller so unrelated
+  random misses can overlap; cache and store serialization costs are modeled
+  separately.
 - Sparse read coalescing no longer pays an extra per-line stall on top of the
   actual generated requests and memory latency.
 - A separate 126-cycle wide-read serialization cost models the matrix
   kernel's `flat_load_dwordx4` path.
+- Vector XOR/AND/OR use a separate one-cycle timing class, and fully utilized
+  cache-line stores have an independent eight-cycle issue cost.
 - GPU-side first/subsequent/post-kernel dispatch costs are calibrated for the
   RX 570's multi-launch workloads. Host cold-start costs remain excluded.
 
@@ -105,5 +107,6 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned after granting the user `render` access
   to `/dev/kfd`.
-- Investigate FIR underprediction and pagerank random-load overlap without
-  benchmark-specific timing rules.
+- Add a controller-wide bandwidth throttle shared by internal DRAM banks; the
+  current suite-calibrated model still underpredicts a 262,144-element
+  vectoradd run.

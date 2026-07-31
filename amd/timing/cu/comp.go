@@ -14,6 +14,8 @@ import (
 type VALUTiming struct {
 	DefaultIssueInterval         int `json:"default_issue_interval"`
 	DefaultResultLatency         int `json:"default_result_latency"`
+	BitwiseIssueInterval         int `json:"bitwise_issue_interval"`
+	BitwiseResultLatency         int `json:"bitwise_result_latency"`
 	FMAIssueInterval             int `json:"fma_issue_interval"`
 	FMAResultLatency             int `json:"fma_result_latency"`
 	IntegerMultiplyIssueInterval int `json:"integer_multiply_issue_interval"`
@@ -102,6 +104,7 @@ type Spec struct {
 	// write-combiner capacity when wide stores jump between cache lines.
 	MaxCoalescingPenalty      int `json:"max_coalescing_penalty"`
 	MaxWriteCoalescingPenalty int `json:"max_write_coalescing_penalty"`
+	FullLineWritePenalty      int `json:"full_line_write_penalty"`
 	MaxWideReadPenalty        int `json:"max_wide_read_penalty"`
 	MaxWideWriteStridePenalty int `json:"max_wide_write_stride_penalty"`
 
@@ -118,6 +121,8 @@ type Spec struct {
 	// separating issue throughput from dependent-result latency.
 	VALUDefaultIssueInterval         int `json:"valu_default_issue_interval"`
 	VALUDefaultResultLatency         int `json:"valu_default_result_latency"`
+	VALUBitwiseIssueInterval         int `json:"valu_bitwise_issue_interval"`
+	VALUBitwiseResultLatency         int `json:"valu_bitwise_result_latency"`
 	VALUFMAIssueInterval             int `json:"valu_fma_issue_interval"`
 	VALUFMAResultLatency             int `json:"valu_fma_result_latency"`
 	VALUIntegerMultiplyIssueInterval int `json:"valu_integer_multiply_issue_interval"`
@@ -209,6 +214,8 @@ type Resources struct {
 func (s *Spec) SetVALUTiming(t VALUTiming) {
 	s.VALUDefaultIssueInterval = t.DefaultIssueInterval
 	s.VALUDefaultResultLatency = t.DefaultResultLatency
+	s.VALUBitwiseIssueInterval = t.BitwiseIssueInterval
+	s.VALUBitwiseResultLatency = t.BitwiseResultLatency
 	s.VALUFMAIssueInterval = t.FMAIssueInterval
 	s.VALUFMAResultLatency = t.FMAResultLatency
 	s.VALUIntegerMultiplyIssueInterval = t.IntegerMultiplyIssueInterval
@@ -225,6 +232,8 @@ func (s Spec) VALUTimingSpec() VALUTiming {
 	return VALUTiming{
 		DefaultIssueInterval:         s.VALUDefaultIssueInterval,
 		DefaultResultLatency:         s.VALUDefaultResultLatency,
+		BitwiseIssueInterval:         s.VALUBitwiseIssueInterval,
+		BitwiseResultLatency:         s.VALUBitwiseResultLatency,
 		FMAIssueInterval:             s.VALUFMAIssueInterval,
 		FMAResultLatency:             s.VALUFMAResultLatency,
 		IntegerMultiplyIssueInterval: s.VALUIntegerMultiplyIssueInterval,

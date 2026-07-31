@@ -90,6 +90,19 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(24))
 	})
 
+	It("charges the configured full-line write serialization cost", func() {
+		vecMemUnit.fullLineWritePenalty = 3
+		fullMask := make([]bool, 64)
+		for i := range fullMask {
+			fullMask[i] = true
+		}
+		writeTxn := VectorMemAccessInfo{
+			Write: &memprotocol.WriteReq{DirtyMask: fullMask},
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(3))
+	})
+
 	It("uses ordinary utilization cost for MUBUF scratch writes", func() {
 		vecMemUnit.maxCoalescingPenalty = 16
 		vecMemUnit.maxWriteCoalescingPenalty = 32

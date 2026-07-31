@@ -7,8 +7,9 @@
 // are taken from the AMD RX 570 product page and corroborating spec sheets.
 // Timing latencies are calibrated against the ISCA-10 benchmark suite run on
 // the physical RX 570 (see gpu_perf_scripts/calibration/rx570/hw_ground_truth.txt).
-// The steady-state calibration achieves 12.3% MARE across the 9 benchmarks
-// with steady hardware data; all 10 benchmarks execute and verify. Cold
+// The steady-state calibration achieves 6.5% MARE across the 9 benchmarks
+// with steady hardware data, with every error below 10%; all 10 benchmarks
+// execute and verify. Cold
 // hipEvent measurements are reported separately because they include
 // workload-dependent host/runtime first-use costs outside the GPU model.
 package rx570
@@ -49,22 +50,23 @@ func MakeBuilder() r9nano.Builder {
 		WithL2NumReqPerCycle(16).
 		WithDramSize(4*mem.GB). // 4 GB GDDR5 (8 GB variant exists)
 		WithNumMemoryBank(8).   // 256-bit GDDR5 = 8 x 32-bit channels
-		// L1V: 16 KB per CU; ~16 ns bank latency at 1.244 GHz
-		// (calibrated: matched to gfx90c's 12 ns scaled by clock ratio).
+		// L1V: 16 KB per CU. The 56-cycle modeled bank latency includes the
+		// cache pipeline and calibrated contention seen by the exact kernels.
 		WithL1VCacheSize(16*mem.KB).
-		WithL1VBankLatency(20).
+		WithL1VBankLatency(56).
 		// L2 hit latency: 50 cycles, about 40 ns at 1.244 GHz.
 		WithL2BankLatency(50).
-		// Banked GDDR5. Each of the eight 32-bit controller channels has one
-		// serialized transaction pipeline. At 250 MHz this caps aggregate
-		// 64-byte-line service at 128 GB/s; depth 40 gives 160 ns latency.
-		// This separates latency from bandwidth instead of using a long,
-		// highly parallel pipeline that double-counted random-load stalls.
+		// Banked GDDR5. Each of the eight 32-bit controller channels exposes
+		// four interleaved banks so unrelated misses can overlap. A shallow
+		// 250 MHz pipeline avoids the former 400 ns per-request latency that
+		// double-counted random-load stalls. This setting is calibrated for
+		// the suite sizes; the large-vector bandwidth slope remains tracked
+		// separately in progress_rx570.md.
 		WithBankedDRAM(true).
 		WithDRAMMemFreq(250*timing.MHz).
-		WithDRAMNumInternalBanks(1).
+		WithDRAMNumInternalBanks(4).
 		WithDRAMBankPipelineWidth(1).
-		WithDRAMBankPipelineDepth(40).
+		WithDRAMBankPipelineDepth(1).
 		WithDRAMStageLatency(1).
 		// Structural timing mechanisms adopted from the calibrated gfx90c
 		// model; numeric values are calibrated against RX 570 hardware.
@@ -72,6 +74,8 @@ func MakeBuilder() r9nano.Builder {
 		WithVALUTiming(cu.VALUTiming{
 			DefaultIssueInterval:         4, // 16-wide SIMD, 4 cyc/wavefront
 			DefaultResultLatency:         4,
+			BitwiseIssueInterval:         1,
+			BitwiseResultLatency:         1,
 			FMAIssueInterval:             4,
 			FMAResultLatency:             4,
 			IntegerMultiplyIssueInterval: 4,
@@ -91,7 +95,10 @@ func MakeBuilder() r9nano.Builder {
 		// memory latency. An extra per-line read coalescing stall was double
 		// counting pagerank's random access cost, so its cap is disabled.
 		WithMaxCoalescingPenalty(0).
-		WithMaxWriteCoalescingPenalty(103).
+		// Partial lines pay a write-combine/RMW cost; dense lines pay a small
+		// independent store-issue serialization cost.
+		WithMaxWriteCoalescingPenalty(120).
+		WithFullLineWritePenalty(8).
 		// A flat_load_dwordx4 transfers 16 bytes per active lane. Charge
 		// each generated cache-line transaction 126 serialization cycles to
 		// model Polaris's wide-load path. This moves the exact gfx803
@@ -105,7 +112,7 @@ func MakeBuilder() r9nano.Builder {
 		// override needlessly serialized independent pagerank misses.
 		WithInFlightVectorMemAccessLimit(512).
 		// Dispatch across 4 shader engines in parallel.
-		// GPU-side dispatch costs only: 1000 cycles before the first kernel,
+		// GPU-side dispatch costs only: 2690 cycles before the first kernel,
 		// 1300 before later launches, and 2500 after each kernel completes.
 		// Host/KFD first-use overhead is intentionally excluded; it varies
 		// from 10 to 50 us in the recorded cold hipEvent measurements and
@@ -113,7 +120,7 @@ func MakeBuilder() r9nano.Builder {
 		WithCPAlg("per-die").
 		WithCPNumDies(NumShaderArray).
 		WithCPWavefrontDispatchCycles(1).
-		WithCPConstantKernelLaunchOverhead(1000).
+		WithCPConstantKernelLaunchOverhead(2690).
 		WithCPSubsequentKernelLaunchOverhead(1300).
 		WithCPWGScalingThreshold(100000).
 		WithCPConstantKernelOverhead(2500).

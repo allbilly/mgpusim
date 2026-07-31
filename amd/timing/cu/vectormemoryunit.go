@@ -29,6 +29,7 @@ type VectorMemoryUnit struct {
 
 	maxCoalescingPenalty      int
 	maxWriteCoalescingPenalty int
+	fullLineWritePenalty      int
 	maxWideReadPenalty        int
 	maxWideWriteStridePenalty int
 	coalescingStallRemaining  int
@@ -199,6 +200,9 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 	}
 
 	if txn.Write != nil {
+		if cacheLineBytes > 0 && usefulBytes == cacheLineBytes {
+			penalty += u.fullLineWritePenalty
+		}
 		if isWideVectorWrite(txn) {
 			penalty += u.writeStridePenalty(txn.Write, cacheLineBytes)
 		} else {
