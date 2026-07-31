@@ -78,10 +78,9 @@ func MakeBuilder() r9nano.Builder {
 		WithDependentLoadFlatOnly(true).
 		// Partial-line stores pay write-combine/read-modify-write cost.
 		WithMaxWriteCoalescingPenalty(103).
-		// Wide non-local stores can exceed the write-combine window.
+		// Empirical non-local wide-store tiers. A dedicated store-stride
+		// probe is still required to identify the underlying mechanism.
 		WithMaxWideWriteStridePenalty(240).
-		// The transpose size sweep shows an extra cost once transaction gaps
-		// reach 4 KiB; keep this as an empirical far-stride tier.
 		WithMaxWideWriteStrideFarPenalty(270, 64).
 		// The CU-to-cache issue path is shared and admits one coalesced
 		// transaction group per cycle.

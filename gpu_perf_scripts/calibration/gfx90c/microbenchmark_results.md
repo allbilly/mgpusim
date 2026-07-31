@@ -80,27 +80,52 @@ control, so no corrected absolute HW/simulator error is reported here.
 
 ### Matrix-transpose width sweep
 
-The final committed configuration produced the following verified simulator
-curve:
+The final committed configuration and a uniform single-shot hardware sweep
+produced the following curves. Every hardware point is the median of 15
+serialized launches with no prior transpose launch (`--warmup 0 --iters 1`).
+The harness performs a GPU `hipMemset` before timing, so its input cache state
+is not guaranteed cold and does not match the simulator's default H2D-bypass
+state. All 75 runs returned zero; samples immediately before and after every
+run reported the diagnostic `auto` policy with 200 MHz active, and temperature
+readings were 44-47 C. Absolute hardware times therefore remain unsuitable
+for pinned-target calibration.
 
-| Width | Sim (us) | Sim growth | HW auto (us) | HW growth |
-|------:|---------:|-----------:|-------------:|----------:|
-| 128   | 11.650   | -          | 33.358       | -         |
-| 256   | 35.498   | 3.047x     | 53.416       | 1.601x    |
-| 512   | 129.067  | 3.636x     | 243.543      | 4.559x    |
+| Width | Sim (us) | Sim growth | HW auto median (us) | HW growth | HW CV |
+|------:|---------:|-----------:|--------------------:|----------:|------:|
+| 256   | 35.498   | -          | 115.497             | -         | 15.85% |
+| 320   | 54.129   | 1.525x     | 146.225             | 1.266x    | 8.44% |
+| 384   | 73.945   | 1.366x     | 166.914             | 1.141x    | 5.37% |
+| 448   | 99.317   | 1.343x     | 191.460             | 1.147x    | 13.33% |
+| 512   | 129.067  | 1.300x     | 222.970             | 1.165x    | 7.09% |
 
-The default width-512 point passes the pinned absolute target, but this sweep
-does **not** validate the same scaling mechanism. Fitting `T = a + bN^2` to
-the simulator's width-128 and width-256 points predicts 130.890 us at width
-512, only 1.4% above the observed 129.067 us. The simulator therefore remains
-close to fixed overhead plus quadratic work. The auto-clock hardware curve
-has a much sharper width-512 knee.
+Both curves are smooth fixed-overhead-plus-area trends. An affine
+`T = a + bN^2` fit has `R^2 = 0.9997` for simulation and `R^2 = 0.9890` for
+hardware. The earlier apparent width-512 knee came from combining points that
+used different warm-up/iteration protocols. The uniform single-shot sweep does
+not reproduce or support an architectural knee, so the earlier comparison
+must not be used to tune the model.
 
-The 64-line far-stride tier is an empirical fit for the canonical point, not a
-proven model of the hardware knee. A future pinned sweep around widths 320,
-384, and 448, paired with a wide-store stride microbenchmark, should determine
-whether the missing effect is cache capacity, TLB behavior, write combining,
-or another transaction-level mechanism.
+Counter-enabled default-DMA simulator runs at widths 320 and 384 show no
+observable L2 traffic discontinuity: L2 read misses, write misses, and DRAM
+transactions grow by approximately the 1.44x area ratio (read misses exactly;
+the other counts within 0.1%), while L2 read hits remain 48 at both sizes.
+Routing H2D through L2 makes the input warm and improves the two points from
+54.129/73.945 us to 37.956/57.847 us, but the curve remains smooth. These
+results establish no L2 transition under either tested simulator initialization
+policy; they do not establish equivalent hardware cache state. The
+experimental DMA change was reverted.
+
+The same default-DMA runs show a modest L1V-TLB miss-fraction increase from
+6.72% at width 320 to 7.68% at width 384, while L2-TLB misses per element stay
+approximately constant. This is not a sharp modeled TLB wall, but the
+application sweep is not a substitute for a dedicated translation-capacity
+probe.
+
+The default width-512 point passes the pinned absolute target. However, the
+64-line far-stride tier remains a canonical-point fit rather than a mechanism
+validated by this application sweep. A dedicated full-line store-stride probe
+is still required before interpreting it as write combining, DRAM locality,
+or another transaction-level effect.
 
 ## Immutable full-suite validation
 
@@ -476,5 +501,6 @@ controls plus geometric sweeps around regime boundaries.
 The corrected matrix kernel still needs a replacement pinned N=128 hardware
 measurement when privileged clock control is available. Until then, its
 diagnostic auto-clock curve can validate scaling shape but not absolute error.
-The sharp hardware-only transpose width-512 knee and the ReLU/AES narrow gate
-margins are the highest-priority follow-up measurements.
+The ReLU/AES narrow gate margins, a dedicated validation of the transpose
+far-stride tier, and a pinned corrected matrix-multiplication target are the
+highest-priority follow-up measurements.
