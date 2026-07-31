@@ -102,6 +102,7 @@ type Spec struct {
 	// write-combiner capacity when wide stores jump between cache lines.
 	MaxCoalescingPenalty      int `json:"max_coalescing_penalty"`
 	MaxWriteCoalescingPenalty int `json:"max_write_coalescing_penalty"`
+	MaxWideReadPenalty        int `json:"max_wide_read_penalty"`
 	MaxWideWriteStridePenalty int `json:"max_wide_write_stride_penalty"`
 
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining

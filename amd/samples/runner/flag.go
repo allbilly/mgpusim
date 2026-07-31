@@ -17,7 +17,7 @@ var isaDebug = flag.Bool("debug-isa", false, "Generate the ISA debugging file.")
 var archFlag = flag.String("arch", "gcn3",
 	"GPU architecture: gcn3, gcn4, gcn5, or cdna3.")
 var gpuTypeFlag = flag.String("gpu", "r9nano",
-	"GPU model for timing simulation: r9nano, polaris10, vega64, gfx90c, or mi300x.")
+	"GPU model for timing simulation: r9nano, polaris10, rx570, vega64, gfx90c, or mi300x.")
 
 var verifyFlag = flag.Bool("verify", false, "Verify the emulation result.")
 var memTracing = flag.Bool("trace-mem", false, "Generate memory trace")
@@ -184,6 +184,8 @@ func parseGPUTypeFlag() string {
 	switch gpu {
 	case "gcn4", "gfx804", "polaris", "rx480":
 		return "polaris10"
+	case "rx570", "polaris20", "gfx803":
+		return "rx570"
 	case "gcn5", "gfx900", "vega", "vega64":
 		return "vega64"
 	default:

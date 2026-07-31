@@ -18,6 +18,7 @@ import (
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/mi300x"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/polaris10"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/r9nano"
+	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/rx570"
 	"github.com/sarchlab/mgpusim/v5/amd/samples/runner/timingconfig/vega64"
 )
 
@@ -145,6 +146,9 @@ func (b *Builder) adjustConfigForGPUType() {
 	case "polaris10", "gcn4", "gfx804":
 		b.numCUPerSA = polaris10.NumCUPerShaderArray
 		b.numSAPerGPU = polaris10.NumShaderArray
+	case "rx570", "polaris20", "gfx803":
+		b.numCUPerSA = rx570.NumCUPerShaderArray
+		b.numSAPerGPU = rx570.NumShaderArray
 	case "gfx90c":
 		b.numCUPerSA = gfx90c.NumCUPerShaderArray
 		b.numSAPerGPU = gfx90c.NumShaderArray
@@ -243,6 +247,13 @@ func (b *Builder) createGPUBuilder(
 			WithDriverPort(driverPort)
 	case "polaris10", "gcn4", "gfx804":
 		return polaris10.MakeBuilder().
+			WithSimulation(b.simulation).
+			WithMMU(mmuComponent).
+			WithLog2PageSize(b.log2PageSize).
+			WithGlobalStorage(b.globalStorage).
+			WithDriverPort(driverPort)
+	case "rx570", "polaris20", "gfx803":
+		return rx570.MakeBuilder().
 			WithSimulation(b.simulation).
 			WithMMU(mmuComponent).
 			WithLog2PageSize(b.log2PageSize).

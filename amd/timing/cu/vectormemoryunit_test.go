@@ -172,6 +172,19 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(isWideVectorWrite(VectorMemAccessInfo{Inst: inst})).To(BeFalse())
 	})
 
+	It("charges the configured wide-read serialization cost", func() {
+		vecMemUnit.maxWideReadPenalty = 12
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 23
+		txn := VectorMemAccessInfo{
+			Read: &memprotocol.ReadReq{AccessByteSize: 64},
+			Inst: inst,
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(txn)).To(Equal(12))
+	})
+
 	It("does not apply the wide-store locality cost to dword stores", func() {
 		vecMemUnit.maxWideWriteStridePenalty = 20
 		inst := wavefront.NewInst(insts.NewInst())

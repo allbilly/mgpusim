@@ -29,6 +29,7 @@ type VectorMemoryUnit struct {
 
 	maxCoalescingPenalty      int
 	maxWriteCoalescingPenalty int
+	maxWideReadPenalty        int
 	maxWideWriteStridePenalty int
 	coalescingStallRemaining  int
 	lastWriteCacheLine        uint64
@@ -203,6 +204,8 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 		} else {
 			u.hasLastWriteCacheLine = false
 		}
+	} else if isWideVectorRead(txn) {
+		penalty += u.maxWideReadPenalty
 	}
 
 	return penalty
@@ -226,6 +229,16 @@ func (u *VectorMemoryUnit) writeStridePenalty(
 	u.lastWriteCacheLine = current
 	u.hasLastWriteCacheLine = true
 	return penalty
+}
+
+func isWideVectorRead(txn VectorMemAccessInfo) bool {
+	// FLAT/MUBUF opcode 23 is a four-dword (16-byte-per-lane) load.
+	return txn.Read != nil &&
+		txn.Inst != nil &&
+		txn.Inst.Inst != nil &&
+		(txn.Inst.FormatType == insts.FLAT ||
+			txn.Inst.FormatType == insts.MUBUF) &&
+		txn.Inst.Opcode == 23
 }
 
 func isWideVectorWrite(txn VectorMemAccessInfo) bool {
