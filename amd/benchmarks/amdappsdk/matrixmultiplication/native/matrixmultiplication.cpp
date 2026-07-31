@@ -43,7 +43,8 @@ extern "C" __global__ void mmmKernel_local(float4 *matrixA,
     for(int i = 0; i < numLoops; i++)
     {
         /* Calculate global ids of threads from the particular block to load from matrix A depending on i */
-        int globalPosA = i * lSizeX + lIdX + (lIdY << TILEY_SHIFT) * temp;
+        int globalPosA = i * lSizeX + lIdX +
+                         (gIdY << TILEY_SHIFT) * temp;
 
         /* Load values in blockA from matrixA */
         blockA[blockPos]                = matrixA[globalPosA];

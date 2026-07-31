@@ -226,6 +226,15 @@ checked only part of one row. Commit `91808957` now checks every output element
 and adds a regression test, ensuring future size/ISA variants cannot produce a
 false pass.
 
+The stronger verifier then exposed a source-level bug at the first Y
+work-group boundary: `globalPosA` used local Y, causing every Y work-group to
+reuse matrix A rows 0-31. The native and OpenCL sources now use global Y and
+the gfx90c HSACO was regenerated. The corrected N=128 kernel passes full
+verification. Timing changed only 45.141 to 45.300 us in simulation and
+518.458 to 525.635 us on the same auto/200 MHz hardware state (+0.35% and
++1.38%). The existing pinned target is retained until it can be remeasured,
+since the correction is timing-neutral within current measurement uncertainty.
+
 ## Accepted general fixes
 
 Two benchmark-driven fixes improved the K-means/matmul state:
