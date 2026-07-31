@@ -1156,6 +1156,73 @@ Sweep artifacts, logs, and SQLite databases are under
 reported because those redundant long-running points were intentionally
 stopped after B=1 had already rejected the model.
 
+### Wave-owned wide-only return candidate
+
+Commit `9e0f5b51` adds the narrower default-off mechanism proposed by the
+rejected total-return sweep. It charges only lane-dwords beyond the first dword
+per active lane, services one FIFO head per wave per tick, and lets different
+waves overlap. Commit `f8aae34c` exposes it through the separate gfx90c-only
+calibration flag `-vmem-wide-load-return-lane-dwords-per-cycle`; it is mutually
+exclusive with the total-return flag and remains zero in `gfx90c.MakeBuilder`.
+
+The same verified 8-KiB/alias-8/G1/R64 sweep gives:
+
+| Width | Mode | Default | B=1 | B=2 | B=4 |
+|------:|------|--------:|----:|----:|----:|
+| 1 | serial | 9.343 | 9.343 | 9.343 | 9.343 |
+| 1 | independent4 | 6.695 | 6.695 | 6.695 | 6.695 |
+| 2 | serial | 10.903 | 13.423 | 12.143 | 11.503 |
+| 2 | independent4 | 6.975 | 9.111 | 7.831 | 7.230 |
+| 4 | serial | 11.450 | 19.090 | 15.250 | 13.330 |
+| 4 | independent4 | 7.468 | 14.745 | 10.905 | 8.985 |
+
+B=1 is the first candidate to match both guarded dwordx4 endpoints
+simultaneously:
+
+| Shape | Hardware pilot | Default sim | B=1 sim | B=1 error vs HW |
+|-------|---------------:|------------:|--------:|-----------------:|
+| serial | 20.282 | 11.450 | 19.090 | -5.9% |
+| independent4 | 15.961 | 7.468 | 14.745 | -7.6% |
+| serial - independent4 | 4.321 | 3.982 | 4.345 | +0.6% |
+
+The nearly exact paired delta is important: unlike the total-return model, the
+wave FIFO does not let four same-wave loads obtain four independent return
+timers. Alias remains outside the accounting, consistent with the alias-1 and
+alias-8 hardware scale factors. Dword traffic is exactly unchanged at every
+tested bandwidth.
+
+The verified matrix size sweep at B=1 is selective and scales with work, but it
+does not close the full application gap:
+
+| Matrix N | Default | Wave-wide B=1 |
+|---------:|--------:|---------------:|
+| 32 | 14.444 | 18.418 |
+| 64 | 20.036 | 28.000 |
+| 128 | 42.229 | 58.179 |
+
+Corrected N=128 therefore remains 15.8--17.5 us below the two guarded
+73.988/75.712-us diagnostics. That residual must not be forced into the return
+model when the matched VMEM probes already constrain its B=1 slope.
+
+K-means confirms the intended narrow-load isolation end to end:
+
+| Points | Default | Wave-wide B=1 |
+|-------:|--------:|---------------:|
+| 1,024 | 21.975 | 21.975 |
+| 4,096 | 40.439 | 40.439 |
+
+Both runs passed exact output verification. The identity follows from the ISA
+signature—K-means uses dword vector loads, which contribute zero extra
+lane-dwords—but the application runs also verify that the flag, builders, and
+retirement path introduce no incidental timing drift.
+
+This candidate is promising but not production-ready. The supporting hardware
+points are one-batch directional pilots, no pinned x1/x2 width slope exists,
+and no clean work-group sweep has tested whether waves truly overlap without a
+SIMD/CU return-queue knee. Full guarded repetitions, zero-trip controls, equal
+repeat width points, and G1/G7/G16/G28 scaling remain mandatory before enabling
+B=1. Simulator artifacts are under `/tmp/mgpusim-wide-sweep.VwfrQO`.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
