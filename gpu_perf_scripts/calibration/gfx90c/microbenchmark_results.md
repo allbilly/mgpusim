@@ -185,6 +185,15 @@ full K-means error. The earlier write-through experiment was not a valid fix
 because that implementation also waits for lower-level write acknowledgement
 and made the producer slower.
 
+A follow-up candidate moved the initial cluster upload before the swap kernel,
+matching the hardware harness order and avoiding one conservative driver
+flush. It worsened K-means from 59.096 to 61.034 us and was reverted. The key
+reason is that `transposeFeatures()` calls `verifySwap()`, whose device-to-host
+copy already flushes and invalidates the feature buffer before compute. The
+later cluster upload is therefore a redundant flush, not the primary loss of
+producer residency. The driver's sticky `markAllBuffersDirty` behavior is
+over-conservative, but changing upload order does not repair this benchmark.
+
 ## Accepted general fixes
 
 Two benchmark-driven fixes improved the K-means/matmul state:
