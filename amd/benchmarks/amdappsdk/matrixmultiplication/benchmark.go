@@ -48,27 +48,33 @@ func (b *Benchmark) SetUnifiedMemory() {
 	b.useUnifiedMemory = true
 }
 
-func (b *Benchmark) initMem() {
+// GenerateInputMatrices creates the deterministic inputs used by the
+// simulator and by external exact-HSACO calibration harnesses.
+func GenerateInputMatrices(x, y, z uint32) (matrixA, matrixB *Matrix) {
 	// Use a local random source so the input is reproducible. rand.Seed has
 	// been a no-op since Go 1.24, so seeding the global generator no longer
 	// produces a deterministic sequence.
 	rng := rand.New(rand.NewSource(0))
 
-	b.MatrixA = NewMatrix(b.X, b.Y)
-	for i := uint32(0); i < b.X; i++ {
-		for j := uint32(0); j < b.Y; j++ {
-			b.MatrixA.Data[j*b.X+i] = rng.Float32()
-			//b.MatrixA.Data[j*b.X+i] = float32(j*b.X + i)
+	matrixA = NewMatrix(x, y)
+	for i := uint32(0); i < x; i++ {
+		for j := uint32(0); j < y; j++ {
+			matrixA.Data[j*x+i] = rng.Float32()
 		}
 	}
 
-	b.MatrixB = NewMatrix(b.Z, b.X)
-	for i := uint32(0); i < b.Z; i++ {
-		for j := uint32(0); j < b.X; j++ {
-			b.MatrixB.Data[j*b.Z+i] = rng.Float32()
-			//b.MatrixB.Data[j*b.Z+i] = float32(j*b.Z + i)
+	matrixB = NewMatrix(z, x)
+	for i := uint32(0); i < z; i++ {
+		for j := uint32(0); j < x; j++ {
+			matrixB.Data[j*z+i] = rng.Float32()
 		}
 	}
+
+	return matrixA, matrixB
+}
+
+func (b *Benchmark) initMem() {
+	b.MatrixA, b.MatrixB = GenerateInputMatrices(b.X, b.Y, b.Z)
 }
 
 func (b *Benchmark) exec() {

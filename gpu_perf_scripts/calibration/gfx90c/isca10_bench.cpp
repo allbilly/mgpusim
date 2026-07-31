@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -189,17 +190,28 @@ static void bench_matrixmult(int iters) {
       "amd/benchmarks/amdappsdk/matrixmultiplication/kernels_gfx90c.hsaco",
       "mmmKernel_local");
   const int N = matrix_size;
-  if (N < 32 || N % 32 != 0) {
-    fprintf(stderr, "matrix size must be a positive multiple of 32\n");
+  if (N != 32 && N != 64 && N != 128) {
+    fprintf(stderr, "matrix size must be 32, 64, or 128\n");
     std::exit(2);
   }
+  const std::string fixture_prefix =
+      "gpu_perf_scripts/calibration/gfx90c/build/matrixmult_" +
+      std::to_string(N) + "_";
+  const size_t elements = size_t(N) * N;
+  const std::vector<float> host_a =
+      read_fixture<float>((fixture_prefix + "a.f32").c_str(), elements);
+  const std::vector<float> host_b =
+      read_fixture<float>((fixture_prefix + "b.f32").c_str(), elements);
+  std::vector<float> host_c(elements,
+                            std::numeric_limits<float>::quiet_NaN());
   float4 *A, *B, *C;
-  size_t bytes = size_t(N) * N * sizeof(float);
+  const size_t bytes = elements * sizeof(float);
   HIP_CHECK(hipMalloc(&A, bytes));
   HIP_CHECK(hipMalloc(&B, bytes));
   HIP_CHECK(hipMalloc(&C, bytes));
-  HIP_CHECK(hipMemset(A, 1, bytes));
-  HIP_CHECK(hipMemset(B, 1, bytes));
+  HIP_CHECK(hipMemcpy(A, host_a.data(), bytes, hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemcpy(B, host_b.data(), bytes, hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemcpy(C, host_c.data(), bytes, hipMemcpyHostToDevice));
   // global = (N/4, N/4), local 8x8
   dim3 block(8, 8);
   dim3 grid(N / 4 / 8, N / 4 / 8);
@@ -207,6 +219,39 @@ static void bench_matrixmult(int iters) {
     void *args[] = {&A, &B, &C, (void *)&N};
     kernel.launch(grid, block, 0, args);
   });
+  HIP_CHECK(hipMemcpy(host_c.data(), C, bytes, hipMemcpyDeviceToHost));
+
+  constexpr double abs_tolerance = 1e-3;
+  constexpr double rel_tolerance = 1e-4;
+  double max_abs_error = 0.0;
+  double max_rel_error = 0.0;
+  for (int row = 0; row < N; ++row) {
+    for (int col = 0; col < N; ++col) {
+      double expected = 0.0;
+      for (int k = 0; k < N; ++k) {
+        expected += double(host_a[size_t(row) * N + k]) *
+                    double(host_b[size_t(k) * N + col]);
+      }
+      const double actual = host_c[size_t(row) * N + col];
+      const double abs_error = std::abs(actual - expected);
+      const double rel_error = abs_error / std::max(std::abs(expected), 1.0);
+      max_abs_error = std::max(max_abs_error, abs_error);
+      max_rel_error = std::max(max_rel_error, rel_error);
+      const double tolerance =
+          abs_tolerance + rel_tolerance * std::abs(expected);
+      if (!std::isfinite(actual) || abs_error > tolerance) {
+        fprintf(stderr,
+                "matrixmult N=%d mismatch at [%d, %d]: expected %.9g, "
+                "got %.9g, abs error %.3g exceeds %.3g\n",
+                N, row, col, expected, actual, abs_error, tolerance);
+        std::exit(3);
+      }
+    }
+  }
+  fprintf(stderr,
+          "matrixmult N=%d verification Passed! max_abs_error=%.3g "
+          "max_rel_error=%.3g\n",
+          N, max_abs_error, max_rel_error);
   printf("matrixmult %.3f\n", us);
   HIP_CHECK(hipFree(A));
   HIP_CHECK(hipFree(B));

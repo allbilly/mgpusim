@@ -1,6 +1,34 @@
 package matrixmultiplication
 
-import "testing"
+import (
+	"math"
+	"slices"
+	"testing"
+)
+
+func TestGenerateInputMatricesIsDeterministicAndFinite(t *testing.T) {
+	matrixA1, matrixB1 := GenerateInputMatrices(32, 32, 32)
+	matrixA2, matrixB2 := GenerateInputMatrices(32, 32, 32)
+
+	if !slices.Equal(matrixA1.Data, matrixA2.Data) ||
+		!slices.Equal(matrixB1.Data, matrixB2.Data) {
+		t.Fatal("matrix inputs differ across calls")
+	}
+	if len(matrixA1.Data) != 32*32 || len(matrixB1.Data) != 32*32 {
+		t.Fatalf("unexpected input lengths: A=%d, B=%d",
+			len(matrixA1.Data), len(matrixB1.Data))
+	}
+	for name, values := range map[string][]float32{
+		"A": matrixA1.Data,
+		"B": matrixB1.Data,
+	} {
+		for i, value := range values {
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				t.Fatalf("matrix %s element %d is not finite: %v", name, i, value)
+			}
+		}
+	}
+}
 
 func TestFirstMatrixMismatchChecksEveryElement(t *testing.T) {
 	expected := &Matrix{

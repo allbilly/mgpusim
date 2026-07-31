@@ -47,15 +47,26 @@ workflow:
 ```
 
 The build first regenerates deterministic binary fixtures from the same Go
-matrix generator and random seeds used by the simulator. The PageRank CSR
-graph, initial rank vector, K-means features, and initial centroids therefore
-match on both measurement paths. Generated fixtures live under `build/`.
+matrix generators and random seeds used by the simulator. Matrix multiplication
+inputs (N=32, 64, and 128), the PageRank CSR graph and initial rank vector, and
+K-means features and initial centroids therefore match on both measurement
+paths. Generated fixtures live under `build/`; matrix-multiplication output is
+copied back and fully verified after the timed launch sequence.
 
-The default is one cold launch sequence, matching one MGPUSim sample run.
-Steady-state behavior can be measured explicitly:
+The default one-launch run is a diagnostic for idle-to-first-launch behavior.
+It is not accuracy ground truth: on this host the first matrix-multiplication
+launch was about 1.02 ms while the warmed kernel converged near 68 us, because
+the cold result includes driver, device-power, and clock-ramp state that
+MGPUSim does not model. Reference throughput targets use exact HSACO,
+`--warmup 20`, and a fixed iteration count that gives a 75--150 ms timed
+window. Collect independent fresh-process batches and compare them only with a
+simulator protocol having equivalent warmed state; the legacy simulator table
+is still single-shot and is therefore diagnostic against new warmed targets.
+
+For example, collect a steady-state matrix-multiplication batch with:
 
 ```bash
-./build_and_run.sh --warmup 1 --iters 100
+./build_and_run.sh --only matrixmult --warmup 20 --iters 1000
 ```
 
 K-means can additionally report its swap and compute kernels separately:

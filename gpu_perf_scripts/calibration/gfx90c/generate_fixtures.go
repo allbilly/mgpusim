@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sarchlab/mgpusim/v5/amd/benchmarks/amdappsdk/matrixmultiplication"
 	"github.com/sarchlab/mgpusim/v5/amd/benchmarks/matrix/csr"
 )
 
@@ -49,6 +50,15 @@ func main() {
 	}
 	outputs := []fixture{
 		{"kmeans_features.f32", features},
+	}
+	for _, size := range []uint32{32, 64, 128} {
+		matrixA, matrixB := matrixmultiplication.GenerateInputMatrices(
+			size, size, size)
+		prefix := fmt.Sprintf("matrixmult_%d_", size)
+		outputs = append(outputs,
+			fixture{prefix + "a.f32", matrixA.Data},
+			fixture{prefix + "b.f32", matrixB.Data},
+		)
 	}
 
 	for _, numNodes := range []uint32{128, 256, 512} {
