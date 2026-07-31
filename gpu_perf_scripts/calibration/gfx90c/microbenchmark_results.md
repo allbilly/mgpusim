@@ -1176,7 +1176,7 @@ The same verified 8-KiB/alias-8/G1/R64 sweep gives:
 | 4 | serial | 11.450 | 19.090 | 15.250 | 13.330 |
 | 4 | independent4 | 7.468 | 14.745 | 10.905 | 8.985 |
 
-B=1 is the first candidate to match both guarded dwordx4 endpoints
+B=1 is the first candidate to match both guarded dwordx4 *raw* endpoints
 simultaneously:
 
 | Shape | Hardware pilot | Default sim | B=1 sim | B=1 error vs HW |
@@ -1191,18 +1191,43 @@ timers. Alias remains outside the accounting, consistent with the alias-1 and
 alias-8 hardware scale factors. Dword traffic is exactly unchanged at every
 tested bandwidth.
 
-The verified matrix size sweep at B=1 is selective and scales with work, but it
-does not close the full application gap:
+A later quiet interval yielded the first accepted serial zero-trip hardware
+control. It passed the same process guard and full verification at 8.267 us,
+with 1,600 MHz selected, 15 active-clock samples, and a 51 C peak. The matched
+simulator zero-trip is exactly 3.800 us at default, B=1, and B=2. Subtracting
+the protocol-specific floors changes the preferred body slope:
 
-| Matrix N | Default | Wave-wide B=1 |
-|---------:|--------:|---------------:|
-| 32 | 14.444 | 18.418 |
-| 64 | 20.036 | 28.000 |
-| 128 | 42.229 | 58.179 |
+| Serial dwordx4/R64 | Raw time | Zero-trip | Body time | HW/body ratio |
+|--------------------|---------:|----------:|----------:|--------------:|
+| Hardware pilot | 20.282 | 8.267 | 12.015 | 1.000 |
+| Default sim | 11.450 | 3.800 | 7.650 | 1.571 |
+| Wave-wide B=1 | 19.090 | 3.800 | 15.290 | 0.786 |
+| Wave-wide B=2 | 15.250 | 3.800 | 11.450 | 1.049 |
 
-Corrected N=128 therefore remains 15.8--17.5 us below the two guarded
-73.988/75.712-us diagnostics. That residual must not be forced into the return
-model when the matched VMEM probes already constrain its B=1 slope.
+Thus B=1's raw agreement partly compensates for a 4.467-us launch-floor
+difference; B=2 is within 4.9% of the accepted serial body cost. This is why a
+zero-trip control must accompany every symbol. The accepted artifact is
+`/tmp/gfx90c-pilot-vmem-zero-s-a8-b8-g1-94c2e8cd-r2`.
+
+The independent zero-trip attempt was rejected after the external RTL
+`pytest` chain restarted during its batch. Its artifact at
+`/tmp/gfx90c-pilot-vmem-zero-i-a8-b8-g1-94c2e8cd-r2` is failure evidence only;
+its printed timing is not used. Without an accepted independent control, the
+raw paired-delta result can rank mechanisms but cannot select B=1 versus B=2.
+
+The verified matrix size sweep is selective and scales with work, but neither
+candidate closes the full application gap:
+
+| Matrix N | Default | Wave-wide B=1 | Wave-wide B=2 |
+|---------:|--------:|---------------:|---------------:|
+| 32 | 14.444 | 18.418 | 16.258 |
+| 64 | 20.036 | 28.000 | 23.680 |
+| 128 | 42.229 | 58.179 | 49.538 |
+
+At B=1, corrected N=128 remains 15.8--17.5 us below the two guarded
+73.988/75.712-us diagnostics; B=2 is farther away. That residual must not be
+forced into the return model when the matched VMEM body slope constrains its
+bandwidth separately from launch protocol and other application mechanisms.
 
 K-means confirms the intended narrow-load isolation end to end:
 
@@ -1219,9 +1244,10 @@ retirement path introduce no incidental timing drift.
 This candidate is promising but not production-ready. The supporting hardware
 points are one-batch directional pilots, no pinned x1/x2 width slope exists,
 and no clean work-group sweep has tested whether waves truly overlap without a
-SIMD/CU return-queue knee. Full guarded repetitions, zero-trip controls, equal
-repeat width points, and G1/G7/G16/G28 scaling remain mandatory before enabling
-B=1. Simulator artifacts are under `/tmp/mgpusim-wide-sweep.VwfrQO`.
+SIMD/CU return-queue knee. Full guarded repetitions, an accepted independent
+zero-trip control, equal-repeat width points, and G1/G7/G16/G28 scaling remain
+mandatory before enabling any nonzero value. Simulator artifacts are under
+`/tmp/mgpusim-wide-sweep.VwfrQO`.
 
 ## Remaining validation
 
