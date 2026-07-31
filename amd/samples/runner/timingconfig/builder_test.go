@@ -89,6 +89,46 @@ func TestBuildGfx90cPlatformWithVMemLoadReturnBandwidth(t *testing.T) {
 	}
 }
 
+func TestBuildGfx90cPlatformWithVMemWideLoadReturnBandwidth(t *testing.T) {
+	s := simulation.MakeBuilder().
+		WithoutMonitoring().
+		WithOutputFileName(t.TempDir() + "/sim").
+		Build()
+	defer s.Terminate()
+
+	MakeBuilder().
+		WithSimulation(s).
+		WithGPUType("gfx90c").
+		WithVMemWideLoadReturnLaneDwordsPerCycle(11).
+		Build()
+
+	component := s.GetComponentByName("GPU[1].SA[0].CU[0]")
+	computeUnit, ok := component.(*cu.Comp)
+	if !ok {
+		t.Fatalf("expected gfx90c compute unit, got %T", component)
+	}
+	if computeUnit.Spec().VMemWideLoadReturnLaneDwordsPerCycle != 11 {
+		t.Fatalf(
+			"expected wave-wide vector-memory load return bandwidth 11, got %d",
+			computeUnit.Spec().VMemWideLoadReturnLaneDwordsPerCycle,
+		)
+	}
+}
+
+func TestRejectSimultaneousVMemLoadReturnBandwidthModels(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected simultaneous return models to panic")
+		}
+	}()
+
+	MakeBuilder().
+		WithGPUType("gfx90c").
+		WithVMemLoadReturnLaneDwordsPerCycle(9).
+		WithVMemWideLoadReturnLaneDwordsPerCycle(11).
+		Build()
+}
+
 func TestRejectVMemLoadReturnBandwidthForOtherGPUs(t *testing.T) {
 	defer func() {
 		if recover() == nil {

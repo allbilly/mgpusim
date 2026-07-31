@@ -23,6 +23,11 @@ var vmemLoadReturnLaneDwordsPerCycleFlag = flag.Int(
 	0,
 	"Experimental gfx90c vector-load return bandwidth; zero disables the model.",
 )
+var vmemWideLoadReturnLaneDwordsPerCycleFlag = flag.Int(
+	"vmem-wide-load-return-lane-dwords-per-cycle",
+	0,
+	"Experimental gfx90c wave-wide vector-load return bandwidth; zero disables the model.",
+)
 
 var verifyFlag = flag.Bool("verify", false, "Verify the emulation result.")
 var memTracing = flag.Bool("trace-mem", false, "Generate memory trace")
@@ -128,12 +133,25 @@ func (r *Runner) parseSimulationFlags() {
 	r.GPUType = parseGPUTypeFlag()
 	r.VMemLoadReturnLaneDwordsPerCycle =
 		*vmemLoadReturnLaneDwordsPerCycleFlag
+	r.VMemWideLoadReturnLaneDwordsPerCycle =
+		*vmemWideLoadReturnLaneDwordsPerCycleFlag
 	if r.VMemLoadReturnLaneDwordsPerCycle < 0 {
 		panic("vector-memory load return bandwidth cannot be negative")
+	}
+	if r.VMemWideLoadReturnLaneDwordsPerCycle < 0 {
+		panic("wave-wide vector-memory load return bandwidth cannot be negative")
+	}
+	if r.VMemLoadReturnLaneDwordsPerCycle > 0 &&
+		r.VMemWideLoadReturnLaneDwordsPerCycle > 0 {
+		panic("vector-memory load return bandwidth models are mutually exclusive")
 	}
 	if r.VMemLoadReturnLaneDwordsPerCycle > 0 &&
 		(!r.Timing || r.GPUType != "gfx90c") {
 		panic("vector-memory load return bandwidth requires -timing -gpu gfx90c")
+	}
+	if r.VMemWideLoadReturnLaneDwordsPerCycle > 0 &&
+		(!r.Timing || r.GPUType != "gfx90c") {
+		panic("wave-wide vector-memory load return bandwidth requires -timing -gpu gfx90c")
 	}
 	if r.Timing && r.GPUType == "r9nano" {
 		switch r.ArchType {

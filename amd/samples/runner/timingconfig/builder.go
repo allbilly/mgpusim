@@ -34,18 +34,19 @@ const (
 type Builder struct {
 	simulation *simulation.Simulation
 
-	numGPUs                          int
-	numCUPerSA                       int
-	numSAPerGPU                      int
-	cpuMemSize                       uint64
-	gpuMemSize                       uint64
-	log2PageSize                     uint64
-	useMagicMemoryCopy               bool
-	gpuType                          string
-	switchLatency                    int // PCIe/interconnect switch latency in cycles
-	d2hCycles                        int
-	h2dCycles                        int
-	vmemLoadReturnLaneDwordsPerCycle int
+	numGPUs                              int
+	numCUPerSA                           int
+	numSAPerGPU                          int
+	cpuMemSize                           uint64
+	gpuMemSize                           uint64
+	log2PageSize                         uint64
+	useMagicMemoryCopy                   bool
+	gpuType                              string
+	switchLatency                        int // PCIe/interconnect switch latency in cycles
+	d2hCycles                            int
+	h2dCycles                            int
+	vmemLoadReturnLaneDwordsPerCycle     int
+	vmemWideLoadReturnLaneDwordsPerCycle int
 
 	globalStorage     *mem.Storage
 	rdmaAddressMapper *mem.BankedAddressPortMapper
@@ -101,14 +102,32 @@ func (b Builder) WithVMemLoadReturnLaneDwordsPerCycle(n int) Builder {
 	return b
 }
 
+// WithVMemWideLoadReturnLaneDwordsPerCycle sets an experimental gfx90c
+// per-wave bandwidth for retiring lane-dwords beyond one dword per active
+// lane. Zero disables the model.
+func (b Builder) WithVMemWideLoadReturnLaneDwordsPerCycle(n int) Builder {
+	b.vmemWideLoadReturnLaneDwordsPerCycle = n
+	return b
+}
+
 // Build builds the hardware platform and returns the driver. The driver, the
 // GPUs, and all the connections register themselves with the simulation.
 func (b Builder) Build() *driver.Driver {
 	if b.vmemLoadReturnLaneDwordsPerCycle < 0 {
 		panic("timingconfig: vector-memory load return bandwidth cannot be negative")
 	}
+	if b.vmemWideLoadReturnLaneDwordsPerCycle < 0 {
+		panic("timingconfig: wave-wide vector-memory load return bandwidth cannot be negative")
+	}
+	if b.vmemLoadReturnLaneDwordsPerCycle > 0 &&
+		b.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+		panic("timingconfig: vector-memory load return bandwidth models are mutually exclusive")
+	}
 	if b.vmemLoadReturnLaneDwordsPerCycle > 0 && b.gpuType != "gfx90c" {
 		panic("timingconfig: vector-memory load return bandwidth is only supported for gfx90c")
+	}
+	if b.vmemWideLoadReturnLaneDwordsPerCycle > 0 && b.gpuType != "gfx90c" {
+		panic("timingconfig: wave-wide vector-memory load return bandwidth is only supported for gfx90c")
 	}
 
 	b.adjustConfigForGPUType()
@@ -272,6 +291,9 @@ func (b *Builder) createGPUBuilder(
 			WithGlobalStorage(b.globalStorage).
 			WithVMemLoadReturnLaneDwordsPerCycle(
 				b.vmemLoadReturnLaneDwordsPerCycle,
+			).
+			WithVMemWideLoadReturnLaneDwordsPerCycle(
+				b.vmemWideLoadReturnLaneDwordsPerCycle,
 			).
 			WithDriverPort(driverPort)
 	default:

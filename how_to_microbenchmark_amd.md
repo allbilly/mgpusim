@@ -280,6 +280,27 @@ high-occupancy K-means path. Do not enable a value in `gfx90c.MakeBuilder`
 until pinned hardware width and work-group slopes select it and the default
 zero setting has passed the complete regression suite.
 
+If the total-return model moves narrow dword workloads, test the stricter
+wave-owned, wide-only candidate separately:
+
+```bash
+for lane_dwords_per_cycle in 0 1 2 4; do
+  /home/fedora/.local/go/bin/go run ./amd/samples/vmem_load_shape \
+    -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+    -vmem-wide-load-return-lane-dwords-per-cycle "$lane_dwords_per_cycle" \
+    -width-dwords 4 -mode independent4 -alias-lanes 8 \
+    -array-bytes 8192 -repeats 64 -workgroups 1
+done
+```
+
+This second candidate charges only dwords beyond the first returned dword per
+active lane and shares that extra service between loads from the same wave.
+Different waves still overlap. Therefore dword/x2/x4 contribute 0/64/192
+extra lane-dwords for a full wave, K-means-like dword traffic should remain
+bit-identical, and equal-load-count serial/independent probes should receive
+nearly the same absolute added body cost. Never set both experimental flags in
+one run.
+
 #### Zero-trip baseline and repeat slope
 
 An explicit repeat count of zero is a matched launch control. It uses the same
