@@ -631,6 +631,33 @@ var _ = Describe("ALU", func() {
 		}
 	})
 
+	It("should run V_LSHL_OR_B32", func() {
+		state.inst = insts.NewInst()
+		state.inst.FormatType = insts.VOP3a
+		state.inst.Opcode = 512
+		state.inst.Src0 = insts.NewVRegOperand(0, 0, 1)
+		state.inst.Src1 = insts.NewVRegOperand(0, 1, 1)
+		state.inst.Src2 = insts.NewVRegOperand(0, 2, 1)
+		state.inst.Dst = insts.NewVRegOperand(0, 3, 1)
+		state.exec = 0x3
+
+		writeVRegU32(state, 0, 0, 0x12)
+		writeVRegU32(state, 0, 1, 4)
+		writeVRegU32(state, 0, 2, 0x3)
+		writeVRegU32(state, 1, 0, 0x80000000)
+		writeVRegU32(state, 1, 1, 32)
+		writeVRegU32(state, 1, 2, 0xf)
+		writeVRegU32(state, 2, 0, 0xffffffff)
+		writeVRegU32(state, 2, 1, 1)
+		writeVRegU32(state, 2, 2, 1)
+
+		alu.Run(state)
+
+		Expect(state.ReadOperand(state.inst.Dst, 0)).To(Equal(uint64(0x123)))
+		Expect(state.ReadOperand(state.inst.Dst, 1)).To(Equal(uint64(0x8000000f)))
+		Expect(state.ReadOperand(state.inst.Dst, 2)).To(Equal(uint64(0)))
+	})
+
 	It("should run V_MUL_HI_U32", func() {
 		state.inst = insts.NewInst()
 		state.inst.FormatType = insts.VOP3a

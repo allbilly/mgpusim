@@ -133,6 +133,8 @@ func (u *ALU) runVOP3A(state emu.InstEmuState) {
 		u.runVASHRREVI64(state)
 	case 511:
 		u.runVADD3U32(state)
+	case 512:
+		u.runVLSHLORB32(state)
 	case 509:
 		u.runVLSHLADDU32(state)
 	case 510:
@@ -576,6 +578,23 @@ func (u *ALU) runVLSHLADDU32(state emu.InstEmuState) {
 		shift := uint32(state.ReadOperand(inst.Src1, i)) & 0x1F
 		src2 := uint32(state.ReadOperand(inst.Src2, i))
 		state.WriteOperand(inst.Dst, i, uint64((src0<<shift)+src2))
+	}
+}
+
+// runVLSHLORB32 implements v_lshl_or_b32 (shift left and OR 32-bit).
+// D.u = (S0.u << S1.u[4:0]) | S2.u
+func (u *ALU) runVLSHLORB32(state emu.InstEmuState) {
+	inst := state.Inst()
+	exec := state.EXEC()
+	for i := 0; i < 64; i++ {
+		if exec&(1<<uint(i)) == 0 {
+			continue
+		}
+		src0 := uint32(state.ReadOperand(inst.Src0, i))
+		shift := uint32(state.ReadOperand(inst.Src1, i)) & 0x1f
+		src2 := uint32(state.ReadOperand(inst.Src2, i))
+		result := (src0 << shift) | src2
+		state.WriteOperand(inst.Dst, i, uint64(result))
 	}
 }
 
