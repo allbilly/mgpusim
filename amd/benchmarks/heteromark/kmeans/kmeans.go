@@ -106,18 +106,22 @@ type Benchmark struct {
 	computeKernel *insts.KernelCodeObject
 	swapKernel    *insts.KernelCodeObject
 
-	Arch          arch.Type
-	NumClusters   int
-	NumPoints     int
-	NumFeatures   int
-	MaxIter       int
-	hFeatures     []float32
-	dFeatures     driver.Ptr
-	dFeaturesSwap driver.Ptr
-	hMembership   []int32
-	dMembership   driver.Ptr
-	hClusters     []float32
-	dClusters     []driver.Ptr
+	Arch        arch.Type
+	NumClusters int
+	NumPoints   int
+	NumFeatures int
+	MaxIter     int
+	// PreinitializeFeatureSwap skips the producer/swap kernel and uploads the
+	// same feature-major layout directly. It isolates the compute kernel from
+	// cross-kernel write residency and completion effects.
+	PreinitializeFeatureSwap bool
+	hFeatures                []float32
+	dFeatures                driver.Ptr
+	dFeaturesSwap            driver.Ptr
+	hMembership              []int32
+	dMembership              driver.Ptr
+	hClusters                []float32
+	dClusters                []driver.Ptr
 
 	gpuRMSE float64
 
@@ -239,7 +243,11 @@ func (b *Benchmark) initMem() {
 }
 
 func (b *Benchmark) exec() {
-	b.transposeFeatures()
+	if b.PreinitializeFeatureSwap {
+		b.preinitializeFeatureSwap()
+	} else {
+		b.transposeFeatures()
+	}
 	if b.MaxIter == 0 {
 		// A zero-iteration run is useful for isolating transpose/swap timing.
 		// There are no clusters or memberships from which to calculate RMSE.
@@ -247,6 +255,26 @@ func (b *Benchmark) exec() {
 	}
 	b.kmeansClustering()
 	b.gpuRMSE = b.calculateRMSE()
+}
+
+func (b *Benchmark) preinitializeFeatureSwap() {
+	featureSwap := transposeFeatureLayout(
+		b.hFeatures, b.NumPoints, b.NumFeatures)
+	b.driver.MemCopyH2D(b.context, b.dFeaturesSwap, featureSwap)
+}
+
+func transposeFeatureLayout(
+	features []float32,
+	numPoints, numFeatures int,
+) []float32 {
+	featureSwap := make([]float32, numPoints*numFeatures)
+	for point := 0; point < numPoints; point++ {
+		for feature := 0; feature < numFeatures; feature++ {
+			featureSwap[feature*numPoints+point] =
+				features[point*numFeatures+feature]
+		}
+	}
+	return featureSwap
 }
 
 func (b *Benchmark) transposeFeatures() {

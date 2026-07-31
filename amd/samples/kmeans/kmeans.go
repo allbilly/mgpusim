@@ -13,6 +13,8 @@ var features = flag.Int("features", 32,
 	"The number of features for each point.")
 var maxIter = flag.Int("max-iter", 5,
 	"The maximum number of iterations to run")
+var preinitializeSwap = flag.Bool("preinitialize-swap", false,
+	"Upload feature-major input and skip the swap kernel (compute isolation).")
 
 func main() {
 	flag.Parse()
@@ -25,6 +27,7 @@ func main() {
 	benchmark.NumClusters = *clusters
 	benchmark.NumFeatures = *features
 	benchmark.MaxIter = *maxIter
+	benchmark.PreinitializeFeatureSwap = *preinitializeSwap
 
 	runner.AddBenchmark(benchmark)
 

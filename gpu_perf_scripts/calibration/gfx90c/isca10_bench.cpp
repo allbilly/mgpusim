@@ -99,6 +99,7 @@ static int cache_active_lanes = 0;
 static int kmeans_npoints = 4096;
 static int kmeans_nfeatures = 16;
 static int kmeans_nclusters = 5;
+static bool kmeans_preinitialize_swap = false;
 
 template <typename F>
 static float time_iters(int iters, F &&launch) {
@@ -469,6 +470,16 @@ static void bench_kmeans(int iters) {
   HIP_CHECK(hipMemcpy(feat, host_features.data(),
                       host_features.size() * sizeof(float),
                       hipMemcpyHostToDevice));
+  if (kmeans_preinitialize_swap) {
+    std::vector<float> transposed(host_features.size());
+    for (int point = 0; point < npoints; ++point)
+      for (int feature = 0; feature < nfeatures; ++feature)
+        transposed[size_t(feature) * npoints + point] =
+            host_features[size_t(point) * nfeatures + feature];
+    HIP_CHECK(hipMemcpy(feat_swap, transposed.data(),
+                        transposed.size() * sizeof(float),
+                        hipMemcpyHostToDevice));
+  }
   HIP_CHECK(hipMemcpy(clusters, host_features.data(),
                       nclusters * nfeatures * sizeof(float),
                       hipMemcpyHostToDevice));
@@ -488,6 +499,17 @@ static void bench_kmeans(int iters) {
     };
     compute_kernel.launch(grid, block, 0, compute_args);
   };
+  if (kmeans_preinitialize_swap) {
+    float compute_us = time_iters(iters, launch_compute);
+    printf("kmeans %.3f\n", compute_us);
+    printf("kmeans_compute_preinitialized %.3f\n", compute_us);
+    HIP_CHECK(hipFree(feat));
+    HIP_CHECK(hipFree(feat_swap));
+    HIP_CHECK(hipFree(clusters));
+    HIP_CHECK(hipFree(membership));
+    return;
+  }
+
   // max-iter=1: one swap + one compute (matches sim).
   float us = time_iters(iters, [&] {
     launch_swap();
@@ -645,6 +667,8 @@ int main(int argc, char **argv) {
       kmeans_nfeatures = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--clusters") && i + 1 < argc)
       kmeans_nclusters = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--preinitialize-swap"))
+      kmeans_preinitialize_swap = true;
   }
   bitonic_iters = iters;
   hipDeviceProp_t prop;
