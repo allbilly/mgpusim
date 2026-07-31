@@ -21,8 +21,8 @@ the exact gfx803 binaries used by the hardware harness.
 | nw | 146.510 | 144.844 | 1.1% |
 
 Canonical-size MARE is **7.5%** across all ten freshly measured workloads.
-The stronger anti-overfit result is **6.1% MARE across 37 matched size
-points**. Seven of the eight swept families have family MARE below 10%; the
+The stronger anti-overfit result is **6.9% MARE across 45 matched size
+points**. Eight of the ten swept families have family MARE below 10%; the
 maximum point error is the 384-wide transpose holdout at 25.0%.
 All points run and verify.
 The original headline errors were vectoradd 38.0%, ReLU 21.5%, and matrix
@@ -117,7 +117,8 @@ cost is now charged once per wave instruction rather than once per generated
 cache-line request. This distinction preserves the scalar-store path while
 allowing wide stores to use the transaction bandwidth they already model.
 After the clock-warmed recollection and capacity correction, ReLU has 4.8%
-family MARE, vectoradd 8.9%, and the complete 37-point MARE is 6.1%.
+family MARE and vectoradd 8.9%. With the later k-means and PageRank holdouts,
+the complete 45-point MARE is 6.9%.
 
 | vector length | HW steady (µs) | Sim (µs) | Error |
 |---:|---:|---:|---:|
@@ -189,10 +190,12 @@ not folded into GPU execution time.
 
 The exact-HSACO harness and simulator runner now accept a single benchmark
 size. The sweep driver records four predetermined, launch-compatible sizes
-for seven families, eight transpose sizes spanning its cache-capacity
-transition, plus a ReLU midpoint. The committed hardware CSV uses the median
-of three independent processes per point. All 37 matched hardware and
-simulator points are present and every simulator point verifies.
+for nine families, eight transpose sizes spanning its cache-capacity
+transition, plus a ReLU midpoint. K-means fixtures preserve the deterministic
+feature stream at each point, and PageRank regenerates its deterministic CSR
+matrix for each node count. The committed hardware CSV uses the median of
+three independent processes per point. All 45 matched hardware and simulator
+points are present and every simulator point verifies.
 
 | Family | MARE | Maximum error | Sim/HW slope ratio |
 |---|---:|---:|---:|
@@ -203,7 +206,17 @@ simulator points are present and every simulator point verifies.
 | bitonicsort | 6.1% | 6.9% | 1.232 |
 | aes | 7.7% | 7.8% | — |
 | fir | 0.3% | 0.7% | — |
+| kmeans | 12.7% | 20.0% | 0.614 |
 | nw | 1.2% | 1.5% | 0.981 |
+| pagerank | 8.7% | 13.2% | 1.058 |
+
+PageRank's broad 128–1024-node curve shows that its canonical residual is not
+a scaling failure: the model's fitted slope is within 5.8% of hardware and
+its four-point family MARE is 8.7%. K-means exposes a different issue. Its
+fixed launch overhead matches the flat 1024–4096 hardware region reasonably,
+but the 8192-point simulator is 20.0% fast and the fitted slope is only 61.4%
+of hardware. That residual is retained as a holdout rather than corrected
+with a benchmark- or size-specific delay.
 
 The transpose correction is structural rather than benchmark-specific. A
 wide store generates up to 16 line requests but issues one wave instruction;
@@ -265,6 +278,5 @@ the deliberately unmatched cold runtime measurement:
 ## Remaining work
 
 - Add `s_memtime` cycle-counter measurements and rerun with a pinned clock.
-- Add size sweeps for k-means and pagerank, and investigate the remaining
-  transpose-384 and canonical pagerank residuals without benchmark-specific
-  timing.
+- Investigate the k-means scaling slope and remaining transpose-384 residual
+  without benchmark-specific timing.

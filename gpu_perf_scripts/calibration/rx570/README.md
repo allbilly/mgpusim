@@ -75,11 +75,13 @@ calibration points:
 ./compare_size_sweeps.py hw_size_sweep.csv sim_size_sweep.csv
 ```
 
-The sweep uses four launch-compatible sizes for seven scalable families,
+The sweep uses four launch-compatible sizes for nine scalable families,
 eight matrix-transpose sizes spanning its L2-capacity transition, plus a ReLU
-midpoint at 131K. It writes every point and its status
+midpoint at 131K. K-means inputs are deterministic prefixes of the same random
+stream, while PageRank gets a separately generated deterministic CSR graph at
+each node count. It writes every point and its status
 even if an individual run fails, so a failed holdout cannot silently
-disappear. Both committed CSV files contain all 37 matched points. Hardware
+disappear. Both committed CSV files contain all 45 matched points. Hardware
 mode checks `/dev/kfd` access, runs three independent processes per point by
 default, warms the GPU for at least 50 ms per process, and records their
 median. `--warmup-ms 0` explicitly disables the duration floor.
@@ -105,8 +107,8 @@ hardware/simulator slope ratio.
 | nw | 146.510 | 144.844 | 1.1% |
 
 Canonical-size MARE is **7.5%** across all ten remeasured benchmarks. The
-anti-overfit result is **6.1% MARE across 37 matched size points**; seven of
-the eight swept families have family MARE below 10%. The maximum point error
+anti-overfit result is **6.9% MARE across 45 matched size points**; eight of
+the ten swept families have family MARE below 10%. The maximum point error
 is the 384-wide transpose holdout at 25.0%. All points verify.
 
 ## Main model corrections
@@ -150,6 +152,5 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned; current auto-clock microseconds remain
   diagnostic despite three-process medians.
-- Add size sweeps for k-means and pagerank, and investigate the remaining
-  transpose-384 and canonical pagerank residuals without benchmark-specific
-  timing.
+- Investigate the k-means scaling slope and the remaining transpose-384
+  residual without benchmark-specific timing.

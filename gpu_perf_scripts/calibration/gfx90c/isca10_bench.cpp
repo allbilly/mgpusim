@@ -418,16 +418,19 @@ static void bench_kmeans(int iters) {
   ModuleKernel compute_kernel(
       "amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco",
       "kmeans_kernel_compute");
-  const int npoints = 4096, nfeatures = 16, nclusters = 5;
+  const int npoints = selected_size(4096, 64, "kmeans");
+  const int nfeatures = 16, nclusters = 5;
   float *feat, *feat_swap, *clusters;
   int *membership;
   HIP_CHECK(hipMalloc(&feat, npoints * nfeatures * sizeof(float)));
   HIP_CHECK(hipMalloc(&feat_swap, npoints * nfeatures * sizeof(float)));
   HIP_CHECK(hipMalloc(&clusters, nclusters * nfeatures * sizeof(float)));
   HIP_CHECK(hipMalloc(&membership, npoints * sizeof(int)));
+  const std::string features_fixture =
+      "gpu_perf_scripts/calibration/gfx90c/build/kmeans_features_" +
+      std::to_string(npoints) + ".f32";
   std::vector<float> host_features = read_fixture<float>(
-      "gpu_perf_scripts/calibration/gfx90c/build/kmeans_features.f32",
-      npoints * nfeatures);
+      features_fixture.c_str(), npoints * nfeatures);
   HIP_CHECK(hipMemcpy(feat, host_features.data(),
                       host_features.size() * sizeof(float),
                       hipMemcpyHostToDevice));
@@ -470,16 +473,20 @@ static void bench_pagerank(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/heteromark/pagerank/kernels_gfx90c.hsaco",
       "PageRankUpdateGpu");
-  const unsigned num_nodes = 512;
-  const unsigned num_conn = 131072;
+  const unsigned num_nodes =
+      static_cast<unsigned>(selected_size(512, 64, "pagerank"));
+  const unsigned num_conn = num_nodes * num_nodes / 2;
+  const std::string fixture_prefix =
+      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_" +
+      std::to_string(num_nodes);
   std::vector<unsigned> row = read_fixture<unsigned>(
-      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_row_offsets.u32",
+      (fixture_prefix + "_row_offsets.u32").c_str(),
       num_nodes + 1);
   std::vector<unsigned> col = read_fixture<unsigned>(
-      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_columns.u32",
+      (fixture_prefix + "_columns.u32").c_str(),
       num_conn);
   std::vector<float> val = read_fixture<float>(
-      "gpu_perf_scripts/calibration/gfx90c/build/pagerank_values.f32",
+      (fixture_prefix + "_values.f32").c_str(),
       num_conn);
   std::vector<float> x(num_nodes, 1.0f / num_nodes), y(num_nodes, 0);
   unsigned *drow, *dcol;

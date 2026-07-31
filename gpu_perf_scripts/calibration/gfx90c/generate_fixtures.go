@@ -1,5 +1,6 @@
 // Command generate_fixtures writes the deterministic inputs shared by the
-// simulator benchmarks and the gfx90c hardware timing harness.
+// simulator benchmarks and the gfx90c hardware timing harness. It emits every
+// k-means and PageRank holdout size used by the hardware harness.
 package main
 
 import (
@@ -32,28 +33,34 @@ func main() {
 		panic(err)
 	}
 
-	const (
-		numPoints   = 4096
-		numFeatures = 16
-		numNodes    = 512
-		numEdges    = 131072
-	)
-
-	rng := rand.New(rand.NewSource(0))
-	features := make([]float32, numPoints*numFeatures)
-	for i := range features {
-		features[i] = rng.Float32()
-	}
-
-	matrix := csr.MakeMatrixGenerator(numNodes, numEdges).GenerateMatrix()
 	outputs := []struct {
 		name string
 		data any
-	}{
-		{"kmeans_features.f32", features},
-		{"pagerank_row_offsets.u32", matrix.RowOffsets},
-		{"pagerank_columns.u32", matrix.ColumnNumbers},
-		{"pagerank_values.f32", matrix.Values},
+	}{}
+	appendOutput := func(name string, data any) {
+		outputs = append(outputs, struct {
+			name string
+			data any
+		}{name, data})
+	}
+
+	const numFeatures = 16
+	for _, numPoints := range []int{1024, 2048, 4096, 8192} {
+		rng := rand.New(rand.NewSource(0))
+		features := make([]float32, numPoints*numFeatures)
+		for i := range features {
+			features[i] = rng.Float32()
+		}
+		appendOutput(fmt.Sprintf("kmeans_features_%d.f32", numPoints), features)
+	}
+
+	for _, numNodes := range []uint32{128, 256, 512, 1024} {
+		numEdges := numNodes * numNodes / 2
+		matrix := csr.MakeMatrixGenerator(numNodes, numEdges).GenerateMatrix()
+		prefix := fmt.Sprintf("pagerank_%d", numNodes)
+		appendOutput(prefix+"_row_offsets.u32", matrix.RowOffsets)
+		appendOutput(prefix+"_columns.u32", matrix.ColumnNumbers)
+		appendOutput(prefix+"_values.f32", matrix.Values)
 	}
 
 	for _, output := range outputs {

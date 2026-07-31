@@ -78,8 +78,8 @@ specs=(
   "bitonicsort|bitonicsort|-length ${SWEEP_SIZE:-4096}"
   "aes|aes|-length ${SWEEP_SIZE:-4096}"
   "fir|fir|-length ${SWEEP_SIZE:-8192} -taps 16"
-  "kmeans|kmeans|-points 4096 -features 16 -clusters 5 -max-iter 1"
-  "pagerank|pagerank|-node 512 -sparsity 0.5 -iterations 2"
+  "kmeans|kmeans|-points ${SWEEP_SIZE:-4096} -features 16 -clusters 5 -max-iter 1"
+  "pagerank|pagerank|-node ${SWEEP_SIZE:-512} -sparsity 0.5 -iterations 2"
   "nw|nw|-length ${SWEEP_SIZE:-128}"
 )
 

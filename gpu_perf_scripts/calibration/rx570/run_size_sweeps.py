@@ -35,6 +35,8 @@ SPECS = {
     ),
     "aes": ([1024, 2048, 4096, 8192], lambda n: n),
     "fir": ([2048, 4096, 8192, 16384], lambda n: n),
+    "kmeans": ([1024, 2048, 4096, 8192], lambda n: n),
+    "pagerank": ([128, 256, 512, 1024], lambda n: n**2),
     "nw": ([64, 128, 192, 256], lambda n: n**2),
 }
 
@@ -46,6 +48,8 @@ MULTIPLES = {
     "bitonicsort": 64,
     "aes": 16,
     "fir": 256,
+    "kmeans": 64,
+    "pagerank": 64,
     "nw": 64,
 }
 
