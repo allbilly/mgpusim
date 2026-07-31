@@ -797,6 +797,59 @@ an acceptable calibration. The accepted tier is restored pending a pinned
 probe and a replacement mechanism that predicts both the smooth hardware
 stride curve and the transpose width curve.
 
+## Exact-HSACO VMEM load-shape simulator sweep
+
+Commit `115d1186` added a verified exact-gfx90c probe that crosses global-load
+width, interleaved lane aliasing, footprint, and outstanding-load shape. The
+serial symbols issue one load before `vmcnt(0)`; the independent symbols issue
+four loads before one drain. The generated object is pinned by SHA-256
+`68be7ee133c43c367cdec8906bd02665f0902f59d4d1a2374cbfbcfc68bb95f1`.
+
+The first simulator sweep used one complete footprint lap and one work-group.
+Every point passed full per-thread checksum verification. Times are kernel
+microseconds:
+
+| Footprint | Alias | Width (dwords) | Serial | Independent4 |
+|----------:|------:|---------------:|-------:|-------------:|
+| 8 KiB | 8 | 1 | 25.651 | 15.061 |
+| 8 KiB | 8 | 2 | 17.971 | 10.096 |
+| 8 KiB | 8 | 4 | 11.450 | 7.468 |
+| 64 KiB | 8 | 1 | 178.378 | 93.555 |
+| 64 KiB | 8 | 2 | 116.938 | 53.800 |
+| 64 KiB | 8 | 4 | 64.766 | 32.808 |
+| 8 KiB | 1 | 4 | 5.030 | 4.450 |
+| 64 KiB | 1 | 4 | 13.451 | 8.933 |
+
+The repeat count changes with width and alias count so that each row traverses
+the same number of complete footprint laps. Therefore raw times compare equal
+coverage, while `time / repeats` compares individual wave-load instructions.
+The four-load endpoint is 1.5--2.2x faster than the serialized endpoint, not
+4x, so the current model exposes useful overlap but still charges a shared
+return/service path. Removing interleaved aliasing also cuts dwordx4 time
+substantially. That control changes the number of unique cache transactions per
+wave and must be compared with hardware before fitting a fanout term.
+
+For the matrix-like dwordx4/alias-8 shape, the work-group size sweep was:
+
+| Footprint/mode | 1 WG | 7 WGs | 16 WGs | 28 WGs |
+|----------------|-----:|------:|-------:|-------:|
+| 8 KiB serial | 11.450 | 11.346 | 11.332 | 11.214 |
+| 8 KiB independent4 | 7.468 | 7.387 | 7.370 | 7.355 |
+| 64 KiB serial | 64.766 | 64.663 | 64.476 | 64.484 |
+| 64 KiB independent4 | 32.808 | 32.762 | 32.741 | 32.753 |
+
+Launch time is essentially flat through 28 one-wave work-groups for both
+footprints. These work-groups traverse the same shared footprint, so this is a
+specific cache-sharing/CU-fill diagnostic rather than a general occupancy
+claim. A pinned hardware sweep must determine whether real gfx90c has the same
+flat curve. If hardware scales upward while simulation remains flat, a
+sparse-grid return-service or CU-topology mechanism is better supported than a
+uniform cache-latency change. If both are flat but their serial/independent or
+alias ratios differ, the missing term is more likely per-instruction VMEM
+completion/fanout. The simulator artifacts are retained at
+`/tmp/mgpusim-vmem-core-115d1186.XAwhv3` and
+`/tmp/mgpusim-vmem-occ-115d1186.8Mwmoo` for this calibration session.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
