@@ -96,6 +96,7 @@ static bool report_components = false;
 static int cache_array_bytes = 16 * 1024;
 static int cache_num_accesses = 131072;
 static int cache_active_lanes = 0;
+static int matrix_size = 128;
 static int kmeans_npoints = 4096;
 static int kmeans_nfeatures = 16;
 static int kmeans_nclusters = 5;
@@ -170,7 +171,11 @@ static void bench_matrixmult(int iters) {
   ModuleKernel kernel(
       "amd/benchmarks/amdappsdk/matrixmultiplication/kernels_gfx90c.hsaco",
       "mmmKernel_local");
-  const int N = 128;
+  const int N = matrix_size;
+  if (N < 32 || N % 32 != 0) {
+    fprintf(stderr, "matrix size must be a positive multiple of 32\n");
+    std::exit(2);
+  }
   float4 *A, *B, *C;
   size_t bytes = size_t(N) * N * sizeof(float);
   HIP_CHECK(hipMalloc(&A, bytes));
@@ -661,6 +666,8 @@ int main(int argc, char **argv) {
       cache_num_accesses = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--active-lanes") && i + 1 < argc)
       cache_active_lanes = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--matrix-size") && i + 1 < argc)
+      matrix_size = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--points") && i + 1 < argc)
       kmeans_npoints = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--features") && i + 1 < argc)
