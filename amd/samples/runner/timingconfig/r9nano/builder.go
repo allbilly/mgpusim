@@ -98,7 +98,6 @@ type Builder struct {
 	ldsBankConflictPenalty           int
 	barrierLatency                   int
 	maxCoalescingPenalty             int
-	maxSparseReadCoalescingPenalty   int
 	maxWriteCoalescingPenalty        int
 	maxWideWriteStridePenalty        int
 	vecMemTransPipelineWidth         int
@@ -424,13 +423,6 @@ func (b Builder) WithBarrierLatency(latency int) Builder {
 // penalty in cycles.
 func (b Builder) WithMaxCoalescingPenalty(penalty int) Builder {
 	b.maxCoalescingPenalty = penalty
-	return b
-}
-
-// WithMaxSparseReadCoalescingPenalty sets the additional penalty for
-// multi-lane reads that use at most two dwords from a cache line.
-func (b Builder) WithMaxSparseReadCoalescingPenalty(penalty int) Builder {
-	b.maxSparseReadCoalescingPenalty = penalty
 	return b
 }
 
@@ -857,11 +849,6 @@ func (b *Builder) buildSAs() {
 	if b.maxCoalescingPenalty > 0 {
 		saBuilder = saBuilder.WithMaxCoalescingPenalty(
 			b.maxCoalescingPenalty,
-		)
-	}
-	if b.maxSparseReadCoalescingPenalty > 0 {
-		saBuilder = saBuilder.WithMaxSparseReadCoalescingPenalty(
-			b.maxSparseReadCoalescingPenalty,
 		)
 	}
 	if b.maxWriteCoalescingPenalty > 0 {

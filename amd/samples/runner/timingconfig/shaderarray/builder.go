@@ -60,40 +60,39 @@ type ShaderArray struct {
 type Builder struct {
 	simulation *simulation.Simulation
 
-	gpuID                          uint64
-	name                           string
-	numCUs                         int
-	freq                           timing.Freq
-	log2CacheLineSize              uint64
-	log2PageSize                   uint64
-	wfPoolSize                     int
-	vgprCount                      []int
-	numSinglePrecisionUnits        int
-	vecMemInstPipelineStages       int
-	vecMemTransPipelineStages      int
-	vecMemTransPipelineWidth       int
-	cuMemPipelineBufferSize        int
-	l1vCacheSize                   uint64
-	l1vBankLatency                 int
-	memPipelineBufferSize          int
-	maxCoalescingPenalty           int
-	maxSparseReadCoalescingPenalty int
-	maxWriteCoalescingPenalty      int
-	maxWideWriteStridePenalty      int
-	registerScoreboard             bool
-	scoreboardVALULatency          int
-	valuTiming                     cu.VALUTiming
-	ldsPipelineLatency             int
-	ldsIssueInterval               int
-	ldsMaxInFlight                 int
-	ldsBankCount                   int
-	ldsBankWidth                   int
-	ldsBankConflictPenalty         int
-	barrierLatency                 int
-	l1AddressMapper                mem.AddressToPortMapper
-	l1TLBAddressMapper             mem.AddressToPortMapper
-	aluBuilder                     func() emu.ALU
-	decoderBuilder                 func() emu.Decoder
+	gpuID                     uint64
+	name                      string
+	numCUs                    int
+	freq                      timing.Freq
+	log2CacheLineSize         uint64
+	log2PageSize              uint64
+	wfPoolSize                int
+	vgprCount                 []int
+	numSinglePrecisionUnits   int
+	vecMemInstPipelineStages  int
+	vecMemTransPipelineStages int
+	vecMemTransPipelineWidth  int
+	cuMemPipelineBufferSize   int
+	l1vCacheSize              uint64
+	l1vBankLatency            int
+	memPipelineBufferSize     int
+	maxCoalescingPenalty      int
+	maxWriteCoalescingPenalty int
+	maxWideWriteStridePenalty int
+	registerScoreboard        bool
+	scoreboardVALULatency     int
+	valuTiming                cu.VALUTiming
+	ldsPipelineLatency        int
+	ldsIssueInterval          int
+	ldsMaxInFlight            int
+	ldsBankCount              int
+	ldsBankWidth              int
+	ldsBankConflictPenalty    int
+	barrierLatency            int
+	l1AddressMapper           mem.AddressToPortMapper
+	l1TLBAddressMapper        mem.AddressToPortMapper
+	aluBuilder                func() emu.ALU
+	decoderBuilder            func() emu.Decoder
 
 	sa *ShaderArray
 
@@ -253,13 +252,6 @@ func (b Builder) WithMemPipelineBufferSize(size int) Builder {
 // transaction penalty in cycles for each CU.
 func (b Builder) WithMaxCoalescingPenalty(n int) Builder {
 	b.maxCoalescingPenalty = n
-	return b
-}
-
-// WithMaxSparseReadCoalescingPenalty sets the additional penalty for a
-// multi-lane read that uses at most two distinct dwords from a cache line.
-func (b Builder) WithMaxSparseReadCoalescingPenalty(n int) Builder {
-	b.maxSparseReadCoalescingPenalty = n
 	return b
 }
 
@@ -505,10 +497,6 @@ func (b *Builder) cuSpec() cu.Spec {
 
 	if b.maxCoalescingPenalty > 0 {
 		spec.MaxCoalescingPenalty = b.maxCoalescingPenalty
-	}
-	if b.maxSparseReadCoalescingPenalty > 0 {
-		spec.MaxSparseReadCoalescingPenalty =
-			b.maxSparseReadCoalescingPenalty
 	}
 	if b.maxWriteCoalescingPenalty > 0 {
 		spec.MaxWriteCoalescingPenalty = b.maxWriteCoalescingPenalty

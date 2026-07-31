@@ -96,16 +96,13 @@ type Spec struct {
 	MemPipelineBufferSize int `json:"mem_pipeline_buffer_size"`
 
 	// MaxCoalescingPenalty is the maximum low-utilization penalty for reads.
-	// MaxSparseReadCoalescingPenalty adds a penalty when a multi-lane read
-	// uses no more than two distinct dwords from a cache line.
 	// MaxWriteCoalescingPenalty optionally overrides it for partial-line
 	// writes, which can require write combining or read-modify-write traffic.
 	// MaxWideWriteStridePenalty models the loss of DRAM row locality and
 	// write-combiner capacity when wide stores jump between cache lines.
-	MaxCoalescingPenalty           int `json:"max_coalescing_penalty"`
-	MaxSparseReadCoalescingPenalty int `json:"max_sparse_read_coalescing_penalty"`
-	MaxWriteCoalescingPenalty      int `json:"max_write_coalescing_penalty"`
-	MaxWideWriteStridePenalty      int `json:"max_wide_write_stride_penalty"`
+	MaxCoalescingPenalty      int `json:"max_coalescing_penalty"`
+	MaxWriteCoalescingPenalty int `json:"max_write_coalescing_penalty"`
+	MaxWideWriteStridePenalty int `json:"max_wide_write_stride_penalty"`
 
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.

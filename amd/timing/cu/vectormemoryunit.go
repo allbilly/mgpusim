@@ -27,13 +27,12 @@ type VectorMemoryUnit struct {
 	numTransactionInFlight  uint64
 	maxInstructionsInFlight uint64
 
-	maxCoalescingPenalty           int
-	maxSparseReadCoalescingPenalty int
-	maxWriteCoalescingPenalty      int
-	maxWideWriteStridePenalty      int
-	coalescingStallRemaining       int
-	lastWriteCacheLine             uint64
-	hasLastWriteCacheLine          bool
+	maxCoalescingPenalty      int
+	maxWriteCoalescingPenalty int
+	maxWideWriteStridePenalty int
+	coalescingStallRemaining  int
+	lastWriteCacheLine        uint64
+	hasLastWriteCacheLine     bool
 
 	instructionPipeline           queueing.Pipeline[vectorMemInst]
 	postInstructionPipelineBuffer queueing.Buffer[vectorMemInst]
@@ -196,13 +195,6 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 		wastedFraction := float64(cacheLineBytes-usefulBytes) /
 			float64(cacheLineBytes)
 		penalty = int(wastedFraction * float64(penaltyCap))
-		if txn.Read != nil &&
-			u.maxSparseReadCoalescingPenalty > 0 &&
-			usefulBytes <= 2*4 {
-			penalty += int(
-				wastedFraction *
-					float64(u.maxSparseReadCoalescingPenalty))
-		}
 	}
 
 	if txn.Write != nil {
