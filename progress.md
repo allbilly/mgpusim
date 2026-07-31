@@ -346,10 +346,23 @@ Suite MARE: 18.6% → 17.9%. Improvements: relu 22.6%→18.8%, pagerank
 | bitonicsort       |811.360 |771.773 |  4.9%  |
 | aes               | 16.962 | 16.997 |  0.2%  |
 | fir               | 12.003 |  8.338 | 30.5%  |
-| kmeans            | 39.220 | 59.096 | 50.7%  |
+| kmeans            | 39.220 | 50.473 | 28.7%  |
 | pagerank          |130.638 |112.948 | 13.5%  |
 | nw                |123.052 |153.630 | 24.8%  |
-| **MARE**          |        |        |**17.9%**|
+| **MARE**          |        |        |**15.7%**|
+
+## K-means contiguous producer/consumer fix (2026-07-31)
+
+The benchmark previously copied `featureSwap` back to the host for diagnostic
+verification and uploaded the initial cluster buffer between
+`kmeans_kernel_swap` and `kmeans_kernel_compute`. Driver coherence handling
+flushes caches around those host transfers, so the simulator did not execute
+the uninterrupted kernel sequence measured by the hardware harness.
+
+Commit `b2885f92` uploads initial clusters before swap and defers swap
+verification until after compute. K-means improved from 59.096 to 50.473 us
+(+50.7% to +28.7%) with identical verified RMSE. A three-iteration case also
+matched the CPU reference.
 
 ## L2 latency uncertainty (2026-07-31)
 

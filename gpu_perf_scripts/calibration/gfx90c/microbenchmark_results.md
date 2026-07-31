@@ -194,6 +194,13 @@ later cluster upload is therefore a redundant flush, not the primary loss of
 producer residency. The driver's sticky `markAllBuffersDirty` behavior is
 over-conservative, but changing upload order does not repair this benchmark.
 
+The accepted fix combines both necessary changes: upload the initial clusters
+before swap and defer `verifySwap()` until after compute. This removes every
+host transfer between the producer and consumer while preserving the same
+verification afterward. K-means improved from 59.096 to 50.473 us, and both
+the default one-iteration case and a three-iteration case passed CPU/RMSE
+verification. The remaining error is +28.7%, down from +50.7%.
+
 ## Accepted general fixes
 
 Two benchmark-driven fixes improved the K-means/matmul state:
@@ -205,11 +212,15 @@ Two benchmark-driven fixes improved the K-means/matmul state:
 2. `4683ba25` corrected the modeled dual-channel DDR4 peak bandwidth from
    128 GB/s to 42.7 GB/s while preserving approximately 400 ns round-trip
    latency. Full K-means moved to 59.096 us with no suite regression.
+3. `b2885f92` moved K-means diagnostic verification after the consumer and
+   uploaded the initial clusters before the producer. The old host transfers
+   forced a cache flush between the exact swap/compute pair. K-means improved
+   from 59.096 to 50.473 us without changing kernel code or results.
 
 Relative to the state at the start of this investigation:
 
 - matrix multiplication: 50.728 -> 45.141 us (HW 39.107);
-- K-means: 69.385 -> 59.096 us (HW 39.220).
+- K-means: 69.385 -> 50.473 us (HW 39.220).
 
 ## Rejected candidates
 
@@ -267,9 +278,10 @@ retirement must be measured separately from cache allocation policy.
 ## Next discriminating experiment
 
 The vector and producer/consumer probes rule out broad full-wave L1V and L2
-latency reductions. A focused K-means improvement would require decoupling
-write allocation from lower-level write acknowledgement, then validating both
-swap time and the small consumer reuse benefit. Matmul should remain a separate
+latency reductions. The accepted uninterrupted kernel sequence recovers much
+of the K-means error; further work would require decoupling write allocation
+from lower-level write acknowledgement and validating the remaining small
+consumer reuse benefit. Matmul should remain a separate
 instruction-mix/local-memory investigation; its scratch traffic is only about
 1.2% of dynamic instructions and the vector probe does not support lowering
 general L2 latency.
