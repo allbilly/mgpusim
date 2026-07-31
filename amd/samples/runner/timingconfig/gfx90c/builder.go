@@ -38,19 +38,20 @@ func MakeBuilder() r9nano.Builder {
 		// L1V: 16 KB per CU; ~12 ns bank latency at 1.6 GHz (cache_latency L1 plateau).
 		WithL1VCacheSize(16*mem.KB).
 		WithL1VBankLatency(19). // 12 ns * 1.6 GHz ≈ 19 cyc
-		// L2: ~80 ns bank latency at 1.6 GHz (cache_latency L2 plateau).
-		WithL2BankLatency(128).
+		// Separate effective hit latency from sustained per-bank request rate.
+		WithL2BankLatency(64).
 		// Banked DDR4-2666, 128-bit (2x64): host dmesg reports "RAM width
 		// 128bits DDR4", mclk max 1333 MHz = DDR4-2666. Peak BW = 42.7 GB/s.
 		// With 2 channels, 64B lines, width=1: freq = 42.7/(2*64) = 333 MHz.
-		// APU round-trip (SoC fabric + MMC + DRAM) ≈ 400 ns; at 333 MHz that
-		// is 133 cycles, so depth 12 × stage 11 = 132 cyc → 396 ns.
+		// APU round-trip (SoC fabric + MMC + DRAM) is about 400 ns. A
+		// 9-stage, 14-cycle pipeline gives 126 cycles, or about 378 ns, while
+		// retaining the lower sustained rate exposed by multi-stream sweeps.
 		WithBankedDRAM(true).
 		WithDRAMMemFreq(333*timing.MHz).
 		WithDRAMNumInternalBanks(16).
 		WithDRAMBankPipelineWidth(1).
-		WithDRAMBankPipelineDepth(12).
-		WithDRAMStageLatency(11).
+		WithDRAMBankPipelineDepth(9).
+		WithDRAMStageLatency(14).
 		WithRegisterScoreboard(true).
 		WithVALUTiming(cu.VALUTiming{
 			DefaultIssueInterval:         4,
@@ -65,19 +66,27 @@ func MakeBuilder() r9nano.Builder {
 			FP64ResultLatency:            8,
 			MaxInFlight:                  4,
 		}).
-		WithLDSPipelineLatency(12).
-		WithLDSThroughput(4, 4).
+		WithLDSPipelineLatency(4).
+		WithLDSThroughput(1, 4).
 		WithLDSBanking(32, 4, 1).
-		WithBarrierLatency(16).
-		WithMaxCoalescingPenalty(12).
+		WithBarrierLatency(4).
+		WithMaxCoalescingPenalty(13).
+		WithSplitLineLoadPenalty(22).
+		WithSplitLineLoadMaxDwords(2).
+		WithDependentLoadIssueWindow(6000, 3, 3).
+		WithDependentLoadMaxDwords(2).
+		WithDependentLoadFlatOnly(true).
 		// Partial-line stores pay write-combine/read-modify-write cost.
 		WithMaxWriteCoalescingPenalty(103).
 		// Wide non-local stores can exceed the write-combine window.
-		WithMaxWideWriteStridePenalty(161).
+		WithMaxWideWriteStridePenalty(240).
+		// The transpose size sweep shows an extra cost once transaction gaps
+		// reach 4 KiB; keep this as an empirical far-stride tier.
+		WithMaxWideWriteStrideFarPenalty(270, 64).
 		// The CU-to-cache issue path is shared and admits one coalesced
 		// transaction group per cycle.
 		WithVecMemTransPipelineWidth(1).
-		// Dispatch: 4 shader arrays; ~1.25 µs post-kernel tax per launch.
+		// Dispatch: 4 shader arrays; ~0.91 µs post-kernel tax per launch.
 		WithCPAlg("per-die").
 		WithCPNumDies(NumShaderArray).
 		WithCPWavefrontDispatchCycles(1).
@@ -86,9 +95,9 @@ func MakeBuilder() r9nano.Builder {
 		// Keep launch and completion costs separate so single- and
 		// multi-kernel workloads scale consistently.
 		WithCPConstantKernelLaunchOverhead(3750).
-		WithCPSubsequentKernelLaunchOverhead(7000).
+		WithCPSubsequentKernelLaunchOverhead(7500).
 		WithCPWGScalingThreshold(128).
-		WithCPConstantKernelOverhead(2000).
+		WithCPConstantKernelOverhead(1450).
 		// APU: small H2D transfers warm L2. Keep the two 64 KiB matrix
 		// inputs resident, while the 256 KiB+ streaming buffers bypass it.
 		WithDMAThroughL2(true).
