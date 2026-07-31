@@ -905,9 +905,25 @@ The first hardware comparison should therefore test two mechanisms in order:
 2. a finite per-CU or per-SIMD return/writeback queue, predicted to create a
    work-group knee and reduce independent-load speedup when saturated.
 
-No parameter is changed from simulator-only evidence. A uniform L1/L2 latency
-change remains rejected because it cannot predict width, alias, dependency,
-and work-group signatures independently.
+A separately labeled pinned pilot provides directional, not production,
+evidence. The 8-KiB dwordx4/alias-8/serial/G1 point passed full verification at
+20.282 us with policy `high`, 1,600 MHz selected, 395 active-clock samples, and
+a 51 C peak. The matching simulator point is 11.450 us, giving a one-batch
+`HW/Sim` ratio of 1.771. Artifacts are at
+`/tmp/gfx90c-pilot-vmem-w4-s-a8-b8-g1-3a7f05fd`.
+
+The following nine-batch attempt was rejected in full after an external
+Verilator workload restarted immediately after its first batch. The one
+20.265-us batch is not promoted or combined with the pilot. That failure led
+to commit `369b01ae`, which adds an optional process-command guard to reject
+CPU/package-power contamination before and during acquisition. The rejected
+artifact directory is
+`/tmp/gfx90c-prod-vmem-w4-s-a8-b8-g1-3a7f05fd`.
+
+No parameter is changed from a single pilot. Full pinned width, alias,
+dependency, footprint, and work-group contrasts are required first. A uniform
+L1/L2 latency change remains rejected because it cannot predict those
+signatures independently.
 
 ## Remaining validation
 
