@@ -223,6 +223,14 @@ constant across the threshold. Use unpinned hardware results only for
 diagnostic curve shape; fit the timing model only after repeating the sweep at
 a pinned clock.
 
+Then run a stream-length/footprint sweep at strides `1`, `2`, and `64`, using
+repeat counts `1, 2, 4, 8, 16, 32, 64`. Keep the allocation stride at 128 and
+use one work-group. Each repeat adds one wave-wide store instruction, 1024
+useful bytes, and 122,944 allocated bytes. This is not a pure loop-latency
+test: dynamic instruction count, touched footprint, and allocation size all
+grow together. In particular, check whether initialization or DMA behavior
+changes when the allocation crosses an implementation threshold.
+
 ## 5. Measure cross-kernel reuse for K-means
 
 K-means first transposes its feature matrix, then immediately consumes that
@@ -478,8 +486,10 @@ slope = (time(W2) - time(W1)) / (W2 - W1)
 - The intercept estimates fixed dispatch and completion cost. It is evidence
   for an overhead floor, not a value to subtract blindly from every kernel.
 - The large-size slope estimates steady-state cost per work unit. Compare
-  hardware and simulator slopes even when an unpinned hardware clock makes
-  their absolute times unsuitable for calibration.
+  hardware and simulator slopes quantitatively only with a pinned clock or
+  continuous evidence that the in-kernel clock remained stable. With only
+  pre/post clock samples, report normalized hardware curve shape as diagnostic
+  evidence and do not use its slope to tune cycle parameters.
 - A knee is a sustained slope change. It can indicate occupancy saturation, a
   cache-capacity boundary, TLB pressure, or transition to DRAM bandwidth.
 - A single step can instead come from a rounded work-group count or another

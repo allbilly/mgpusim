@@ -85,6 +85,14 @@ dynamic instruction. Keep `--store-allocation-stride-lines` fixed while
 sweeping the actual stride so allocation, initialization, and DMA policy do
 not become hidden variables.
 
+The canonical stride set is `1, 2, 4, 8, 16, 32, 63, 64, 65, 128` at 32
+repeats. The canonical stream-length/footprint control uses strides `1, 2, 64`
+and repeat counts `1, 2, 4, 8, 16, 32, 64`, always with allocation stride 128
+and one work-group. The harness's `storestride_ns_per_repeat` is a one-wave
+launch normalization under that protocol. With multiple work-groups it still
+divides only by repeat count, and concurrent waves prevent interpreting it as
+per-instruction latency.
+
 PageRank hardware fixtures are generated for 128, 256, and 512 nodes at
 sparsity 0.5, using the same deterministic CSR generator as the simulator.
 
