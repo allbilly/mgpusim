@@ -63,6 +63,7 @@ The exact-HSACO harness supports application size sweeps without recompiling:
 ./build/isca10_bench --only relu --relu-length 32768
 ./build/isca10_bench --only matrixmult --matrix-size 64
 ./build/isca10_bench --only matrixtranspose --transpose-width 256
+./build/isca10_bench --only aes --aes-length 2048
 ./build/isca10_bench --only fir --fir-length 8192 --fir-taps 32
 ./build/isca10_bench --only kmeans --points 2048 --features 16 --clusters 5
 ./build/isca10_bench --only pagerank --pagerank-nodes 256

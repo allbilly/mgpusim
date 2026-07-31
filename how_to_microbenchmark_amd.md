@@ -313,6 +313,7 @@ gfx90c exact-HSACO hardware harness currently supports:
 | ReLU | elements | 16,384, 32,768, 65,536, 131,072 |
 | matrix multiplication | square width | 32, 64, 128 |
 | matrix transpose | square width | 128, 256, 512 |
+| AES | input bytes | 1,024, 2,048, 4,096, 8,192 |
 | FIR | output length, with taps fixed | 2,048, 4,096, 8,192, 16,384 |
 | FIR | taps, with length fixed | 1, 2, 4, 8, 16, 32, 64 |
 | K-means | features, with points and clusters fixed | 1, 2, 4, 8, 16, 32 |
@@ -364,6 +365,12 @@ for n in $(shuf -e 128 256 512); do
     --only matrixtranspose --transpose-width "$n" \
     --warmup 20 --iters 200
 done
+
+for n in $(shuf -e 1024 2048 4096 8192); do
+  MGPUSIM_ROOT="$repo_root" "$harness" \
+    --only aes --aes-length "$n" \
+    --warmup 20 --iters 200
+done
 ```
 
 The direct invocation requires a native ROCm runtime. If ROCm is available only
@@ -384,8 +391,9 @@ MGPUSIM_ROOT="$repo_root" "$harness" --only nw \
 
 PageRank hardware fixtures exist for 128, 256, and 512 nodes at density 0.5.
 Matrix size must be a multiple of 32, transpose width a multiple of 64, and
-Needleman-Wunsch length a multiple of 64. Use FIR lengths that are multiples of
-its 256-thread block size.
+Needleman-Wunsch length a multiple of 64. AES length must be a positive
+multiple of 1,024 bytes. Use FIR lengths that are multiples of its 256-thread
+block size.
 
 If clock pinning is unavailable, set `ALLOW_UNPINNED_CLOCK=1` only to build or
 collect diagnostic curves. Record the observed clock for every repetition.

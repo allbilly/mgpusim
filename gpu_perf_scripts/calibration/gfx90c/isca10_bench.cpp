@@ -99,6 +99,7 @@ static int cache_active_lanes = 0;
 static int relu_length = 65536;
 static int matrix_size = 128;
 static int transpose_width = 512;
+static int aes_length = 4096;
 static int fir_length = 8192;
 static int fir_taps = 16;
 static int kmeans_npoints = 4096;
@@ -276,7 +277,11 @@ static void bench_bitonicsort(int iters) {
 static void bench_aes(int iters) {
   ModuleKernel kernel("amd/benchmarks/heteromark/aes/kernels_gfx90c.hsaco",
                       "Encrypt");
-  const int length = 4096; // bytes
+  const int length = aes_length; // bytes
+  if (length < 1024 || length % 1024 != 0) {
+    fprintf(stderr, "AES length must be a positive multiple of 1024 bytes\n");
+    std::exit(2);
+  }
   unsigned char *input, *sdev;
   unsigned int *ek;
   HIP_CHECK(hipMalloc(&input, length));
@@ -698,6 +703,8 @@ int main(int argc, char **argv) {
       matrix_size = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--transpose-width") && i + 1 < argc)
       transpose_width = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--aes-length") && i + 1 < argc)
+      aes_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--fir-length") && i + 1 < argc)
       fir_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--fir-taps") && i + 1 < argc)
