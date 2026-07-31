@@ -184,9 +184,11 @@ Its six exact-HSACO symbols cross load widths `dword`, `dwordx2`, and
 `dwordx4` with a serialized load/`vmcnt(0)` chain and a four-load independent
 endpoint. `--vmem-alias-lanes 8` reproduces the matrix kernel's interleaved
 fanout: lanes `x, x+8, ..., x+56` share an address. Sweep alias counts
-`1, 2, 4, 8`; 1 is no aliasing. Use 8 KiB as a clean L1-resident point and
-64 KiB as an L2-resident/L1-capacity point. Both host-to-device copies remain
-within the model's L2-warming DMA threshold.
+`1, 2, 4, 8`; 1 is no aliasing. Use 8 KiB as the L1-reuse point and 64 KiB as
+the L1-capacity/L2 point. Both host-to-device copies remain within the model's
+L2-warming DMA threshold. The first footprint lap is compulsory traversal and
+had zero simulated L1V hits, so use at least four laps and analyze the
+post-first-lap slope before calling the 8-KiB result L1-resident.
 
 Pass `--vmem-repeats 0` for the exact-HSACO zero-trip launch control. It skips
 all global loads but retains the selected symbol's prologue, epilogue, launch

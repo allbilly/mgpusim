@@ -231,6 +231,13 @@ inside the 16 KiB L1V; 64 KiB exceeds L1V but remains below the current
 128 KiB DMA-through-L2 limit. A 256 KiB initialization would bypass modeled
 L2 and silently change cache state relative to warmed hardware.
 
+One footprint lap is not a capacity measurement: it is compulsory traversal,
+and the verified simulator sweep had zero L1V hits at every one-lap size.
+Use the one-lap formula only to align coverage. For an L1 comparison, run at
+least four laps, retain per-point cache counters, and fit the post-first-lap
+repeat slope separately. Compare footprints at the same repeat counts; do not
+infer an L1 knee from equal-lap raw times whose dynamic load counts differ.
+
 Run one hardware point with:
 
 ```bash
