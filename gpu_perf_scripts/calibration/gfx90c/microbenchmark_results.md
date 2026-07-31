@@ -191,9 +191,109 @@ probe.
 
 The default width-512 point passes its numerical comparison with the legacy
 pinned target. However, the 64-line far-stride tier remains a canonical-point
-fit rather than a mechanism validated by this application sweep. A dedicated
-full-line store-stride probe is still required before interpreting it as write
-combining, DRAM locality, or another transaction-level effect.
+fit rather than a mechanism validated by this application sweep. The dedicated
+full-line store-stride probe below exercises the tier directly, but does not
+support interpreting it as write combining, DRAM locality, or another
+transaction-level effect.
+
+### Full-line store-stride and stream-length sweeps
+
+At commit `f5426c7a`, the exact-HSACO probe used one wave64 work-group, 32
+dynamic wave-wide store instructions, and 16 complete 64-byte lines per
+instruction. The primary sweep varied actual line spacing while keeping the
+allocation stride at 128 lines. This holds the 3.752 MiB allocation and
+initialization path constant. Every simulator point passed full output and gap
+verification.
+
+Hardware used ten deterministic randomized rounds, one fresh serialized
+process per point, and `--warmup 0 --iters 1`. All 100 runs returned zero.
+Pre/post samples reported policy `auto`, active 200 MHz, and 45-50 C; those
+samples do not observe the in-kernel clock. The hardware values therefore
+describe diagnostic curve shape only. `HW paired delta` is the median over
+rounds of `(T_stride - T_stride1) / 32`, rather than a difference of medians.
+
+| Stride (lines) | Spacing (bytes) | Sim (us) | Sim delta (ns/repeat) | HW auto median (us) | MAD (us) | CV | HW paired delta (ns/repeat) |
+|---------------:|----------------:|---------:|----------------------:|--------------------:|---------:|---:|----------------------------:|
+| 1   | 64    | 5.402  | 0.000    | 116.644 | 0.751 | 0.81% | 0.000   |
+| 2   | 128   | 75.970 | 2205.250 | 117.371 | 0.902 | 1.28% | 33.656  |
+| 4   | 256   | 75.970 | 2205.250 | 119.976 | 1.202 | 1.47% | 108.797 |
+| 8   | 512   | 75.970 | 2205.250 | 120.652 | 1.147 | 0.97% | 100.344 |
+| 16  | 1024  | 76.078 | 2208.625 | 119.250 | 0.806 | 1.96% | 87.672  |
+| 32  | 2048  | 75.970 | 2205.250 | 120.627 | 0.912 | 3.30% | 123.672 |
+| 63  | 4032  | 76.078 | 2208.625 | 124.450 | 1.378 | 1.47% | 233.094 |
+| 64  | 4096  | 85.060 | 2489.313 | 123.758 | 0.752 | 3.53% | 231.984 |
+| 65  | 4160  | 85.060 | 2489.313 | 124.985 | 1.328 | 4.19% | 249.688 |
+| 128 | 8192  | 85.060 | 2489.313 | 126.363 | 2.730 | 2.31% | 321.703 |
+
+The simulator produces an exact near-stride plateau at 2-63 lines and an
+additional step at 64 lines. The hardware diagnostic curve grows gradually;
+63 lines is slower than 64, while 65 and 128 continue the gradual trend. It
+does not reproduce a sustained 64-line knee. Because the clock was not pinned,
+this result rejects using the current knee as a validated physical mechanism
+but is not sufficient to fit replacement cycle penalties.
+
+The simulator metric database reports whole-run totals, including transfers;
+they are not kernel-scoped counters. Nevertheless, the primary sweep holds
+them exactly invariant, so its modeled timing steps are explicit penalties and
+not consequences of additional modeled transactions:
+
+| Strides | L1V writes H/M/MSHR | L2 writes H/M/MSHR | DRAM reads/writes |
+|--------:|---------------------:|--------------------:|------------------:|
+| all ten | 0/512/0              | 0/518/0             | 61,474/61,990     |
+
+The stream-length/footprint control swept repeats `1, 2, 4, 8, 16, 32, 64`
+at strides 1, 2, and 64. Each repeat adds one dynamic wave-store instruction,
+1 KiB of useful writes, and 122,944 allocated bytes. Thus both dynamic work
+and footprint grow; this is not a pure loop-latency measurement. All 21
+simulator points passed verification.
+
+| Repeats | Allocation (MiB) | Useful writes (KiB) | Sim stride 1 (us) | Sim stride 2 (us) | Sim stride 64 (us) |
+|--------:|-----------------:|--------------------:|------------------:|------------------:|-------------------:|
+| 1  | 0.117 | 1  | 3.910 | 5.910   | 6.281   |
+| 2  | 0.234 | 2  | 3.958 | 8.169   | 8.823   |
+| 4  | 0.469 | 4  | 4.054 | 12.690  | 13.905  |
+| 8  | 0.938 | 8  | 4.247 | 21.730  | 24.070  |
+| 16 | 1.876 | 16 | 4.632 | 39.810  | 44.400  |
+| 32 | 3.752 | 32 | 5.402 | 75.970  | 85.060  |
+| 64 | 7.504 | 64 | 6.943 | 148.290 | 166.380 |
+
+The hardware companion used the same 21 cases in ten deterministic randomized
+rounds, again with a fresh process for every point. All 210 runs returned zero;
+policy/clock snapshots remained `auto`/200 MHz and temperatures were 44-49 C.
+Each hardware cell below is `median / MAD / population CV` in microseconds.
+
+| Repeats | HW stride 1 | HW stride 2 | HW stride 64 |
+|--------:|------------:|------------:|-------------:|
+| 1  | 91.873 / 7.715 / 17.35% | 91.046 / 9.242 / 17.60% | 77.471 / 3.507 / 10.06% |
+| 2  | 60.464 / 9.017 / 15.39% | 66.174 / 16.932 / 21.76% | 64.596 / 6.312 / 12.64% |
+| 4  | 53.075 / 1.603 / 14.15% | 53.852 / 0.752 / 4.15%  | 54.979 / 0.326 / 7.74%  |
+| 8  | 62.443 / 0.852 / 2.03%  | 63.044 / 0.426 / 1.11%  | 64.847 / 0.527 / 2.82%  |
+| 16 | 80.853 / 0.953 / 1.72%  | 81.479 / 0.927 / 2.95%  | 84.759 / 0.577 / 5.86%  |
+| 32 | 116.670 / 0.827 / 2.14% | 118.363 / 1.618 / 1.54% | 124.836 / 1.529 / 2.52% |
+| 64 | 189.827 / 0.952 / 2.08% | 190.033 / 1.398 / 2.04% | 201.354 / 1.353 / 4.40% |
+
+The one- and two-repeat hardware results are launch-dominated and
+non-monotonic. Over 16-64 repeats, the per-round paired robust slope increment
+is `+14.0 ns/repeat` for stride 2 versus 1 (MAD 52.1 ns) and
+`+156.8 ns/repeat` for stride 64 versus 1 (MAD 72.1 ns, positive in 9/10
+rounds). This supports a sustained cost for sufficiently distant lines, but
+the primary sweep locates no discrete transition at exactly 64 lines. The
+unpinned slopes are diagnostic and must not set simulator cycle parameters.
+
+The corresponding simulator linear fits are:
+
+| Stride | Repeat range | Intercept (us) | Slope (ns/repeat) | R² | Max residual (us) |
+|-------:|-------------:|---------------:|------------------:|---:|------------------:|
+| 1  | 1-64 | 3.861678 | 48.143723   | 0.999999970 | 0.000277 |
+| 2  | 1-64 | 3.649764 | 2260.005114 | 0.999999999952 | 0.000775 |
+| 64 | 1-64 | 3.740057 | 2541.248801 | 0.999999999985 | 0.000445 |
+
+Kernel time remains linear despite the footprint crossing 128 KiB between
+one and two repeats. Whole-run L2 write-miss totals do change discontinuously
+at that boundary (1927 at one repeat versus 38 at two), confirming that the
+size control crosses an initialization/DMA reporting regime even though the
+isolated driver `kernel_time` fit is unaffected. A pinned-clock hardware
+repetition remains necessary before changing the store timing configuration.
 
 ## Immutable full-suite comparison
 
@@ -602,6 +702,6 @@ controls plus geometric sweeps around regime boundaries.
 The corrected matrix kernel still needs a replacement pinned N=128 hardware
 measurement when privileged clock control is available. Until then, its
 diagnostic auto-clock curve can validate scaling shape but not absolute error.
-The ReLU/AES narrow gate margins, a dedicated validation of the transpose
-far-stride tier, and a pinned corrected matrix-multiplication target are the
+The ReLU/AES narrow gate margins, a pinned-clock repetition of the full-line
+store-stride probe, and a pinned corrected matrix-multiplication target are the
 highest-priority follow-up measurements.
