@@ -87,6 +87,9 @@ func (m *cpMiddleware) processMemCopyRsp(rsp protocol.GeneralRsp) bool {
 
 	originalReq := m.findAndRemoveOriginalMemCopyRequest(rsp)
 	originalMeta := originalReq.Meta()
+	if _, ok := originalReq.(protocol.MemCopyD2HReq); ok {
+		m.comp.State.HostReadbackSinceLastKernel = true
+	}
 
 	rspToDriver := protocol.GeneralRsp{
 		MsgMeta: messaging.MsgMeta{
@@ -132,6 +135,17 @@ func (m *cpMiddleware) findAndRemoveOriginalMemCopyRequest(
 func (m *cpMiddleware) processLaunchKernelReq(
 	req protocol.LaunchKernelReq,
 ) bool {
+	state := &m.comp.State
+	if state.HostReadbackSinceLastKernel {
+		state.KernelLaunchDelayRemaining =
+			m.comp.Spec().HostReadbackKernelLaunchOverhead
+		state.HostReadbackSinceLastKernel = false
+	}
+	if state.KernelLaunchDelayRemaining > 0 {
+		state.KernelLaunchDelayRemaining--
+		return true
+	}
+
 	d := m.findAvailableDispatcher()
 	if d == nil {
 		return false

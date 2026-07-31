@@ -144,6 +144,9 @@ func MakeBuilder() r9nano.Builder {
 		WithCPWavefrontDispatchCycles(1).
 		WithCPConstantKernelLaunchOverhead(2380).
 		WithCPSubsequentKernelLaunchOverhead(1300).
+		// A blocking host readback idles the Polaris command front end. The next
+		// kernel pays the measured reactivation cost before dispatch resumes.
+		WithCPHostReadbackLaunchOverhead(3700).
 		WithCPWGScalingThreshold(100000).
 		WithCPConstantKernelOverhead(2500).
 		// RX 570 is a discrete card: host DMA targets GDDR5 over PCIe and

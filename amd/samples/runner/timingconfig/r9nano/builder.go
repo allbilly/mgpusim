@@ -96,6 +96,7 @@ type Builder struct {
 	cpConstantKernelOverhead         int
 	cpConstantKernelLaunchOverhead   int
 	cpSubsequentKernelLaunchOverhead int
+	cpHostReadbackLaunchOverhead     int
 	cpWGScalingThreshold             int
 	activeCUCount                    int
 	registerScoreboard               bool
@@ -158,6 +159,7 @@ func MakeBuilder() Builder {
 		cpConstantKernelOverhead:         unsetCPInt,
 		cpConstantKernelLaunchOverhead:   unsetCPInt,
 		cpSubsequentKernelLaunchOverhead: unsetCPInt,
+		cpHostReadbackLaunchOverhead:     unsetCPInt,
 		cpWGScalingThreshold:             unsetCPInt,
 	}
 }
@@ -423,6 +425,13 @@ func (b Builder) WithCPConstantKernelLaunchOverhead(overhead int) Builder {
 // the first one, in GPU cycles.
 func (b Builder) WithCPSubsequentKernelLaunchOverhead(overhead int) Builder {
 	b.cpSubsequentKernelLaunchOverhead = overhead
+	return b
+}
+
+// WithCPHostReadbackLaunchOverhead sets the front-end reactivation delay for
+// the first kernel submitted after a completed device-to-host copy.
+func (b Builder) WithCPHostReadbackLaunchOverhead(overhead int) Builder {
+	b.cpHostReadbackLaunchOverhead = overhead
 	return b
 }
 
@@ -1401,6 +1410,10 @@ func (b *Builder) buildCP() {
 	if b.cpSubsequentKernelLaunchOverhead != unsetCPInt {
 		spec.SubsequentKernelLaunchOverhead =
 			b.cpSubsequentKernelLaunchOverhead
+	}
+	if b.cpHostReadbackLaunchOverhead != unsetCPInt {
+		spec.HostReadbackKernelLaunchOverhead =
+			b.cpHostReadbackLaunchOverhead
 	}
 	if b.cpWGScalingThreshold != unsetCPInt {
 		spec.WGScalingThreshold = b.cpWGScalingThreshold

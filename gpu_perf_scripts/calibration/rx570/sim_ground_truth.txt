@@ -1,12 +1,12 @@
 # RX 570 calibrated steady-state simulator reference, 2026-07-31
 # kernel_time in microseconds; exact gfx803 HSACO; SIM_JOBS=4
-vectoradd 7.473
-relu 7.194
-matrixmult 49.485
-matrixtranspose 14.154
-bitonicsort 323.743
-aes 16.925
-fir 7.646
-kmeans 28.231
+vectoradd 7.422
+relu 7.143
+matrixmult 49.414
+matrixtranspose 15.394
+bitonicsort 323.641
+aes 16.908
+fir 7.641
+kmeans 31.227
 pagerank 20.450
-nw 144.844
+nw 144.570

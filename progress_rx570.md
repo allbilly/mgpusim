@@ -1,6 +1,6 @@
 # RX 570 timing-model progress
 
-Last updated: 2026-07-31
+Last updated: 2026-08-01
 
 ## Outcome
 
@@ -9,21 +9,20 @@ the exact gfx803 binaries used by the hardware harness.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 6.765 | 7.473 | 10.5% |
-| relu | 7.155 | 7.194 | 0.5% |
-| matrixmult | 51.803 | 49.485 | 4.5% |
-| matrixtranspose | 16.989 | 14.154 | 16.7% |
-| bitonicsort | 347.854 | 323.743 | 6.9% |
-| aes | 18.314 | 16.925 | 7.6% |
-| fir | 7.699 | 7.646 | 0.7% |
-| kmeans | 29.615 | 28.231 | 4.7% |
+| vectoradd | 6.765 | 7.422 | 9.7% |
+| relu | 7.155 | 7.143 | 0.2% |
+| matrixmult | 51.803 | 49.414 | 4.6% |
+| matrixtranspose | 16.989 | 15.394 | 9.4% |
+| bitonicsort | 347.854 | 323.641 | 7.0% |
+| aes | 18.314 | 16.908 | 7.7% |
+| fir | 7.699 | 7.641 | 0.8% |
+| kmeans | 29.615 | 31.227 | 5.4% |
 | pagerank | 19.455 | 20.450 | 5.1% |
-| nw | 146.510 | 144.844 | 1.1% |
+| nw | 146.510 | 144.570 | 1.3% |
 
-Canonical-size MARE is **5.8%** across all ten freshly measured workloads.
-The stronger anti-overfit result is **6.0% MARE across 47 matched size
-points**. All ten swept families have family MARE below 10%; the maximum point
-error is the 512-wide transpose holdout at 16.7%.
+Canonical-size MARE is **5.1%** across all ten freshly measured workloads.
+The stronger anti-overfit result is **4.7% MARE across 47 matched size
+points**. Every individual point is below 10%; the maximum error is 9.7%.
 All points run and verify.
 The original headline errors were vectoradd 38.0%, ReLU 21.5%, and matrix
 multiplication 58.7%.
@@ -99,7 +98,7 @@ random misses. A shared L2-to-DRAM token bucket then separates a 1 MiB
 burst region from sustained bandwidth: it begins with 16,384 cache-line
 credits and refills at one 64-byte request per 1.244 GHz GPU cycle. The burst
 avoids imposing the sustained streaming rate on short random traffic; the
-final model puts the 262,144-element vector at 23.283 µs versus a 20.978 µs
+final model puts the 262,144-element vector at 22.635 µs versus a 20.978 µs
 three-process hardware median.
 
 ### Sustained writes need a separate shared path
@@ -107,30 +106,29 @@ three-process hardware median.
 The original per-transaction dense-store delay could not represent the size
 curve: increasing it enough for 262K ReLU overcharged 16K and 65K grids. The
 shared L1-to-L2 connection now supports filtering token credits by request
-class. RX 570 writes can burst for 12,288 cache lines (768 KiB), then issue at
-one line per two GPU cycles; reads and responses remain unlimited. The burst
-approximates dirty L2 capacity after resident input and cache state.
+class. RX 570 writes can burst for 11,840 cache lines (740 KiB), then issue at
+seven lines per 15 GPU cycles; reads and responses remain unlimited. The
+burst approximates dirty L2 capacity after resident input and cache state.
 
 This mechanism was selected from five ReLU sizes, including a new 131K
 midpoint, and checked against all four vectoradd sizes. Full-line store issue
-cost is now charged once per wave instruction rather than once per generated
-cache-line request. This distinction preserves the scalar-store path while
-allowing wide stores to use the transaction bandwidth they already model.
-After the clock-warmed recollection and capacity correction, ReLU has 4.8%
-family MARE and vectoradd 6.9%. With the later k-means and PageRank holdouts,
-the shared L2-ingress correction, and matched DMA residency, the complete
-47-point MARE is 6.0%.
+cost is charged once per wave instruction rather than once per generated
+cache-line request. Scalar-width stores pay 88 cycles and dwordx4 stores pay
+68 cycles, reflecting the front-end work amortized by one wide instruction.
+ReLU has 4.5% family MARE and vectoradd 5.9%. With the later k-means and
+PageRank holdouts, shared L2-ingress correction, matched DMA residency, and
+post-readback launch correction, the complete 47-point MARE is 4.7%.
 
 | vector length | HW steady (µs) | Sim (µs) | Error |
 |---:|---:|---:|---:|
-| 4,096 | 4.749 | 4.844 | 2.0% |
-| 16,384 | 5.093 | 5.308 | 4.2% |
-| 65,536 | 6.765 | 7.473 | 10.5% |
-| 262,144 | 20.978 | 23.283 | 11.0% |
+| 4,096 | 4.749 | 4.841 | 1.9% |
+| 16,384 | 5.093 | 5.295 | 4.0% |
+| 65,536 | 6.765 | 7.422 | 9.7% |
+| 262,144 | 20.978 | 22.635 | 7.9% |
 
-Vectoradd retains 6.9% family MARE. Its 65K and 262K residuals remain visible;
-raising the DMA-residency threshold to the full 2 MiB L2 capacity made the
-262K point 27.7% slow.
+Vectoradd has 5.9% family MARE and all four points are below 10%. Raising the
+DMA-residency threshold to the full 2 MiB L2 capacity made the 262K point
+27.7% slow.
 
 ### Sparse reads were charged twice
 
@@ -181,6 +179,7 @@ dispatch costs are:
 | first launch | 2,380 |
 | subsequent launch | 1,300 |
 | completion/post-kernel | 2,500 |
+| after blocking host readback | 3,700 |
 
 This produces 323.7 µs for bitonic versus 347.9 µs hardware. The much larger
 10–72 µs cold-minus-steady values in the hardware file include ROCm/KFD
@@ -200,15 +199,15 @@ and simulator points are present and every simulator point verifies.
 
 | Family | MARE | Maximum error | Sim/HW slope ratio |
 |---|---:|---:|---:|
-| vectoradd | 6.9% | 11.0% | 1.132 |
-| relu | 4.2% | 9.4% | 0.881 |
-| matrixmult | 4.0% | 4.6% | 0.965 |
-| matrixtranspose | 9.3% | 16.7% | 0.927 |
-| bitonicsort | 6.1% | 6.9% | 1.232 |
-| aes | 7.7% | 7.8% | — |
-| fir | 0.3% | 0.7% | — |
-| kmeans | 9.3% | 14.7% | 0.983 |
-| nw | 1.4% | 1.9% | 0.976 |
+| vectoradd | 5.9% | 9.7% | 1.092 |
+| relu | 4.5% | 9.1% | 0.863 |
+| matrixmult | 4.2% | 4.8% | 0.965 |
+| matrixtranspose | 5.5% | 9.7% | 1.044 |
+| bitonicsort | 6.1% | 7.0% | 1.231 |
+| aes | 7.8% | 7.9% | — |
+| fir | 0.4% | 0.8% | — |
+| kmeans | 4.4% | 7.4% | 0.978 |
+| nw | 1.5% | 2.1% | 0.974 |
 | pagerank | 6.2% | 8.0% | 1.061 |
 
 PageRank's broad 128–1024-node curve shows that its canonical residual is not
@@ -224,16 +223,15 @@ and 4.9% at 16,384, with 84–93% of the resulting requests hitting in L2.
 A second token bucket on the shared L1-to-L2 connection models that L2-bank
 ingress pressure independently of the existing sustained-write constraint.
 It permits an initial 8,192 cache lines (512 KiB), then accepts six aggregate
-requests per GPU cycle; the original write-only 768 KiB burst and one-request
-per-two-cycle rate remain active simultaneously. K-means's six-point MARE is
-now 9.3% and its slope ratio is 0.983 after the later DMA-residency correction.
+requests per GPU cycle; the write-only 740 KiB burst and seven-request-per-15-
+cycle rate remain active simultaneously.
 
 Host DMA now populates L2 for individual transfers smaller than 1 MiB. This
 single physical boundary improves medium vectoradd, ReLU, transpose, PageRank,
-and NW points and reduces canonical MARE from 7.5% to 5.8%. A 512 KiB boundary
-left transpose-384 at 25.0%; raising it to 1 MiB reduces the maximum error to
-transpose-512's 16.7%. Extending residency to the full 2 MiB cache instead
-made vectoradd-262K 27.7% slow and was rejected.
+and NW points and reduced the intermediate canonical MARE from 7.5% to 5.8%.
+A 512 KiB boundary left transpose-384 at 25.0%; raising it to 1 MiB reduced
+the then-maximum error to transpose-512's 16.7%. Extending residency to the
+full 2 MiB cache instead made vectoradd-262K 27.7% slow and was rejected.
 
 The transpose correction is structural rather than benchmark-specific. A
 wide store generates up to 16 line requests but issues one wave instruction;
@@ -241,11 +239,20 @@ charging the full-line issue delay to each request was double-counting work.
 LDS latency and barrier-cost experiments had changed transpose by less than
 0.1 µs or regressed matrix multiplication, so both remain reverted. Six new
 points around widths 320–640 showed a real capacity transition: removing the
-write limiter fits 320–448 but makes 512–640 up to 51% too fast. A 768 KiB
-write burst followed by one line per two cycles, combined with matched DMA
-residency, gives the expanded transpose curve a 0.927 slope ratio and reduces
-the maximum error from 43.8% to 16.7% without a size- or benchmark-specific
-rule.
+write limiter fits 320–448 but makes 512–640 up to 51% too fast. A 740 KiB
+write burst followed by seven lines per 15 cycles, combined with matched DMA
+residency and separate 88-cycle scalar/68-cycle wide issue costs, gives the
+expanded transpose curve a 1.044 slope ratio and reduces its maximum error
+from 43.8% to 9.7% without a size- or benchmark-specific rule.
+
+K-means synchronizes with the host after its transpose kernel to verify and
+read back membership data before launching the compute kernel. Real Polaris
+hardware must reactivate the command front end after that blocking D2H
+boundary; the simulator previously treated the next launch like an ordinary
+back-to-back kernel. A generic 3,700-cycle post-readback launch delay reduces
+k-means's six-point MARE to 4.4% and maximum error to 7.4%. It is keyed to the
+command-stream synchronization event, not a kernel name, work-group count, or
+problem size.
 
 ## Parameter sweep evidence
 
@@ -266,9 +273,10 @@ rule.
   random-miss concurrency needed by the suite.
 - Four banks at 62.5 MHz produced 36.620 µs for the large vector, but
   over-serialized the default vectoradd and pagerank cases; rejected.
-- Full-line store cost is 90 cycles once per wave instruction, while L1V
-  latency remains 56 cycles. Charging that cost once per cache-line request
-  was rejected by the wide-store cross-size evidence.
+- Full-line store cost is 88 cycles for scalar-width stores and 68 cycles for
+  dwordx4 stores, once per wave instruction, while L1V latency remains 56
+  cycles. Charging that cost once per cache-line request was rejected by the
+  wide-store cross-size evidence.
 - A shared one-request/cycle limiter without burst capacity fixed the large
   vector slope but pushed pagerank to 24.769 µs. The clock-warmed evidence
   selects a 16,384-line (1 MiB) burst: one-input workloads retain their short
@@ -319,5 +327,3 @@ the deliberately unmatched cold runtime measurement:
 ## Remaining work
 
 - Add `s_memtime` cycle-counter measurements and rerun with a pinned clock.
-- Investigate the remaining transpose-512 residual without benchmark-specific
-  timing.

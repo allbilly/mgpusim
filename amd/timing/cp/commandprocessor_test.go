@@ -120,8 +120,11 @@ var _ = Describe("CommandProcessor", func() {
 		engine = timing.NewSerialEngine()
 		reg := modeling.NewStandaloneRegistrar(engine)
 
+		spec := DefaultSpec()
+		spec.HostReadbackKernelLaunchOverhead = 3
 		cp = MakeBuilder().
 			WithRegistrar(reg).
+			WithSpec(spec).
 			WithDriver(driverPort).
 			Build("CP")
 
@@ -209,6 +212,30 @@ var _ = Describe("CommandProcessor", func() {
 		Expect(toDriver.PeekIncoming()).To(BeNil())
 	})
 
+	It("should delay the first kernel after a host readback", func() {
+		useMockDispatcher()
+		cp.State.HostReadbackSinceLastKernel = true
+
+		req := protocol.LaunchKernelReq{
+			MsgMeta: messaging.MsgMeta{
+				ID:  timing.GetIDGenerator().Generate(),
+				Src: driverPort,
+				Dst: toDriver.AsRemote(),
+			},
+		}
+		toDriver.Deliver(req)
+
+		for i := 0; i < 3; i++ {
+			Expect(cp.Tick()).To(BeTrue())
+			Expect(toDriver.PeekIncoming()).NotTo(BeNil())
+		}
+
+		dispatcher.EXPECT().IsDispatching().Return(false)
+		dispatcher.EXPECT().StartDispatching(gomock.Any())
+		Expect(cp.Tick()).To(BeTrue())
+		Expect(toDriver.PeekIncoming()).To(BeNil())
+	})
+
 	It("should wait if there is no dispatcher available", func() {
 		useMockDispatcher()
 
@@ -266,6 +293,34 @@ var _ = Describe("CommandProcessor", func() {
 		Expect(rsp.RspTo).To(Equal(req.ID))
 		Expect(rsp.Dst).To(Equal(driverPort))
 		Expect(cp.State.BottomMemCopyH2DToTop).To(BeEmpty())
+	})
+
+	It("should arm the host readback delay after D2H completion", func() {
+		req := protocol.MemCopyD2HReq{
+			MsgMeta: messaging.MsgMeta{
+				ID:  timing.GetIDGenerator().Generate(),
+				Src: driverPort,
+				Dst: toDriver.AsRemote(),
+			},
+			SrcAddress: 0x1000,
+			DstBuffer:  make([]byte, 128),
+		}
+		toDriver.Deliver(req)
+		tickUntilQuiet()
+
+		cloned := toDMA.RetrieveOutgoing().(protocol.MemCopyD2HReq)
+		dmaRsp := protocol.GeneralRsp{
+			MsgMeta: messaging.MsgMeta{
+				ID:    timing.GetIDGenerator().Generate(),
+				Src:   dmaPort,
+				Dst:   toDMA.AsRemote(),
+				RspTo: cloned.ID,
+			},
+		}
+		toDMA.Deliver(dmaRsp)
+		tickUntilQuiet()
+
+		Expect(cp.State.HostReadbackSinceLastKernel).To(BeTrue())
 	})
 
 	It("should handle a driver flush request", func() {

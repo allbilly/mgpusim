@@ -27,6 +27,10 @@ type Spec struct {
 	// kernels launched after the first one.
 	SubsequentKernelLaunchOverhead int `json:"subsequent_kernel_launch_overhead"`
 
+	// HostReadbackKernelLaunchOverhead is the front-end reactivation latency,
+	// in cycles, for the first kernel submitted after a completed D2H copy.
+	HostReadbackKernelLaunchOverhead int `json:"host_readback_kernel_launch_overhead"`
+
 	// WGScalingThreshold is the threshold for WG-count-based launch-overhead
 	// amortization.
 	WGScalingThreshold int `json:"wg_scaling_threshold"`
@@ -91,6 +95,11 @@ type State struct {
 	// request from the driver.
 	BottomMemCopyH2DToTop map[uint64]protocol.MemCopyH2DReq `json:"bottom_mem_copy_h2d_to_top"`
 	BottomMemCopyD2HToTop map[uint64]protocol.MemCopyD2HReq `json:"bottom_mem_copy_d2h_to_top"`
+
+	// A blocking host readback leaves the command front end idle. The next
+	// kernel consumes the configured reactivation delay before dispatch.
+	HostReadbackSinceLastKernel bool `json:"host_readback_since_last_kernel"`
+	KernelLaunchDelayRemaining  int  `json:"kernel_launch_delay_remaining"`
 
 	// Control-sequence bookkeeping. CtrlSeq names the sequence in progress
 	// (flush, shootdown, restart), CtrlStep is the index of the current step

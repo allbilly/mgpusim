@@ -96,21 +96,20 @@ hardware/simulator slope ratio.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 6.765 | 7.473 | 10.5% |
-| relu | 7.155 | 7.194 | 0.5% |
-| matrixmult | 51.803 | 49.485 | 4.5% |
-| matrixtranspose | 16.989 | 14.154 | 16.7% |
-| bitonicsort | 347.854 | 323.743 | 6.9% |
-| aes | 18.314 | 16.925 | 7.6% |
-| fir | 7.699 | 7.646 | 0.7% |
-| kmeans | 29.615 | 28.231 | 4.7% |
+| vectoradd | 6.765 | 7.422 | 9.7% |
+| relu | 7.155 | 7.143 | 0.2% |
+| matrixmult | 51.803 | 49.414 | 4.6% |
+| matrixtranspose | 16.989 | 15.394 | 9.4% |
+| bitonicsort | 347.854 | 323.641 | 7.0% |
+| aes | 18.314 | 16.908 | 7.7% |
+| fir | 7.699 | 7.641 | 0.8% |
+| kmeans | 29.615 | 31.227 | 5.4% |
 | pagerank | 19.455 | 20.450 | 5.1% |
-| nw | 146.510 | 144.844 | 1.1% |
+| nw | 146.510 | 144.570 | 1.3% |
 
-Canonical-size MARE is **5.8%** across all ten remeasured benchmarks. The
-anti-overfit result is **6.0% MARE across 47 matched size points**; all ten
-swept families have family MARE below 10%. The maximum point error is the
-512-wide transpose holdout at 16.7%. All points verify.
+Canonical-size MARE is **5.1%** across all ten remeasured benchmarks. The
+anti-overfit result is **4.7% MARE across 47 matched size points**. Every
+individual point is below 10%; the maximum error is 9.7%. All points verify.
 
 ## Main model corrections
 
@@ -123,11 +122,11 @@ swept families have family MARE below 10%. The maximum point error is the
   separately.
 - A shared L2-to-DRAM token bucket preserves a 1 MiB short/random burst and
   limits sustained cache-line issue; the large vectoradd point remains within
-  11% across the clock-warmed hardware median.
-- A write-filtered L1-to-L2 token bucket preserves the first 768 KiB of dense
-  stores, then limits sustained write ingress to one line per two cycles. The
-  burst represents cache-resident dirty capacity and reproduces the measured
-  transpose transition without a benchmark or size rule.
+  8% across the clock-warmed hardware median.
+- A write-filtered L1-to-L2 token bucket preserves the first 740 KiB of dense
+  stores, then limits sustained write ingress to seven lines per 15 cycles.
+  The burst represents cache-resident dirty capacity and reproduces the
+  measured transpose transition without a benchmark or size rule.
   Reads and responses remain unrestricted.
 - A separate total-traffic bucket allows a 512 KiB L1-to-L2 burst and then
   limits aggregate ingress to six requests/cycle. This models the shared L2
@@ -139,20 +138,25 @@ swept families have family MARE below 10%. The maximum point error is the
   transpose, PageRank, and NW. Raising the boundary to 2 MiB created a 27.7%
   large-vector error, so full-L2 residency was rejected.
 - Full-line write serialization is charged once per wave instruction rather
-  than once per generated cache-line request. This preserves scalar-store
-  timing without penalizing a wide store 16 times.
+  than once per generated cache-line request. Scalar-width stores pay 88
+  cycles, while dwordx4 stores pay 68 cycles because one instruction amortizes
+  the front-end cost. This distinction brings all vector, ReLU, and transpose
+  holdouts below 10% without a benchmark or size rule.
 - Sparse read coalescing no longer pays an extra per-line stall on top of the
   actual generated requests and memory latency.
 - Wide vector loads and stores use their actual cache, memory, and LDS timing;
   cross-size evidence rejected the synthetic per-line penalties previously
   fitted to one matrix-multiply point.
-- Vector XOR/AND/OR use a separate one-cycle timing class, and fully utilized
-  stores have an independent 90-cycle per-instruction issue cost.
+- Vector XOR/AND/OR use a separate one-cycle timing class.
 - Dependent FMA execution uses a twelve-cycle effective occupancy; all four
   matrix-multiply holdouts are within 4.9%, while FIR and k-means remain within
   range.
 - GPU-side first/subsequent/post-kernel dispatch costs are calibrated for the
   RX 570's multi-launch workloads. Host cold-start costs remain excluded.
+- A kernel submitted after a blocking device-to-host readback pays a 3,700
+  cycle command-front-end reactivation delay. This generic synchronization
+  boundary corrects all six k-means sizes while leaving ordinary back-to-back
+  multi-kernel dispatch unchanged.
 
 See `progress_rx570.md` at the repository root for the debugging evidence and
 parameter sweeps.
@@ -162,5 +166,3 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned; current auto-clock microseconds remain
   diagnostic despite three-process medians.
-- Investigate the remaining transpose-512 residual without a benchmark- or
-  size-specific timing rule.
