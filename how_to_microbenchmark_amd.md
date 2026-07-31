@@ -319,6 +319,33 @@ scratch cost = time(scratch variant) - time(control variant)
 Sweep work-group count so the test also reveals whether private-segment traffic
 incorrectly limits occupancy or serializes across waves.
 
+The checked-in gfx90c `scratch_spill` probe uses the corrected production
+matrix-multiply body for both variants. `control4` compiles with private size
+0, no spills, and no MUBUF traffic; `scratch4` matches production metadata with
+private size 20 and four VGPR spills, and disassembles to four
+`buffer_store_dword` plus four `buffer_load_dword` instructions at offsets
+0/4/8/12. Run the exact pair with:
+
+```bash
+/home/fedora/.local/go/bin/go run ./amd/samples/scratch_spill \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -variant scratch4 -workgroups 16 \
+  -report-cache-hit-rate -report-dram-transaction-count
+
+ALLOW_UNPINNED_CLOCK=1 \
+  gpu_perf_scripts/calibration/gfx90c/build_and_run.sh \
+  --only scratchspill --scratch-variant scratch4 \
+  --scratch-workgroups 16 --warmup 20 --iters 1000
+```
+
+Repeat both commands with `control4`, and sweep work-group counts
+`1, 4, 7, 14, 16, 28, 56`. Sixteen matches corrected N=128 matmul; multiples
+of seven expose one, two, four, and eight waves per physical CU. Randomize the
+hardware variant order and use `(T_scratch4 - T_control4) / workgroups` as the
+paired concurrency curve. This delta includes the compiler's production-like
+VGPR/occupancy consequence as well as scratch requests; it is not a literal
+single-instruction latency. Fit cycle parameters only from pinned-clock data.
+
 If hardware and simulator disagree only for dependent scratch, adjust scratch
 latency/response completion. If they disagree only at many active lanes, adjust
 private-address mapping, coalescing, transaction issue width, or concurrency.

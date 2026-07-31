@@ -77,6 +77,8 @@ The exact-HSACO harness supports application size sweeps without recompiling:
 ./build/isca10_bench --only nw --nw-length 64
 ./build/isca10_bench --only storestride --store-stride-lines 64 \
   --store-allocation-stride-lines 128 --store-repeats 32
+./build/isca10_bench --only scratchspill --scratch-variant scratch4 \
+  --scratch-workgroups 16 --warmup 20 --iters 1000
 ```
 
 The store-stride probe is explicit-only and is not part of the scored
@@ -92,6 +94,13 @@ and one work-group. The harness's `storestride_ns_per_repeat` is a one-wave
 launch normalization under that protocol. With multiple work-groups it still
 divides only by repeat count, and concurrent waves prevent interpreting it as
 per-instruction latency.
+
+The scratch-spill probe is also explicit-only. `control4` has no private
+segment or MUBUF traffic; `scratch4` matches the production matmul object with
+private size 20 and four VGPR spills. Sweep both variants at work-group counts
+`1, 4, 7, 14, 16, 28, 56`. Interpret
+`scratchspill_ns_per_workgroup` only as a launch-normalized diagnostic; use
+randomized paired deltas between variants for comparison.
 
 PageRank hardware fixtures are generated for 128, 256, and 512 nodes at
 sparsity 0.5, using the same deterministic CSR generator as the simulator.

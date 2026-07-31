@@ -295,6 +295,73 @@ size control crosses an initialization/DMA reporting regime even though the
 isolated driver `kernel_time` fit is unaffected. A pinned-clock hardware
 repetition remains necessary before changing the store timing configuration.
 
+### Private-spill work-group sweep
+
+Commit `356443d5` adds an exact-HSACO pair around the corrected production
+matrix-multiplication body. `control4` has private segment size 0, zero spills,
+75 VGPRs, and no MUBUF instructions. `scratch4` matches production matmul with
+private segment size 20, four VGPR spills, 64 VGPRs, and exactly four private
+stores plus four private loads at offsets 0/4/8/12. Both use an 8x8 wave64
+work-group, identical inputs and output verification, and the same global,
+LDS, barrier, VALU, and output work. Every simulator point passed full CPU
+reference verification.
+
+| Work-groups | Control (us) | Scratch4 (us) | Delta (us) | Delta (ns/work-group) |
+|------------:|-------------:|--------------:|-----------:|----------------------:|
+| 1  | 12.167 | 14.820 | 2.653  | 2653.000 |
+| 4  | 12.494 | 15.147 | 2.653  | 663.250  |
+| 7  | 12.721 | 15.297 | 2.576  | 368.000  |
+| 14 | 18.186 | 22.128 | 3.942  | 281.571  |
+| 16 | 22.976 | 28.195 | 5.219  | 326.188  |
+| 28 | 27.818 | 34.430 | 6.612  | 236.143  |
+| 56 | 54.320 | 68.284 | 13.964 | 249.357  |
+
+The fixed delta through seven work-groups shows that the modeled private path
+overlaps across available CUs; beyond one wave per CU, total spill cost grows
+with concurrency. At the production N=128 grid size of 16 work-groups, the
+paired modeled cost is 5.219 us. This is a production-like compiler/resource
+delta, not eight isolated instruction latencies: the variants intentionally
+have different VGPR allocation and occupancy consequences.
+
+Counter-enabled whole-run totals at one work-group show the intended traffic
+change. Control has L1V read H/M `0/128` and write H/M `0/64`; scratch4 has
+`59/149` and `0/144`. The four private stores therefore add 80 modeled L1V
+write transactions for one wave under the private-address mapping. Transfer
+traffic is included in these totals, so the counters support the paired
+traffic difference but are not a kernel-only CPI decomposition.
+
+The hardware diagnostic used 20 warm-ups and 1,000 timed iterations per fresh
+process, with ten deterministic randomized rounds. All 140 runs returned zero;
+every pre/post snapshot reported `auto`/200 MHz and temperatures were 44-50 C.
+Each variant cell is `median / MAD / population CV` in microseconds. Paired
+delta is the per-round median of `(scratch4-control4)/workgroups`.
+
+| Work-groups | HW control4 | HW scratch4 | Paired delta (ns/work-group) | Delta MAD (ns) | Positive rounds |
+|------------:|------------:|------------:|-----------------------------:|---------------:|----------------:|
+| 1  | 132.106 / 0.010 / 0.008% | 141.674 / 0.016 / 0.022% | 9576.00  | 23.50  | 10/10 |
+| 4  | 132.426 / 0.009 / 0.009% | 141.385 / 0.019 / 0.013% | 2240.00  | 3.75   | 10/10 |
+| 7  | 132.646 / 0.004 / 0.006% | 142.118 / 0.014 / 0.014% | 1353.21  | 1.71   | 10/10 |
+| 14 | 132.702 / 0.008 / 0.007% | 141.747 / 0.014 / 0.014% | 645.89   | 1.32   | 10/10 |
+| 16 | 210.589 / 0.423 / 0.321% | 177.768 / 3.449 / 2.283% | -2070.75 | 210.66 | 0/10  |
+| 28 | 170.575 / 2.720 / 3.070% | 180.269 / 3.918 / 2.837% | 274.21   | 142.91 | 9/10  |
+| 56 | 239.564 / 0.699 / 0.821% | 248.548 / 2.972 / 1.894% | 169.24   | 61.93  | 8/10  |
+
+The warmed curve is precise at small grids but strongly non-monotonic.
+Control4 is flat through 14 work-groups, jumps by 77.887 us at 16, then drops
+by 40.014 us at 28 in every round. Scratch4 has a smaller transition, making
+the paired delta negative at 16 in all ten rounds. At 28 and 56 the paired
+effect is positive but occasionally reverses sign. This falsifies a monotonic
+per-work-group scratch penalty under the tested state and shows that the
+compiler/resource difference cannot be separated from a grid/occupancy regime
+change with this pair alone. The simulator curve is monotonic and misses the
+16-work-group control cliff.
+
+The next control should separate resource allocation from memory traffic: add
+a no-spill variant at the scratch kernel's 64-VGPR occupancy if the compiler
+can produce one, retain the existing 75-VGPR control, and densely sweep grids
+around 14-28. A pinned-clock repetition is still required before changing
+scratch latency, coalescing, concurrency, or occupancy limits.
+
 ## Immutable full-suite comparison
 
 The suite was built and run once from calibration commit `12d5269a`, with
