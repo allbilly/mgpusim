@@ -9,21 +9,21 @@ the exact gfx803 binaries used by the hardware harness.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 7.101 | 7.271 | 2.4% |
-| relu | 6.837 | 6.273 | 8.2% |
-| matrixmult | 73.458 | 80.310 | 9.3% |
-| matrixtranspose | — | 77.155 | — |
-| bitonicsort | 350.214 | 320.428 | 8.5% |
-| aes | 18.084 | 18.616 | 2.9% |
-| fir | 7.637 | 7.692 | 0.7% |
-| kmeans | 29.424 | 26.731 | 9.2% |
-| pagerank | 20.356 | 22.303 | 9.6% |
-| nw | 195.281 | 180.161 | 7.7% |
+| vectoradd | 7.101 | 7.387 | 4.0% |
+| relu | 6.837 | 6.261 | 8.4% |
+| matrixmult | 73.458 | 80.266 | 9.3% |
+| matrixtranspose | — | 78.548 | — |
+| bitonicsort | 350.214 | 320.969 | 8.4% |
+| aes | 18.084 | 18.415 | 1.8% |
+| fir | 7.637 | 7.454 | 2.4% |
+| kmeans | 29.424 | 26.854 | 8.7% |
+| pagerank | 20.356 | 21.812 | 7.2% |
+| nw | 195.281 | 182.112 | 6.7% |
 
-Steady-state MARE is **6.5%** across the nine benchmarks with steady hardware
+Steady-state MARE is **6.3%** across the nine benchmarks with steady hardware
 data, and every measured workload is below 10% error. All ten run and verify,
 but matrix transpose has only a cold hardware measurement and is excluded
-from steady MARE; its simulated 77.155 µs is 2.0% below the 78.722 µs cold
+from steady MARE; its simulated 78.548 µs is 0.2% below the 78.722 µs cold
 measurement. The original headline errors were vectoradd 38.0%, ReLU 21.5%,
 and matrix multiplication 58.7%.
 
@@ -82,19 +82,22 @@ This moves exact pagerank from 42.9 to 22.3 µs without serializing unrelated
 random misses. A shared L2-to-DRAM token bucket then separates the 896 KiB
 burst region from sustained bandwidth: it begins with 14,336 cache-line
 credits and refills at one 64-byte request per 1.244 GHz GPU cycle. The
-default vectoradd and pagerank points remain bit-for-bit unchanged, while the
-262,144-element vector improves from 12.839 to 23.775 µs versus 24.3 µs
-hardware.
+token bucket alone leaves the default vectoradd and pagerank points bit-for-bit
+unchanged, while the final launch/store calibration puts the 262,144-element
+vector at 23.799 µs versus 24.3 µs hardware.
 
 | vector length | HW steady (µs) | Sim (µs) | Error |
 |---:|---:|---:|---:|
-| 4,096 | 4.400 | 5.055 | 14.9% |
-| 16,384 | 5.000 | 5.209 | 4.2% |
-| 65,536 | 7.101 | 7.271 | 2.4% |
-| 262,144 | 24.300 | 23.775 | 2.2% |
+| 4,096 | 4.400 | 4.808 | 9.3% |
+| 16,384 | 5.000 | 5.034 | 0.7% |
+| 65,536 | 7.101 | 7.387 | 4.0% |
+| 262,144 | 24.300 | 23.799 | 2.1% |
 
-The sustained-throughput error is now below 10%; the remaining vector outlier
-is the smallest, launch-dominated point.
+All four vector sizes are now below 10%. Reducing the first-launch cost by
+310 cycles removes excess fixed latency at the smallest grid; increasing the
+dense full-line store cost by four cycles offsets that change for ReLU and
+larger streaming grids. This pair minimizes the worst observed error rather
+than the average alone.
 
 ### Sparse reads were charged twice
 
@@ -116,7 +119,7 @@ streaming loads.
 
 AES is dominated by bitwise vector operations. Classifying vector XOR, AND,
 and OR separately from the four-cycle default VALU class models their
-one-cycle issue/result timing and reduces AES from 20.243 to 18.616 µs.
+one-cycle issue/result timing and reduces AES from 20.243 to 18.415 µs.
 
 Partial stores and fully utilized cache-line stores also have different
 costs. The model now keeps the partial-line write-combine/RMW cap and adds a
@@ -130,11 +133,11 @@ dispatch costs are:
 
 | Cost | Cycles |
 |---|---:|
-| first launch | 2,690 |
+| first launch | 2,380 |
 | subsequent launch | 1,300 |
 | completion/post-kernel | 2,500 |
 
-This produces 320.4 µs for bitonic versus 350.2 µs hardware. The much larger
+This produces 321.0 µs for bitonic versus 350.2 µs hardware. The much larger
 10–50 µs cold-minus-steady values in the hardware file include ROCm/KFD
 first-use, page mapping, and other host-side effects; they are deliberately
 not folded into GPU execution time.
@@ -158,7 +161,7 @@ not folded into GPU execution time.
   random-miss concurrency needed by the suite.
 - Four banks at 62.5 MHz produced 36.620 µs for the large vector, but
   over-serialized the default vectoradd and pagerank cases; rejected.
-- Full-line store cost 8 cycles and L1V latency 56 cycles jointly put
+- Full-line store cost 12 cycles and L1V latency 56 cycles jointly put
   vectoradd, ReLU, k-means, and pagerank below 10%.
 - A shared one-request/cycle limiter without burst capacity fixed the large
   vector slope but pushed pagerank to 24.769 µs. A 14,336-line token bucket
@@ -181,8 +184,8 @@ the deliberately unmatched cold runtime measurement:
 
 ## Remaining work
 
-- Investigate small-grid launch timing; the 4,096-element vector point is
-  14.9% slow while the three larger size-sweep points are below 10%.
+- Extend multi-size hardware sweeps beyond vectoradd so slope accuracy can be
+  checked for the remaining benchmark families.
 - Add `s_memtime` cycle-counter measurements and rerun with a pinned clock.
 - The current user cannot access `/dev/kfd` (`root:render`, mode 0660), so new
   hardware collection needs render-group access or administrator help.

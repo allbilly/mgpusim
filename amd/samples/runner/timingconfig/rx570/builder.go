@@ -7,7 +7,7 @@
 // are taken from the AMD RX 570 product page and corroborating spec sheets.
 // Timing latencies are calibrated against the ISCA-10 benchmark suite run on
 // the physical RX 570 (see gpu_perf_scripts/calibration/rx570/hw_ground_truth.txt).
-// The steady-state calibration achieves 6.5% MARE across the 9 benchmarks
+// The steady-state calibration achieves 6.3% MARE across the 9 benchmarks
 // with steady hardware data, with every error below 10%; all 10 benchmarks
 // execute and verify. Cold
 // hipEvent measurements are reported separately because they include
@@ -103,7 +103,7 @@ func MakeBuilder() r9nano.Builder {
 		// Partial lines pay a write-combine/RMW cost; dense lines pay a small
 		// independent store-issue serialization cost.
 		WithMaxWriteCoalescingPenalty(120).
-		WithFullLineWritePenalty(8).
+		WithFullLineWritePenalty(12).
 		// A flat_load_dwordx4 transfers 16 bytes per active lane. Charge
 		// each generated cache-line transaction 126 serialization cycles to
 		// model Polaris's wide-load path. This moves the exact gfx803
@@ -117,7 +117,7 @@ func MakeBuilder() r9nano.Builder {
 		// override needlessly serialized independent pagerank misses.
 		WithInFlightVectorMemAccessLimit(512).
 		// Dispatch across 4 shader engines in parallel.
-		// GPU-side dispatch costs only: 2690 cycles before the first kernel,
+		// GPU-side dispatch costs only: 2380 cycles before the first kernel,
 		// 1300 before later launches, and 2500 after each kernel completes.
 		// Host/KFD first-use overhead is intentionally excluded; it varies
 		// from 10 to 50 us in the recorded cold hipEvent measurements and
@@ -125,7 +125,7 @@ func MakeBuilder() r9nano.Builder {
 		WithCPAlg("per-die").
 		WithCPNumDies(NumShaderArray).
 		WithCPWavefrontDispatchCycles(1).
-		WithCPConstantKernelLaunchOverhead(2690).
+		WithCPConstantKernelLaunchOverhead(2380).
 		WithCPSubsequentKernelLaunchOverhead(1300).
 		WithCPWGScalingThreshold(100000).
 		WithCPConstantKernelOverhead(2500).

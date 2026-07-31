@@ -65,21 +65,21 @@ The `gcn3` name is intentional: this repository classifies gfx803 as
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 7.101 | 7.271 | 2.4% |
-| relu | 6.837 | 6.273 | 8.2% |
-| matrixmult | 73.458 | 80.310 | 9.3% |
-| matrixtranspose | — | 77.155 | — |
-| bitonicsort | 350.214 | 320.428 | 8.5% |
-| aes | 18.084 | 18.616 | 2.9% |
-| fir | 7.637 | 7.692 | 0.7% |
-| kmeans | 29.424 | 26.731 | 9.2% |
-| pagerank | 20.356 | 22.303 | 9.6% |
-| nw | 195.281 | 180.161 | 7.7% |
+| vectoradd | 7.101 | 7.387 | 4.0% |
+| relu | 6.837 | 6.261 | 8.4% |
+| matrixmult | 73.458 | 80.266 | 9.3% |
+| matrixtranspose | — | 78.548 | — |
+| bitonicsort | 350.214 | 320.969 | 8.4% |
+| aes | 18.084 | 18.415 | 1.8% |
+| fir | 7.637 | 7.454 | 2.4% |
+| kmeans | 29.424 | 26.854 | 8.7% |
+| pagerank | 20.356 | 21.812 | 7.2% |
+| nw | 195.281 | 182.112 | 6.7% |
 
-MARE is **6.5% across the nine benchmarks with steady hardware data**, and
+MARE is **6.3% across the nine benchmarks with steady hardware data**, and
 every measured error is below 10%. All ten benchmarks verify their output;
 matrix transpose has only a 78.722 µs cold hardware measurement, so it is not
-included in steady MARE (its 77.155 µs simulation is 2.0% lower).
+included in steady MARE (its 78.548 µs simulation is 0.2% lower).
 The multi-size vector evidence is recorded in `vectoradd_size_sweep.txt`.
 
 ## Main model corrections
@@ -93,13 +93,13 @@ The multi-size vector evidence is recorded in `vectoradd_size_sweep.txt`.
   separately.
 - A shared L2-to-DRAM token bucket preserves short/random bursts and limits
   sustained cache-line issue. The 262,144-element vectoradd error improves
-  from 47.2% to 2.2%.
+  from 47.2% to 2.1%.
 - Sparse read coalescing no longer pays an extra per-line stall on top of the
   actual generated requests and memory latency.
 - A separate 126-cycle wide-read serialization cost models the matrix
   kernel's `flat_load_dwordx4` path.
 - Vector XOR/AND/OR use a separate one-cycle timing class, and fully utilized
-  cache-line stores have an independent eight-cycle issue cost.
+  cache-line stores have an independent twelve-cycle issue cost.
 - GPU-side first/subsequent/post-kernel dispatch costs are calibrated for the
   RX 570's multi-launch workloads. Host cold-start costs remain excluded.
 
@@ -111,5 +111,4 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned after granting the user `render` access
   to `/dev/kfd`.
-- Investigate small-grid launch timing; vectoradd at 4,096 elements remains
-  14.9% slow, while its three larger measured sizes are below 10%.
+- Extend multi-size hardware sweeps to the remaining benchmark families.
