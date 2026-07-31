@@ -912,6 +912,39 @@ a 51 C peak. The matching simulator point is 11.450 us, giving a one-batch
 `HW/Sim` ratio of 1.771. Artifacts are at
 `/tmp/gfx90c-pilot-vmem-w4-s-a8-b8-g1-3a7f05fd`.
 
+Three additional guarded one-batch pilots passed full verification without a
+forbidden process. They are still directional measurements, not production
+targets:
+
+| Shape | Hardware (us) | Simulator (us) | HW/Sim |
+|-------|--------------:|---------------:|-------:|
+| 8 KiB, alias 8, serial | 20.282 | 11.450 | 1.771 |
+| 8 KiB, alias 8, independent4 | 15.961 | 7.468 | 2.137 |
+| 8 KiB, alias 1, serial | 9.023 | 5.030 | 1.794 |
+| 64 KiB, alias 8, serial | 152.935 | 64.766 | 2.361 |
+
+The independent4 artifact is
+`/tmp/gfx90c-pilot-vmem-w4-i-a8-b8-g1-7ffd7742`, the alias-1 artifact is
+`/tmp/gfx90c-pilot-vmem-w4-s-a1-b8-g1-7ffd7742`, and the 64-KiB artifact is
+`/tmp/gfx90c-pilot-vmem-w4-s-a8-b64-g1-7ffd7742`. Each collector used the
+process guard added in `369b01ae` and the broadened documented pattern from
+`7ffd7742`.
+
+These contrasts do not support enabling an alias-only return-fanout penalty.
+Alias-1 and alias-8 serial have nearly identical absolute scale factors, while
+the 64-KiB/8-KiB growth is 7.54x in hardware and 5.66x in simulation. The
+largest new divergence is therefore associated with the L1-capacity/L2 path,
+not duplicate-lane fanout. The serial/independent ratio also moves in the
+opposite direction from a simple non-overlapable return penalty: 1.27x in
+hardware versus 1.53x in simulation. A null-launch baseline and production
+repetitions are needed before decomposing the remaining fixed and
+footprint-dependent terms.
+
+A guarded 28-work-group pilot was attempted after the three contrasts, but an
+external `pytest -k matrixmult` process restarted during readiness. The guard
+rejected it before GPU launch; the failed artifact at
+`/tmp/gfx90c-pilot-vmem-w4-s-a8-b8-g28-7ffd7742` is not measurement data.
+
 The following nine-batch attempt was rejected in full after an external
 Verilator workload restarted immediately after its first batch. The one
 20.265-us batch is not promoted or combined with the pilot. That failure led
@@ -920,10 +953,12 @@ CPU/package-power contamination before and during acquisition. The rejected
 artifact directory is
 `/tmp/gfx90c-prod-vmem-w4-s-a8-b8-g1-3a7f05fd`.
 
-No parameter is changed from a single pilot. Full pinned width, alias,
-dependency, footprint, and work-group contrasts are required first. A uniform
-L1/L2 latency change remains rejected because it cannot predict those
-signatures independently.
+No parameter is changed from the pilot contrasts. Full pinned width, alias,
+dependency, footprint, and work-group production sweeps are required first.
+A uniform L1/L2 latency change remains rejected because it cannot predict
+those signatures independently, but an L2-specific term is now a stronger
+candidate than alias-only fanout and must be tested with capacity-boundary and
+null-launch controls.
 
 ## Remaining validation
 
