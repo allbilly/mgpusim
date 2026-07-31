@@ -7,6 +7,7 @@ type IssueArbiter struct {
 	lastSIMDID                int
 	scoreboardEnabled         bool
 	dependentLoadIssuePenalty int
+	dependentLoadMinAge       int
 	dependentLoadMaxAge       int
 	timingProgress            bool
 }
@@ -46,9 +47,10 @@ func (a *IssueArbiter) Arbitrate(
 				}
 			}
 
-			if wf.StallRecentLoadAddress(
+			if wf.StallRecentLoadAddressInWindow(
 				wf.InstToIssue.Inst,
 				a.dependentLoadIssuePenalty,
+				a.dependentLoadMinAge,
 				a.dependentLoadMaxAge,
 			) {
 				a.timingProgress = true

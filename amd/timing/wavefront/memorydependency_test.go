@@ -36,6 +36,12 @@ func TestRecentMemoryAddressDependency(t *testing.T) {
 	if wf.AddressDependsOnRecentLoad(dependentLoad, 0) {
 		t.Fatal("dependency should not have zero age")
 	}
+	if !wf.AddressDependsOnLoadInWindow(dependentLoad, 1, 1) {
+		t.Fatal("dependency should match its exact age window")
+	}
+	if wf.AddressDependsOnLoadInWindow(dependentLoad, 2, 12) {
+		t.Fatal("dependency should be younger than the minimum age")
+	}
 }
 
 func TestOverwritingAddressRegisterClearsMemoryDependency(t *testing.T) {

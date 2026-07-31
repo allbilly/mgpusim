@@ -100,6 +100,7 @@ type Builder struct {
 	maxCoalescingPenalty             int
 	splitLineLoadPenalty             int
 	dependentLoadIssuePenalty        int
+	dependentLoadMinAge              int
 	dependentLoadMaxAge              int
 	maxWriteCoalescingPenalty        int
 	maxWideWriteStridePenalty        int
@@ -437,11 +438,20 @@ func (b Builder) WithSplitLineLoadPenalty(penalty int) Builder {
 }
 
 // WithDependentLoadIssuePenalty sets the delay for a vector load whose
-// address is derived from a recently completed vector load.
+// address was derived from a load completed within maxAge instructions.
 func (b Builder) WithDependentLoadIssuePenalty(
 	penalty, maxAge int,
 ) Builder {
+	return b.WithDependentLoadIssueWindow(penalty, 0, maxAge)
+}
+
+// WithDependentLoadIssueWindow sets the delay for a vector load whose address
+// dependency age is in the inclusive [minAge, maxAge] window.
+func (b Builder) WithDependentLoadIssueWindow(
+	penalty, minAge, maxAge int,
+) Builder {
 	b.dependentLoadIssuePenalty = penalty
+	b.dependentLoadMinAge = minAge
 	b.dependentLoadMaxAge = maxAge
 	return b
 }
@@ -877,8 +887,9 @@ func (b *Builder) buildSAs() {
 		)
 	}
 	if b.dependentLoadIssuePenalty > 0 {
-		saBuilder = saBuilder.WithDependentLoadIssuePenalty(
+		saBuilder = saBuilder.WithDependentLoadIssueWindow(
 			b.dependentLoadIssuePenalty,
+			b.dependentLoadMinAge,
 			b.dependentLoadMaxAge,
 		)
 	}

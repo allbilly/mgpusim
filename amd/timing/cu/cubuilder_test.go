@@ -76,4 +76,20 @@ var _ = Describe("Builder", func() {
 			"cu: DependentLoadMaxAge must be positive when dependency tracking is enabled",
 		))
 	})
+
+	It("rejects an inverted dependent-load age window", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+		spec := DefaultSpec()
+		spec.DependentLoadIssuePenalty = 1
+		spec.DependentLoadMinAge = 4
+		spec.DependentLoadMaxAge = 3
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithSpec(spec).
+				Build("GPU.CU")
+		}).To(PanicWith("cu: dependent-load age window is invalid"))
+	})
 })

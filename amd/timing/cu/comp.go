@@ -106,6 +106,7 @@ type Spec struct {
 	// extra-transaction counter.
 	SplitLineLoadPenalty      int `json:"split_line_load_penalty"`
 	DependentLoadIssuePenalty int `json:"dependent_load_issue_penalty"`
+	DependentLoadMinAge       int `json:"dependent_load_min_age"`
 	DependentLoadMaxAge       int `json:"dependent_load_max_age"`
 	MaxWriteCoalescingPenalty int `json:"max_write_coalescing_penalty"`
 	MaxWideWriteStridePenalty int `json:"max_wide_write_stride_penalty"`

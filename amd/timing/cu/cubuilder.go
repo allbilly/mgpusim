@@ -27,6 +27,7 @@ var defaultSpec = Spec{
 	MaxCoalescingPenalty:         0,
 	SplitLineLoadPenalty:         0,
 	DependentLoadIssuePenalty:    0,
+	DependentLoadMinAge:          0,
 	DependentLoadMaxAge:          0,
 	MaxWriteCoalescingPenalty:    0,
 	MaxWideWriteStridePenalty:    0,
@@ -163,6 +164,10 @@ func (b *Builder) mustHaveValidSpec() {
 		b.spec.DependentLoadMaxAge < 1 {
 		panic("cu: DependentLoadMaxAge must be positive when dependency tracking is enabled")
 	}
+	if b.spec.DependentLoadMinAge < 0 ||
+		b.spec.DependentLoadMinAge > b.spec.DependentLoadMaxAge {
+		panic("cu: dependent-load age window is invalid")
+	}
 }
 
 func (b *Builder) fillResourceDefaults() {
@@ -182,6 +187,7 @@ func (b *Builder) equipScheduler(cu *ComputeUnit) {
 	issueArbitor.scoreboardEnabled = b.spec.RegisterScoreboard
 	issueArbitor.dependentLoadIssuePenalty =
 		b.spec.DependentLoadIssuePenalty
+	issueArbitor.dependentLoadMinAge = b.spec.DependentLoadMinAge
 	issueArbitor.dependentLoadMaxAge = b.spec.DependentLoadMaxAge
 	scheduler := NewScheduler(cu, fetchArbitor, issueArbitor)
 	scheduler.scoreboardEnabled = b.spec.RegisterScoreboard

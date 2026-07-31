@@ -173,12 +173,22 @@ func (wf *Wavefront) TrackIssuedInstruction(inst *insts.Inst) {
 	wf.setMemoryDerivedStamp(inst.Dst, stamp)
 }
 
-// StallRecentLoadAddress delays a short load-to-address dependency on this
-// wave only. Returning true means the instruction must not issue this cycle;
-// other ready waves remain eligible.
+// StallRecentLoadAddress delays a recent load-to-address dependency on this
+// wave only.
 func (wf *Wavefront) StallRecentLoadAddress(
 	inst *insts.Inst,
 	penalty, maxAge int,
+) bool {
+	return wf.StallRecentLoadAddressInWindow(inst, penalty, 0, maxAge)
+}
+
+// StallRecentLoadAddressInWindow delays a load-to-address dependency whose
+// most recent provenance age is in the inclusive [minAge, maxAge] window.
+// Returning true means this instruction must not issue this cycle; other
+// ready waves remain eligible.
+func (wf *Wavefront) StallRecentLoadAddressInWindow(
+	inst *insts.Inst,
+	penalty, minAge, maxAge int,
 ) bool {
 	if penalty <= 0 || wf.EXEC() == 0 || !isVectorMemoryLoad(inst) {
 		return false
@@ -192,7 +202,11 @@ func (wf *Wavefront) StallRecentLoadAddress(
 		state.DependencyStallActive = true
 		state.DependencyStallPC = wf.PC()
 		state.DependencyStallRemaining = 0
-		if wf.AddressDependsOnRecentLoad(inst, uint64(maxAge)) {
+		if wf.AddressDependsOnLoadInWindow(
+			inst,
+			uint64(minAge),
+			uint64(maxAge),
+		) {
 			state.DependencyStallRemaining = penalty
 		}
 	}
@@ -227,6 +241,15 @@ func (wf *Wavefront) AddressDependsOnRecentLoad(
 	inst *insts.Inst,
 	maxAge uint64,
 ) bool {
+	return wf.AddressDependsOnLoadInWindow(inst, 0, maxAge)
+}
+
+// AddressDependsOnLoadInWindow reports whether an address dependency age is
+// within the inclusive instruction-distance window.
+func (wf *Wavefront) AddressDependsOnLoadInWindow(
+	inst *insts.Inst,
+	minAge, maxAge uint64,
+) bool {
 	state := wf.MemoryDependency
 	if state == nil {
 		return false
@@ -240,7 +263,8 @@ func (wf *Wavefront) AddressDependsOnRecentLoad(
 	if stamp == 0 || state.InstructionIssueSequence < stamp {
 		return false
 	}
-	return state.InstructionIssueSequence-stamp <= maxAge
+	age := state.InstructionIssueSequence - stamp
+	return age >= minAge && age <= maxAge
 }
 
 func (wf *Wavefront) memoryDerivedStamp(operand *insts.Operand) uint64 {
