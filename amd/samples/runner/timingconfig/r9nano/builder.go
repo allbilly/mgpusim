@@ -23,6 +23,7 @@ import (
 	"github.com/sarchlab/mgpusim/v5/amd/timing/cp"
 	"github.com/sarchlab/mgpusim/v5/amd/timing/cu"
 	"github.com/sarchlab/mgpusim/v5/amd/timing/rdma"
+	"github.com/sarchlab/mgpusim/v5/amd/timing/requestlimitedconnection"
 )
 
 // Port buffer sizes. The CP and DMA-to-CP ports mirror the v4 4096-deep
@@ -80,6 +81,9 @@ type Builder struct {
 	dramBankPipelineWidth            int
 	dramBankPipelineDepth            int
 	dramStageLatency                 int
+	l2ToDramRequestRateNumerator     int
+	l2ToDramRequestRateDenominator   int
+	l2ToDramRequestBurst             int
 	cpAlg                            string
 	cpNumDies                        int
 	cpWavefrontDispatchCycles        int
@@ -124,7 +128,7 @@ type Builder struct {
 	l2TLBs              []*tlb.Comp
 	drams               []messaging.Component
 	internalConn        *directconnection.Comp
-	l2ToDramConnection  *directconnection.Comp
+	l2ToDramConnection  messaging.Connection
 	l1AddressMapper     *mem.InterleavedAddressPortMapper
 	l1TLBAddressMapper  *mem.SinglePortMapper
 	dmaLocalDataSource  *mem.InterleavedAddressPortMapper
@@ -317,6 +321,26 @@ func (b Builder) WithDRAMBankPipelineDepth(depth int) Builder {
 // WithDRAMStageLatency sets the per-stage latency in bank pipelines.
 func (b Builder) WithDRAMStageLatency(latency int) Builder {
 	b.dramStageLatency = latency
+	return b
+}
+
+// WithL2ToDRAMRequestRate limits the aggregate memory-request rate from all L2
+// banks to all DRAM controllers to numerator/denominator requests per GPU
+// cycle. Responses are not limited. A non-positive numerator retains an
+// unlimited direct connection.
+func (b Builder) WithL2ToDRAMRequestRate(
+	numerator, denominator int,
+) Builder {
+	b.l2ToDramRequestRateNumerator = numerator
+	b.l2ToDramRequestRateDenominator = denominator
+	return b
+}
+
+// WithL2ToDRAMRequestBurst sets the maximum number of unused request credits
+// retained by the shared L2-to-DRAM limiter. It also defines the initial
+// credit balance. Zero disables bursting beyond one cycle's request budget.
+func (b Builder) WithL2ToDRAMRequestBurst(n int) Builder {
+	b.l2ToDramRequestBurst = n
 	return b
 }
 
@@ -782,10 +806,22 @@ func (b *Builder) connectL1ToL2() {
 }
 
 func (b *Builder) connectL2AndDRAM() {
-	b.l2ToDramConnection = directconnection.MakeBuilder().
-		WithRegistrar(b.simulation).
-		WithSpec(directconnection.Spec{Freq: b.freq}).
-		Build(b.name + ".L2ToDRAM")
+	if b.l2ToDramRequestRateNumerator > 0 {
+		b.l2ToDramConnection = requestlimitedconnection.MakeBuilder().
+			WithRegistrar(b.simulation).
+			WithSpec(requestlimitedconnection.Spec{
+				Freq:                   b.freq,
+				RequestRateNumerator:   b.l2ToDramRequestRateNumerator,
+				RequestRateDenominator: b.l2ToDramRequestRateDenominator,
+				BurstRequests:          b.l2ToDramRequestBurst,
+			}).
+			Build(b.name + ".L2ToDRAM")
+	} else {
+		b.l2ToDramConnection = directconnection.MakeBuilder().
+			WithRegistrar(b.simulation).
+			WithSpec(directconnection.Spec{Freq: b.freq}).
+			Build(b.name + ".L2ToDRAM")
+	}
 
 	for _, l2 := range b.l2Caches {
 		b.l2ToDramConnection.PlugIn(l2.GetPortByName("Bottom"))

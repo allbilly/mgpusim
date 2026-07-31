@@ -59,15 +59,20 @@ func MakeBuilder() r9nano.Builder {
 		// Banked GDDR5. Each of the eight 32-bit controller channels exposes
 		// four interleaved banks so unrelated misses can overlap. A shallow
 		// 250 MHz pipeline avoids the former 400 ns per-request latency that
-		// double-counted random-load stalls. This setting is calibrated for
-		// the suite sizes; the large-vector bandwidth slope remains tracked
-		// separately in progress_rx570.md.
+		// double-counted random-load stalls. Aggregate sustained bandwidth is
+		// enforced independently on the shared L2-to-DRAM path below.
 		WithBankedDRAM(true).
 		WithDRAMMemFreq(250*timing.MHz).
 		WithDRAMNumInternalBanks(4).
 		WithDRAMBankPipelineWidth(1).
 		WithDRAMBankPipelineDepth(1).
 		WithDRAMStageLatency(1).
+		// A shared request token bucket allows an initial 896 KiB of cache-line
+		// traffic, then limits sustained L2-to-DRAM issue to one 64-byte line
+		// per GPU cycle. This retains bank-level random-miss concurrency while
+		// matching the measured large-vector slope.
+		WithL2ToDRAMRequestRate(1, 1).
+		WithL2ToDRAMRequestBurst(14336).
 		// Structural timing mechanisms adopted from the calibrated gfx90c
 		// model; numeric values are calibrated against RX 570 hardware.
 		WithRegisterScoreboard(true).

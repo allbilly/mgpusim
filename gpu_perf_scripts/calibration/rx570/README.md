@@ -80,6 +80,7 @@ MARE is **6.5% across the nine benchmarks with steady hardware data**, and
 every measured error is below 10%. All ten benchmarks verify their output;
 matrix transpose has only a 78.722 µs cold hardware measurement, so it is not
 included in steady MARE (its 77.155 µs simulation is 2.0% lower).
+The multi-size vector evidence is recorded in `vectoradd_size_sweep.txt`.
 
 ## Main model corrections
 
@@ -90,6 +91,9 @@ included in steady MARE (its 77.155 µs simulation is 2.0% lower).
 - GDDR5 exposes four interleaved banks per 32-bit controller so unrelated
   random misses can overlap; cache and store serialization costs are modeled
   separately.
+- A shared L2-to-DRAM token bucket preserves short/random bursts and limits
+  sustained cache-line issue. The 262,144-element vectoradd error improves
+  from 47.2% to 2.2%.
 - Sparse read coalescing no longer pays an extra per-line stall on top of the
   actual generated requests and memory latency.
 - A separate 126-cycle wide-read serialization cost models the matrix
@@ -107,6 +111,5 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned after granting the user `render` access
   to `/dev/kfd`.
-- Add a controller-wide bandwidth throttle shared by internal DRAM banks; the
-  current suite-calibrated model still underpredicts a 262,144-element
-  vectoradd run.
+- Investigate small-grid launch timing; vectoradd at 4,096 elements remains
+  14.9% slow, while its three larger measured sizes are below 10%.

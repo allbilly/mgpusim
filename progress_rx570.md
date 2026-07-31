@@ -79,13 +79,22 @@ The suite configuration uses:
 - separate cache, coalescing, and dense-store issue costs.
 
 This moves exact pagerank from 42.9 to 22.3 µs without serializing unrelated
-random misses. It is calibrated for the suite input sizes. A 262,144-element
-vector run is still too fast (12.839 µs versus 24.3 µs hardware), so the
-large-size bandwidth slope is an explicit remaining limitation rather than
-being hidden in the headline result. Dividing the service clock by four
-bracketed the large-vector target on the slow side but over-serialized the
-suite (12.367 µs vectoradd and 32.891 µs pagerank), so that configuration was
-rejected.
+random misses. A shared L2-to-DRAM token bucket then separates the 896 KiB
+burst region from sustained bandwidth: it begins with 14,336 cache-line
+credits and refills at one 64-byte request per 1.244 GHz GPU cycle. The
+default vectoradd and pagerank points remain bit-for-bit unchanged, while the
+262,144-element vector improves from 12.839 to 23.775 µs versus 24.3 µs
+hardware.
+
+| vector length | HW steady (µs) | Sim (µs) | Error |
+|---:|---:|---:|---:|
+| 4,096 | 4.400 | 5.055 | 14.9% |
+| 16,384 | 5.000 | 5.209 | 4.2% |
+| 65,536 | 7.101 | 7.271 | 2.4% |
+| 262,144 | 24.300 | 23.775 | 2.2% |
+
+The sustained-throughput error is now below 10%; the remaining vector outlier
+is the smallest, launch-dominated point.
 
 ### Sparse reads were charged twice
 
@@ -151,6 +160,9 @@ not folded into GPU execution time.
   over-serialized the default vectoradd and pagerank cases; rejected.
 - Full-line store cost 8 cycles and L1V latency 56 cycles jointly put
   vectoradd, ReLU, k-means, and pagerank below 10%.
+- A shared one-request/cycle limiter without burst capacity fixed the large
+  vector slope but pushed pagerank to 24.769 µs. A 14,336-line token bucket
+  preserves its random-miss overlap and retains the large-vector correction.
 
 ## Reproduction
 
@@ -169,9 +181,8 @@ the deliberately unmatched cold runtime measurement:
 
 ## Remaining work
 
-- Add a controller-wide bandwidth token shared by the internal DRAM banks.
-  This should retain random-miss concurrency while enforcing the RX 570's
-  large streaming bandwidth slope.
+- Investigate small-grid launch timing; the 4,096-element vector point is
+  14.9% slow while the three larger size-sweep points are below 10%.
 - Add `s_memtime` cycle-counter measurements and rerun with a pinned clock.
 - The current user cannot access `/dev/kfd` (`root:render`, mode 0660), so new
   hardware collection needs render-group access or administrator help.
