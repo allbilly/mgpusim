@@ -78,14 +78,20 @@ func (b *Benchmark) SetUnifiedMemory() {
 }
 
 //go:embed kernels.hsaco
+var legacyHSACOBytes []byte
+
+//go:embed kernels_gfx803.hsaco
 var gcn3HSACOBytes []byte
 
 //go:embed kernels_gfx90c.hsaco
 var gcn5HSACOBytes []byte
 
 func (b *Benchmark) loadProgram() {
-	hsacoBytes := gcn3HSACOBytes
-	if b.Arch == arch.GCN5 {
+	hsacoBytes := legacyHSACOBytes
+	switch b.Arch {
+	case arch.GCN3:
+		hsacoBytes = gcn3HSACOBytes
+	case arch.GCN5:
 		hsacoBytes = gcn5HSACOBytes
 	}
 	b.kernel = insts.LoadKernelCodeObjectFromBytes(

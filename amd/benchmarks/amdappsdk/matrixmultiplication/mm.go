@@ -119,7 +119,8 @@ func (m *GPUMatrixMultiplier) launchKernel( //nolint:funlen
 		localSizeX := uint16(8)
 		localSizeY := uint16(8)
 
-		if m.Arch == arch.CDNA3 || m.Arch == arch.GCN5 {
+		if m.Arch == arch.CDNA3 || m.Arch == arch.GCN5 ||
+			m.Arch == arch.GCN3 {
 			kernArgs := &CDNA3KernelArgs{
 				MatrixA:             gA,
 				MatrixB:             gB,
@@ -204,6 +205,9 @@ func (m *GPUMatrixMultiplier) copyDataBackFromGPU(
 //go:embed kernels.hsaco
 var hsacoBytes []byte
 
+//go:embed kernels_gfx803.hsaco
+var gcn3HSACOBytes []byte
+
 //go:embed kernels_gfx90c.hsaco
 var gcn5HSACOBytes []byte
 
@@ -217,6 +221,8 @@ func (m *GPUMatrixMultiplier) loadKernel() {
 		kernelBytes = cdna3HSACOBytes
 	case arch.GCN5:
 		kernelBytes = gcn5HSACOBytes
+	case arch.GCN3:
+		kernelBytes = gcn3HSACOBytes
 	default:
 		kernelBytes = hsacoBytes
 	}

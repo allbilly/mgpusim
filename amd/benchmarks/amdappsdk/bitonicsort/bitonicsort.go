@@ -87,6 +87,9 @@ func NewBenchmark(driver *driver.Driver) *Benchmark {
 }
 
 //go:embed kernels.hsaco
+var legacyHSACOBytes []byte
+
+//go:embed kernels_gfx803.hsaco
 var gcn3HSACOBytes []byte
 
 //go:embed kernels_gfx90c.hsaco
@@ -102,8 +105,10 @@ func (b *Benchmark) loadProgram() {
 		hsacoBytes = cdna3HSACOBytes
 	case arch.GCN5:
 		hsacoBytes = gcn5HSACOBytes
-	default:
+	case arch.GCN3:
 		hsacoBytes = gcn3HSACOBytes
+	default:
+		hsacoBytes = legacyHSACOBytes
 	}
 
 	b.hsaco = insts.LoadKernelCodeObjectFromBytes(hsacoBytes, "BitonicSort")
@@ -237,7 +242,8 @@ func (b *Benchmark) runPass(
 			numWi += remainder
 		}
 
-		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
+		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 ||
+			b.Arch == arch.GCN3 {
 			kernArg := b.createCDNA3KernelArgs(stage, passOfStage, direction, numWi, wiPerQueue*i)
 			b.driver.EnqueueLaunchKernel(
 				q,

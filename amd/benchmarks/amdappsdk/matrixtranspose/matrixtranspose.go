@@ -100,6 +100,9 @@ func (b *Benchmark) SetUnifiedMemory() {
 }
 
 //go:embed kernels.hsaco
+var legacyHSACOBytes []byte
+
+//go:embed kernels_gfx803.hsaco
 var gcn3HSACOBytes []byte
 
 //go:embed kernels_gfx90c.hsaco
@@ -115,8 +118,10 @@ func (b *Benchmark) loadProgram() {
 		hsacoBytes = cdna3HSACOBytes
 	case arch.GCN5:
 		hsacoBytes = gcn5HSACOBytes
-	default:
+	case arch.GCN3:
 		hsacoBytes = gcn3HSACOBytes
+	default:
+		hsacoBytes = legacyHSACOBytes
 	}
 	b.kernel = insts.LoadKernelCodeObjectFromBytes(hsacoBytes, "matrixTranspose")
 	if b.kernel == nil {
@@ -209,7 +214,8 @@ func (b *Benchmark) enqueueKernel(
 	blockPtr := driver.LocalPtr(b.blockSize * b.blockSize *
 		b.elemsPerThread1Dim * b.elemsPerThread1Dim * 4)
 
-	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
+	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 ||
+		b.Arch == arch.GCN3 {
 		kernArg := b.createCDNA3KernelArgs(blockPtr, wiWidth, wiHeight, numWGWidth, wgXPerGPU, wiWidthPerGPU, gpuIndex)
 		wgSizeX := uint16(b.blockSize)
 		wgSizeY := uint16(b.blockSize)

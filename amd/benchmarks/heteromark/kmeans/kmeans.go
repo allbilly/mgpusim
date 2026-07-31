@@ -135,6 +135,9 @@ func NewBenchmark(driver *driver.Driver) *Benchmark {
 }
 
 //go:embed kernels.hsaco
+var legacyHSACOBytes []byte
+
+//go:embed kernels_gfx803.hsaco
 var gcn3HSACOBytes []byte
 
 //go:embed kernels_gfx90c.hsaco
@@ -150,8 +153,10 @@ func (b *Benchmark) loadKernels() {
 		hsacoBytes = cdna3HSACOBytes
 	case arch.GCN5:
 		hsacoBytes = gcn5HSACOBytes
-	default:
+	case arch.GCN3:
 		hsacoBytes = gcn3HSACOBytes
+	default:
+		hsacoBytes = legacyHSACOBytes
 	}
 
 	b.computeKernel = insts.LoadKernelCodeObjectFromBytes(
@@ -253,7 +258,8 @@ func (b *Benchmark) transposeFeatures() {
 	for i, q := range b.queues {
 		numWI := b.NumPoints / len(b.gpus)
 
-		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
+		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 ||
+			b.Arch == arch.GCN3 {
 			globalSize := [3]uint32{uint32(numWI), 1, 1}
 			localSize := [3]uint16{64, 1, 1}
 			kernArg := CDNA3SwapArgs{
@@ -359,7 +365,8 @@ func (b *Benchmark) initializeMembership() {
 func (b *Benchmark) enqueueComputeKernel(q *driver.CommandQueue, gpuIndex int) {
 	numWI := b.NumPoints / len(b.gpus)
 
-	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
+	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 ||
+		b.Arch == arch.GCN3 {
 		globalSize := [3]uint32{uint32(numWI), 1, 1}
 		localSize := [3]uint16{64, 1, 1}
 		kernArg := CDNA3ComputeArgs{

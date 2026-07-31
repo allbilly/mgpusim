@@ -74,6 +74,9 @@ type Benchmark struct {
 }
 
 //go:embed kernels.hsaco
+var legacyHSACOBytes []byte
+
+//go:embed kernels_gfx803.hsaco
 var gcn3HSACOBytes []byte
 
 //go:embed kernels_gfx90c.hsaco
@@ -100,8 +103,10 @@ func (b *Benchmark) loadProgram() {
 		hsacoBytes = cdna3HSACOBytes
 	case arch.GCN5:
 		hsacoBytes = gcn5HSACOBytes
-	default:
+	case arch.GCN3:
 		hsacoBytes = gcn3HSACOBytes
+	default:
+		hsacoBytes = legacyHSACOBytes
 	}
 	b.hsaco = insts.LoadKernelCodeObjectFromBytes(hsacoBytes, "FIR")
 	if b.hsaco == nil {
@@ -186,7 +191,8 @@ func (b *Benchmark) enqueueKernel(queue *driver.CommandQueue, gpuIndex, numGPUs 
 	numWi := b.Length
 	gridSize := uint32(numWi / numGPUs)
 
-	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
+	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 ||
+		b.Arch == arch.GCN3 {
 		wgSizeX := uint16(256)
 		wgSizeY := uint16(1)
 		wgSizeZ := uint16(1)

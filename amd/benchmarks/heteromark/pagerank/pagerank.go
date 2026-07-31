@@ -105,6 +105,9 @@ func (b *Benchmark) SetUnifiedMemory() {
 }
 
 //go:embed kernels.hsaco
+var legacyHSACOBytes []byte
+
+//go:embed kernels_gfx803.hsaco
 var gcn3HSACOBytes []byte
 
 //go:embed kernels_gfx90c.hsaco
@@ -120,8 +123,10 @@ func (b *Benchmark) loadProgram() {
 		hsacoBytes = cdna3HSACOBytes
 	case arch.GCN5:
 		hsacoBytes = gcn5HSACOBytes
-	default:
+	case arch.GCN3:
 		hsacoBytes = gcn3HSACOBytes
+	default:
+		hsacoBytes = legacyHSACOBytes
 	}
 
 	b.kernel = insts.LoadKernelCodeObjectFromBytes(hsacoBytes, "PageRankUpdateGpu")
@@ -277,7 +282,8 @@ func (b *Benchmark) launchPageRankKernel(
 	globalSize [3]uint32,
 	localSize [3]uint16,
 ) {
-	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
+	if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 ||
+		b.Arch == arch.GCN3 {
 		b.launchCDNA3PageRank(i, globalSize, localSize)
 	} else {
 		b.launchGCN3PageRank(i, globalSize, localSize)

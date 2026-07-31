@@ -54,6 +54,17 @@ matmul
 matrixtranspose
 simpleconvolution
 
+# RX 570 calibration code objects in benchmark directories whose names also
+# match the standalone sample-binary ignore rules above.
+!amd/benchmarks/amdappsdk/matrixtranspose/
+amd/benchmarks/amdappsdk/matrixtranspose/*
+!amd/benchmarks/amdappsdk/matrixtranspose/kernels_gfx803.hsaco
+!amd/benchmarks/amdappsdk/matrixtranspose/kernels_gfx90c.hsaco
+!amd/benchmarks/heteromark/fir/
+amd/benchmarks/heteromark/fir/*
+!amd/benchmarks/heteromark/fir/kernels_gfx803.hsaco
+!amd/benchmarks/heteromark/fir/kernels_gfx90c.hsaco
+
 # HIP/ROCm build artifacts
 *.hipi
 *.bc

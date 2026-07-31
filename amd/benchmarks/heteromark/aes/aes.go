@@ -138,6 +138,9 @@ func (b *Benchmark) SetUnifiedMemory() {
 }
 
 //go:embed kernels.hsaco
+var legacyHSACOBytes []byte
+
+//go:embed kernels_gfx803.hsaco
 var gcn3HSACOBytes []byte
 
 //go:embed kernels_gfx90c.hsaco
@@ -153,8 +156,10 @@ func (b *Benchmark) loadProgram() {
 		hsacoBytes = cdna3HSACOBytes
 	case arch.GCN5:
 		hsacoBytes = gcn5HSACOBytes
-	default:
+	case arch.GCN3:
 		hsacoBytes = gcn3HSACOBytes
+	default:
+		hsacoBytes = legacyHSACOBytes
 	}
 
 	b.hsaco = insts.LoadKernelCodeObjectFromBytes(hsacoBytes, "Encrypt")
@@ -231,7 +236,8 @@ func (b *Benchmark) LaunchKernel() {
 		globalSizeX := uint32(numWi / len(b.gpus))
 		globalSize := [3]uint32{globalSizeX, 1, 1}
 
-		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 {
+		if b.Arch == arch.CDNA3 || b.Arch == arch.GCN5 ||
+			b.Arch == arch.GCN3 {
 			kernArg := CDNA3KernelArgs{
 				Input:               b.gInput,
 				ExpandedKey:         b.gExpandedKey[i],
