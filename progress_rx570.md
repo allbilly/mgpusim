@@ -109,13 +109,15 @@ then serialized every sparse line again. Disabling that extra read penalty
 reduced pagerank without changing the actual transaction count. The ordinary
 write and wide-store penalties remain.
 
-### Matrix needs a wide-load path
+### Cross-size matrix evidence rejects synthetic wide-access penalties
 
-The exact gfx803 matrix kernel uses `flat_load_dwordx4` and became VMem-bound
-in the simulator. A configurable wide-read serialization cost, 126 cycles per
-generated line for these x4 loads, brings matrix execution to 80.3 µs versus
-73.5 µs hardware, within the 10% target. It does not penalize ordinary dword
-streaming loads.
+The original calibration added 126 cycles per wide read and 161 cycles for
+wide-store strides from one matrix-multiply point. Across four sizes, those
+penalties made matrix multiply 53–58% too slow and matrix transpose 248–603%
+too slow. Removing both penalties lets the existing transaction, cache, LDS,
+and dependency timing carry the accesses directly. All eight matrix holdouts
+verify; the remaining 8–37% errors are visible rather than hidden by another
+single-point fit and are handled separately from opcode-width classification.
 
 ### AES and dense stores need distinct issue timing
 

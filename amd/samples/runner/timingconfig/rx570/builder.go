@@ -104,14 +104,12 @@ func MakeBuilder() r9nano.Builder {
 		// independent store-issue serialization cost.
 		WithMaxWriteCoalescingPenalty(120).
 		WithFullLineWritePenalty(12).
-		// A flat_load_dwordx4 transfers 16 bytes per active lane. Charge
-		// each generated cache-line transaction 126 serialization cycles to
-		// model Polaris's wide-load path. This moves the exact gfx803
-		// matrix kernel from 49 to 74 us of execution time, matching the
-		// RX 570 steady-state measurement (73.5 us), without penalizing
-		// ordinary dword streaming loads.
-		WithMaxWideReadPenalty(126).
-		WithMaxWideWriteStridePenalty(161).
+		// Wide vector accesses pay for their generated transactions, cache
+		// latency, and LDS dependencies directly. Synthetic per-line read and
+		// stride penalties fitted one matrix point but overpredicted all four
+		// matrix-multiply and transpose size curves.
+		WithMaxWideReadPenalty(0).
+		WithMaxWideWriteStridePenalty(0).
 		WithVecMemTransPipelineWidth(1).
 		// Keep the model's native shared-CU request capacity. A 128-entry
 		// override needlessly serialized independent pagerank misses.

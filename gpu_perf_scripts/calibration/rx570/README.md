@@ -122,8 +122,9 @@ is deliberately blank until recollected. Multi-size evidence is recorded in
   from 47.2% to 2.1%.
 - Sparse read coalescing no longer pays an extra per-line stall on top of the
   actual generated requests and memory latency.
-- A separate 126-cycle wide-read serialization cost models the matrix
-  kernel's `flat_load_dwordx4` path.
+- Wide vector loads and stores use their actual cache, memory, and LDS timing;
+  cross-size evidence rejected the synthetic per-line penalties previously
+  fitted to one matrix-multiply point.
 - Vector XOR/AND/OR use a separate one-cycle timing class, and fully utilized
   cache-line stores have an independent twelve-cycle issue cost.
 - GPU-side first/subsequent/post-kernel dispatch costs are calibrated for the
