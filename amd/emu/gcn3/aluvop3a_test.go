@@ -796,4 +796,23 @@ var _ = Describe("ALU", func() {
 		// inf / inf
 		Expect(state.ReadOperand(state.inst.Dst, 0)).To(Equal(math.Float64bits(0xFFF8000000000000)))
 	})
+
+	It("should run V_MAD_U16", func() {
+		state.inst = insts.NewInst()
+		state.inst.FormatType = insts.VOP3a
+		state.inst.Opcode = 491
+		state.inst.Src0 = insts.NewVRegOperand(0, 0, 1)
+		state.inst.Src1 = insts.NewVRegOperand(0, 1, 1)
+		state.inst.Src2 = insts.NewVRegOperand(0, 2, 1)
+		state.inst.Dst = insts.NewVRegOperand(0, 3, 1)
+		state.exec = 0x1
+
+		writeVRegU32(state, 0, 0, 0xffff0003)
+		writeVRegU32(state, 0, 1, 0xabcd0004)
+		writeVRegU32(state, 0, 2, 5)
+
+		alu.Run(state)
+
+		Expect(state.ReadOperand(state.inst.Dst, 0)).To(Equal(uint64(17)))
+	})
 })

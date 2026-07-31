@@ -49,6 +49,48 @@ var _ = Describe("ALU", func() {
 		Expect(dst).To(Equal(uint64(0x0000ffffffff0000)))
 	})
 
+	It("should run s_cmov_b64 when SCC is set", func() {
+		state.inst = insts.NewInst()
+		state.inst.FormatType = insts.SOP1
+		state.inst.Opcode = 3
+		state.inst.Src0 = insts.NewSRegOperand(0, 0, 2)
+		state.inst.Dst = insts.NewSRegOperand(0, 4, 2)
+
+		state.WriteReg(
+			insts.SReg(0), 2, 0,
+			insts.Uint64ToBytes(0x1234567887654321),
+		)
+		state.SetSCC(1)
+
+		alu.Run(state)
+
+		dst := state.ReadOperand(insts.NewSRegOperand(0, 4, 2), 0)
+		Expect(dst).To(Equal(uint64(0x1234567887654321)))
+	})
+
+	It("should not run s_cmov_b64 when SCC is clear", func() {
+		state.inst = insts.NewInst()
+		state.inst.FormatType = insts.SOP1
+		state.inst.Opcode = 3
+		state.inst.Src0 = insts.NewSRegOperand(0, 0, 2)
+		state.inst.Dst = insts.NewSRegOperand(0, 4, 2)
+
+		state.WriteReg(
+			insts.SReg(0), 2, 0,
+			insts.Uint64ToBytes(0x1234567887654321),
+		)
+		state.WriteReg(
+			insts.SReg(4), 2, 0,
+			insts.Uint64ToBytes(0xaabbccddeeff0011),
+		)
+		state.SetSCC(0)
+
+		alu.Run(state)
+
+		dst := state.ReadOperand(insts.NewSRegOperand(0, 4, 2), 0)
+		Expect(dst).To(Equal(uint64(0xaabbccddeeff0011)))
+	})
+
 	It("should run s_not_u32", func() {
 		state.inst = insts.NewInst()
 		state.inst.FormatType = insts.SOP1

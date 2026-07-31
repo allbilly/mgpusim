@@ -14,6 +14,8 @@ func (u *ALU) runSOP1(state emu.InstEmuState) {
 		u.runSMOVB32(state)
 	case 1:
 		u.runSMOVB64(state)
+	case 2, 3:
+		u.runSCMOVB(state)
 	case 4:
 		u.runSNOTU32(state)
 	case 8:
@@ -43,6 +45,16 @@ func (u *ALU) runSOP1(state emu.InstEmuState) {
 	default:
 		log.Panicf("Opcode %d for SOP1 format is not implemented", inst.Opcode)
 	}
+}
+
+func (u *ALU) runSCMOVB(state emu.InstEmuState) {
+	if state.SCC() == 0 {
+		return
+	}
+
+	inst := state.Inst()
+	src0 := state.ReadOperand(inst.Src0, 0)
+	state.WriteOperand(inst.Dst, 0, src0)
 }
 
 func (u *ALU) runSMOVB32(state emu.InstEmuState) {

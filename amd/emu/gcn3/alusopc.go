@@ -34,8 +34,34 @@ func (u *ALU) runSOPC(state emu.InstEmuState) {
 		u.runSCMPLTU32(state)
 	case 11:
 		u.runSCMPLEU32(state)
+	case 18:
+		u.runSCMPEQU64(state)
+	case 19:
+		u.runSCMPNEU64(state)
 	default:
 		log.Panicf("Opcode %d for SOPC format is not implemented", inst.Opcode)
+	}
+}
+
+func (u *ALU) runSCMPEQU64(state emu.InstEmuState) {
+	inst := state.Inst()
+	src0 := state.ReadOperand(inst.Src0, 0)
+	src1 := state.ReadOperand(inst.Src1, 0)
+	if src0 == src1 {
+		state.SetSCC(1)
+	} else {
+		state.SetSCC(0)
+	}
+}
+
+func (u *ALU) runSCMPNEU64(state emu.InstEmuState) {
+	inst := state.Inst()
+	src0 := state.ReadOperand(inst.Src0, 0)
+	src1 := state.ReadOperand(inst.Src1, 0)
+	if src0 != src1 {
+		state.SetSCC(1)
+	} else {
+		state.SetSCC(0)
 	}
 }
 

@@ -244,6 +244,43 @@ var _ = Describe("ALU", func() {
 		Expect(state.SCC()).To(Equal(byte(0)))
 	})
 
+	It("should run S_CMP_EQ_U64", func() {
+		state.inst = insts.NewInst()
+		state.inst.FormatType = insts.SOPC
+		state.inst.Opcode = 18
+		state.inst.Src0 = insts.NewSRegOperand(0, 0, 2)
+		state.inst.Src1 = insts.NewSRegOperand(0, 2, 2)
+
+		value := uint64(0x1234567887654321)
+		state.WriteReg(insts.SReg(0), 2, 0, insts.Uint64ToBytes(value))
+		state.WriteReg(insts.SReg(2), 2, 0, insts.Uint64ToBytes(value))
+
+		alu.Run(state)
+
+		Expect(state.SCC()).To(Equal(byte(1)))
+	})
+
+	It("should run S_CMP_NE_U64", func() {
+		state.inst = insts.NewInst()
+		state.inst.FormatType = insts.SOPC
+		state.inst.Opcode = 19
+		state.inst.Src0 = insts.NewSRegOperand(0, 0, 2)
+		state.inst.Src1 = insts.NewSRegOperand(0, 2, 2)
+
+		state.WriteReg(
+			insts.SReg(0), 2, 0,
+			insts.Uint64ToBytes(0x1234567887654321),
+		)
+		state.WriteReg(
+			insts.SReg(2), 2, 0,
+			insts.Uint64ToBytes(0x1234567887654322),
+		)
+
+		alu.Run(state)
+
+		Expect(state.SCC()).To(Equal(byte(1)))
+	})
+
 	It("should run S_CMP_GT_U32", func() {
 		state.inst = insts.NewInst()
 		state.inst.FormatType = insts.SOPC

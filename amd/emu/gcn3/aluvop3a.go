@@ -89,6 +89,8 @@ func (u *ALU) runVOP3A(state emu.InstEmuState) {
 		u.runVMADI32I24(state)
 	case 451, 488:
 		u.runVMADU64U32(state)
+	case 491:
+		u.runVMADU16(state)
 	case 456:
 		u.runVBFEU32(state)
 	case 457:
@@ -143,6 +145,22 @@ func (u *ALU) runVOP3A(state emu.InstEmuState) {
 		log.Panicf("Opcode %d for VOP3a format is not implemented", inst.Opcode)
 	}
 	u.vop3aPostprocess(state)
+}
+
+func (u *ALU) runVMADU16(state emu.InstEmuState) {
+	inst := state.Inst()
+	exec := state.EXEC()
+	for i := 0; i < 64; i++ {
+		if exec&(1<<uint(i)) == 0 {
+			continue
+		}
+
+		src0 := uint32(state.ReadOperand(inst.Src0, i)) & 0xffff
+		src1 := uint32(state.ReadOperand(inst.Src1, i)) & 0xffff
+		src2 := uint32(state.ReadOperand(inst.Src2, i))
+		result := src0*src1 + src2
+		state.WriteOperand(inst.Dst, i, uint64(result))
+	}
 }
 
 func (u *ALU) vop3aPreprocess(state emu.InstEmuState) {

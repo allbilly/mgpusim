@@ -319,8 +319,8 @@ func (d *Disassembler) initializeDecodeTable() {
 	d.addInstType(&InstType{"s_bitcmp1_b64", 15, FormatTable[SOPC], 0, ExeUnitScalar, 32, 32, 32, 0, 0})
 	d.addInstType(&InstType{"s_setvskip", 16, FormatTable[SOPC], 0, ExeUnitScalar, 32, 32, 32, 0, 0})
 	d.addInstType(&InstType{"s_set_gpr_idx_on", 17, FormatTable[SOPC], 0, ExeUnitScalar, 32, 32, 32, 0, 0})
-	d.addInstType(&InstType{"s_cmp_eq_u64", 18, FormatTable[SOPC], 0, ExeUnitScalar, 32, 32, 32, 0, 0})
-	d.addInstType(&InstType{"s_cmp_ne_u64", 19, FormatTable[SOPC], 0, ExeUnitScalar, 32, 32, 32, 0, 0})
+	d.addInstType(&InstType{"s_cmp_eq_u64", 18, FormatTable[SOPC], 0, ExeUnitScalar, 32, 64, 64, 0, 0})
+	d.addInstType(&InstType{"s_cmp_ne_u64", 19, FormatTable[SOPC], 0, ExeUnitScalar, 32, 64, 64, 0, 0})
 
 	// SOPK instructions
 	d.addInstType(&InstType{"s_movk_i32", 0, FormatTable[SOPK], 0, ExeUnitScalar, 32, 32, 32, 0, 0})
