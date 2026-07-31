@@ -12,31 +12,32 @@ import (
 )
 
 var defaultSpec = Spec{
-	Freq:                         1 * timing.GHz,
-	SIMDCount:                    4,
-	WfPoolSize:                   10,
-	VGPRCounts:                   []int{16384, 16384, 16384, 16384},
-	SGPRCount:                    3200,
-	LDSBytes:                     64 * 1024,
-	Log2CachelineSize:            6,
-	NumSinglePrecisionUnits:      16,
-	VecMemInstPipelineStages:     6,
-	VecMemTransPipelineStages:    10,
-	VecMemTransPipelineWidth:     1,
-	MemPipelineBufferSize:        8,
-	MaxCoalescingPenalty:         0,
-	MaxWriteCoalescingPenalty:    0,
-	MaxWideWriteStridePenalty:    0,
-	RegisterScoreboard:           false,
-	LDSPipelineLatency:           14,
-	LDSIssueInterval:             0,
-	LDSMaxInFlight:               1,
-	LDSBankCount:                 0,
-	LDSBankWidth:                 4,
-	LDSBankConflictPenalty:       0,
-	BarrierLatency:               0,
-	InFlightVectorMemAccessLimit: 512,
-	InstBufByteSize:              256,
+	Freq:                           1 * timing.GHz,
+	SIMDCount:                      4,
+	WfPoolSize:                     10,
+	VGPRCounts:                     []int{16384, 16384, 16384, 16384},
+	SGPRCount:                      3200,
+	LDSBytes:                       64 * 1024,
+	Log2CachelineSize:              6,
+	NumSinglePrecisionUnits:        16,
+	VecMemInstPipelineStages:       6,
+	VecMemTransPipelineStages:      10,
+	VecMemTransPipelineWidth:       1,
+	MemPipelineBufferSize:          8,
+	MaxCoalescingPenalty:           0,
+	MaxSparseReadCoalescingPenalty: 0,
+	MaxWriteCoalescingPenalty:      0,
+	MaxWideWriteStridePenalty:      0,
+	RegisterScoreboard:             false,
+	LDSPipelineLatency:             14,
+	LDSIssueInterval:               0,
+	LDSMaxInFlight:                 1,
+	LDSBankCount:                   0,
+	LDSBankWidth:                   4,
+	LDSBankConflictPenalty:         0,
+	BarrierLatency:                 0,
+	InFlightVectorMemAccessLimit:   512,
+	InstBufByteSize:                256,
 }
 
 // DefaultSpec returns a copy of the default compute-unit configuration.
@@ -234,6 +235,8 @@ func (b *Builder) equipVectorMemoryUnit(cu *ComputeUnit, name string) {
 	}
 	vectorMemoryUnit := NewVectorMemoryUnit(cu, coalescer)
 	vectorMemoryUnit.maxCoalescingPenalty = b.spec.MaxCoalescingPenalty
+	vectorMemoryUnit.maxSparseReadCoalescingPenalty =
+		b.spec.MaxSparseReadCoalescingPenalty
 	vectorMemoryUnit.maxWriteCoalescingPenalty =
 		b.spec.MaxWriteCoalescingPenalty
 	vectorMemoryUnit.maxWideWriteStridePenalty =

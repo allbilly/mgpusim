@@ -90,6 +90,31 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(24))
 	})
 
+	It("adds a penalty only for multi-lane reads using at most two words", func() {
+		vecMemUnit.maxCoalescingPenalty = 16
+		vecMemUnit.maxSparseReadCoalescingPenalty = 32
+
+		twoWordTxn := VectorMemAccessInfo{
+			Read: &memprotocol.ReadReq{AccessByteSize: 64},
+			laneInfo: []vectorMemAccessLaneInfo{
+				{addrOffsetInCacheLine: 0},
+				{addrOffsetInCacheLine: 4},
+			},
+		}
+		Expect(vecMemUnit.computeCoalescingPenalty(twoWordTxn)).To(Equal(42))
+
+		fourWordTxn := VectorMemAccessInfo{
+			Read: &memprotocol.ReadReq{AccessByteSize: 64},
+			laneInfo: []vectorMemAccessLaneInfo{
+				{addrOffsetInCacheLine: 0},
+				{addrOffsetInCacheLine: 4},
+				{addrOffsetInCacheLine: 8},
+				{addrOffsetInCacheLine: 12},
+			},
+		}
+		Expect(vecMemUnit.computeCoalescingPenalty(fourWordTxn)).To(Equal(12))
+	})
+
 	It("uses ordinary utilization cost for MUBUF scratch writes", func() {
 		vecMemUnit.maxCoalescingPenalty = 16
 		vecMemUnit.maxWriteCoalescingPenalty = 32
