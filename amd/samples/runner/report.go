@@ -228,7 +228,7 @@ func (r *reporter) injectCacheLatencyTracer(s *simulation.Simulation) {
 }
 
 func (r *reporter) injectCacheHitRateTracer(s *simulation.Simulation) {
-	if !*reportAll && !*cacheLatencyReportFlag {
+	if !cacheHitRateReportingEnabled() {
 		return
 	}
 
@@ -244,6 +244,10 @@ func (r *reporter) injectCacheHitRateTracer(s *simulation.Simulation) {
 			tracing.CollectTrace(comp.(tracing.NamedHookable), tracer)
 		}
 	}
+}
+
+func cacheHitRateReportingEnabled() bool {
+	return *reportAll || *cacheHitRateReportFlag
 }
 
 func (r *reporter) injectTLBHitRateTracer(s *simulation.Simulation) {
