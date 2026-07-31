@@ -1016,9 +1016,73 @@ artifact directory is
 No parameter is changed from the pilot contrasts. Full pinned width, alias,
 dependency, footprint, and work-group production sweeps are required first.
 A uniform L1/L2 latency change remains rejected because it cannot predict
-those signatures independently. An L2-specific term remains a candidate, not
-a conclusion, and must be tested with capacity-boundary, equal-repeat, and
-zero-trip controls.
+those signatures independently. The same-repeat simulator sweep shows that
+dependency exposes miss service, but application counters reject a generic
+L1-miss penalty. The next candidate must distinguish wide, sparsely occupied,
+wait-heavy VMEM from narrow traffic hidden by many resident waves; pinned
+width and occupancy slopes may still reject any nonzero value.
+
+Commit `cb449a91` adds the earlier alias-fanout retirement mechanism as an
+experimental, default-off API; gfx90c does not enable it. Its default-off path
+was checked against four exact VMEM controls plus corrected matmul N128 and
+matched K-means P4096. Every kernel time and every canonical reported metric
+row was identical to the pre-model artifact:
+
+| Control | Before (us) | Default-off (us) |
+|---------|------------:|-----------------:|
+| serial 8 KiB/R64 | 11.450 | 11.450 |
+| independent4 8 KiB/R64 | 7.468 | 7.468 |
+| serial 64 KiB/R512 | 64.766 | 64.766 |
+| independent4 64 KiB/R512 | 32.808 | 32.808 |
+| corrected matmul N128 | 42.229 | 42.229 |
+| matched K-means P4096 | 40.439 | 40.439 |
+
+All output verification, focused tests, return-code checks, and SQLite
+integrity checks passed. The immutable 48-file artifact and manifest are at
+`/tmp/mgpusim-defaultoff-cb449a91.ASWR8f`. This validates compatibility only;
+the hardware alias contrasts do not support enabling the mechanism.
+
+### Production VMEM signatures
+
+Exact-HSACO disassembly and fresh verified counters map the two priority
+applications to different VMEM regimes:
+
+| Metric | corrected matmul N128 | matched K-means P4096 |
+|--------|-----------------------:|----------------------:|
+| Waves/work-groups | 16 | 64 swap + 64 compute |
+| Main vector loads | dwordx4 | dword |
+| L1V reads | 11,392 | 86,016 |
+| L1V hit/miss/MSHR-hit | 2,331 / 7,673 / 1,388 | 2,668 / 83,348 / 0 |
+| L1V miss fraction | 67.4% | 96.9% |
+| Weighted L1V latency | 78.7 ns | 133.5 ns |
+| L2 direct-hit fraction | 89.0% | 95.65% |
+| Sim time | 42.229 us | 40.439 us |
+
+Each matmul wave issues 144 `global_load_dwordx4` instructions: 16 strict
+alias-1 A loads and 128 exact interleaved alias-8 B loads. A uses
+`load -> vmcnt(0) -> ds_write`; B mixes one two-load window with essentially
+serialized drains. Four VGPR spills add narrow scratch traffic. The provisional
+corrected pinned ratio, about 74--76 us over 42.229 us, is 1.75--1.80. That is
+strikingly close to the x4 serial pilot ratios for both alias-8 (1.771) and
+alias-1 (1.794), further rejecting alias-only fanout.
+
+K-means is a much stronger miss stream but a different execution shape. Its
+swap and compute kernels each launch 64 waves, use narrow serialized dword
+loads, and have no spills or LDS. Swap emits 64 L1V transactions per load;
+compute emits four and drains both `vmcnt(0)` and `lgkmcnt(0)` before arithmetic.
+The 16-KiB feature-row spacing creates severe L1 set conflicts, leaving only a
+3.1% L1V hit rate, but high wave pressure hides service well enough that its
+simulator time is already within 3% of the legacy target.
+
+Consequently a generic L1- or L2-miss latency increase would penalize K-means
+more than matmul and is rejected. The remaining hypothesis is an overlapable
+wide-VMEM completion/return cost: x4 matmul should pay more per drained load,
+while K-means dword traffic can be hidden across 64 resident waves. This is
+not the duplicate-only model in `cb449a91`. It requires pinned width and
+work-group slopes before implementation or enablement. Fresh counter databases
+and disassemblies are retained at `/tmp/matmul_signature.sqlite3`,
+`/tmp/kmeans_signature.sqlite3`, `/tmp/matmul_exact.disasm`, and
+`/tmp/kmeans_exact.disasm`.
 
 ## Remaining validation
 
@@ -1030,9 +1094,11 @@ the transpose width curve demonstrates why that is not sufficient. Candidate
 mechanisms must also survive dependent-latency and independent-throughput
 controls plus geometric sweeps around regime boundaries.
 
-The corrected matrix kernel still needs a replacement pinned N=128 hardware
-measurement when privileged clock control is available. Until then, its
-diagnostic auto-clock curve can validate scaling shape but not absolute error.
+The corrected matrix kernel still needs a guarded production pinned N=128
+measurement. Two fully verified pinned diagnostic batches near 74--76 us
+establish the direction, but they do not meet the nine-batch production
+protocol. Until a contamination-free window is available, its diagnostic
+curves can validate scaling shape but not a final absolute target.
 The ReLU/AES narrow gate margins, a pinned-clock repetition of the full-line
 store-stride probe, and a pinned corrected matrix-multiplication target are the
 highest-priority follow-up measurements.
