@@ -20,6 +20,7 @@ SPECS=(
   "aes|amd/benchmarks/heteromark/aes/native/kernels.cpp|amd/benchmarks/heteromark/aes/kernels_gfx90c.hsaco|Encrypt"
   "fir|amd/benchmarks/heteromark/fir/native/fir.cpp|amd/benchmarks/heteromark/fir/kernels_gfx90c.hsaco|FIR"
   "cachelatency|amd/benchmarks/microbench/cachelatency/native/cache_latency.cpp|amd/benchmarks/microbench/cachelatency/kernels_gfx90c.hsaco|pointer_chase_kernel,vector_pointer_chase_kernel"
+  "storestride|amd/benchmarks/microbench/storestride/native/store_stride.cpp|amd/benchmarks/microbench/storestride/kernels_gfx90c.hsaco|full_line_store_stride_kernel"
   "kmeans|amd/benchmarks/heteromark/kmeans/native/kmeans.cpp|amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco|kmeans_kernel_swap,kmeans_kernel_compute"
   "pagerank|amd/benchmarks/heteromark/pagerank/native/pagerank.cpp|amd/benchmarks/heteromark/pagerank/kernels_gfx90c.hsaco|PageRankUpdateGpu"
   "nw|amd/benchmarks/rodinia/nw/native/nw.cpp|amd/benchmarks/rodinia/nw/kernels_gfx90c.hsaco|nw_kernel1,nw_kernel2"
@@ -49,12 +50,15 @@ for spec in "${SPECS[@]}"; do
   output="$BUILD_DIR/${base}-hip-amdgcn-amd-amdhsa-${ARCH}.out"
 
   echo "== building $name ($ARCH $OPT_LEVEL) =="
+  # A stable explicit CUID prevents the random temporary build path from
+  # changing otherwise identical code-object hashes.
   podman run --rm \
     -v "$ROOT:$ROOT:ro,z" \
     -v "$BUILD_DIR:$BUILD_DIR:z" \
     -w "$BUILD_DIR" \
     "$IMAGE" \
     hipcc "$OPT_LEVEL" --save-temps -c --offload-arch="$ARCH" \
+    -cuid="$name" \
     "$ROOT/$source" -o "$name.o"
 
   if [[ ! -f "$output" ]]; then

@@ -96,6 +96,10 @@ static bool report_components = false;
 static int cache_array_bytes = 16 * 1024;
 static int cache_num_accesses = 131072;
 static int cache_active_lanes = 0;
+static int store_stride_lines = 1;
+static int store_allocation_stride_lines = 128;
+static int store_repeats = 32;
+static int store_workgroups = 1;
 static int relu_length = 65536;
 static int matrix_size = 128;
 static int transpose_width = 512;
@@ -467,6 +471,75 @@ static void bench_cache_latency(int iters) {
   HIP_CHECK(hipFree(device_result));
 }
 
+static void bench_storestride(int iters) {
+  if (store_stride_lines < 1 || store_allocation_stride_lines < 1 ||
+      store_stride_lines > store_allocation_stride_lines ||
+      store_repeats < 1 || store_workgroups < 1) {
+    fprintf(stderr, "invalid store-stride geometry\n");
+    std::exit(2);
+  }
+  ModuleKernel kernel(
+      "amd/benchmarks/microbench/storestride/kernels_gfx90c.hsaco",
+      "full_line_store_stride_kernel");
+  const uint64_t epoch_span_lines =
+      uint64_t(15) * uint64_t(store_allocation_stride_lines) + 1;
+  const uint64_t epochs =
+      uint64_t(store_repeats) * uint64_t(store_workgroups);
+  if (epochs > UINT32_MAX / epoch_span_lines ||
+      epochs * epoch_span_lines > UINT32_MAX / 4) {
+    fprintf(stderr, "store-stride vector index exceeds 32 bits\n");
+    std::exit(2);
+  }
+  const uint64_t output_words = epochs * epoch_span_lines * 16;
+  std::vector<uint32_t> expected(output_words, 0);
+
+  for (int workgroup = 0; workgroup < store_workgroups; ++workgroup) {
+    for (int repeat = 0; repeat < store_repeats; ++repeat) {
+      const uint64_t epoch =
+          uint64_t(workgroup * store_repeats + repeat);
+      for (int lane = 0; lane < 64; ++lane) {
+        const uint64_t line = epoch * epoch_span_lines +
+                              uint64_t(lane >> 2) * store_stride_lines;
+        const uint64_t word = line * 16 + uint64_t(lane & 3) * 4;
+        const uint32_t tag = uint32_t(epoch * 64 + uint64_t(lane) + 1);
+        expected[word + 0] = tag;
+        expected[word + 1] = tag ^ 0x13579bdfu;
+        expected[word + 2] = tag ^ 0x2468ace0u;
+        expected[word + 3] = tag ^ 0xa5a5a5a5u;
+      }
+    }
+  }
+
+  uint32_t *output;
+  HIP_CHECK(hipMalloc(&output, output_words * sizeof(uint32_t)));
+  HIP_CHECK(hipMemset(output, 0, output_words * sizeof(uint32_t)));
+  uint32_t stride = uint32_t(store_stride_lines);
+  uint32_t allocation_stride = uint32_t(store_allocation_stride_lines);
+  uint32_t repeats = uint32_t(store_repeats);
+  float us = time_iters(iters, [&] {
+    void *args[] = {&output, &stride, &allocation_stride, &repeats};
+    kernel.launch(dim3(store_workgroups), dim3(64), 0, args);
+  });
+
+  std::vector<uint32_t> actual(output_words);
+  HIP_CHECK(hipMemcpy(actual.data(), output,
+                      output_words * sizeof(uint32_t),
+                      hipMemcpyDeviceToHost));
+  for (uint64_t word = 0; word < output_words; ++word) {
+    if (actual[word] != expected[word]) {
+      fprintf(stderr,
+              "storestride word %llu mismatch: expected %#x, got %#x\n",
+              static_cast<unsigned long long>(word), expected[word],
+              actual[word]);
+      std::exit(3);
+    }
+  }
+  printf("storestride %.3f\n", us);
+  printf("storestride_ns_per_repeat %.6f\n",
+         double(us) * 1000.0 / double(store_repeats));
+  HIP_CHECK(hipFree(output));
+}
+
 static void bench_kmeans(int iters) {
   ModuleKernel swap_kernel(
       "amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco",
@@ -697,6 +770,15 @@ int main(int argc, char **argv) {
       cache_num_accesses = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--active-lanes") && i + 1 < argc)
       cache_active_lanes = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--store-stride-lines") && i + 1 < argc)
+      store_stride_lines = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--store-allocation-stride-lines") &&
+             i + 1 < argc)
+      store_allocation_stride_lines = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--store-repeats") && i + 1 < argc)
+      store_repeats = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--store-workgroups") && i + 1 < argc)
+      store_workgroups = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--relu-length") && i + 1 < argc)
       relu_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--matrix-size") && i + 1 < argc)
@@ -744,5 +826,7 @@ int main(int argc, char **argv) {
   run("kmeans", bench_kmeans, iters);
   run("pagerank", bench_pagerank, iters);
   run("nw", bench_nw, iters);
+  if (only == "storestride")
+    bench_storestride(iters);
   return 0;
 }

@@ -75,7 +75,15 @@ The exact-HSACO harness supports application size sweeps without recompiling:
 ./build/isca10_bench --only kmeans --points 2048 --features 16 --clusters 5
 ./build/isca10_bench --only pagerank --pagerank-nodes 256
 ./build/isca10_bench --only nw --nw-length 64
+./build/isca10_bench --only storestride --store-stride-lines 64 \
+  --store-allocation-stride-lines 128 --store-repeats 32
 ```
+
+The store-stride probe is explicit-only and is not part of the scored
+application suite. Its 64-lane wave emits 16 complete cache-line stores per
+dynamic instruction. Keep `--store-allocation-stride-lines` fixed while
+sweeping the actual stride so allocation, initialization, and DMA policy do
+not become hidden variables.
 
 PageRank hardware fixtures are generated for 128, 256, and 512 nodes at
 sparsity 0.5, using the same deterministic CSR generator as the simulator.
@@ -103,6 +111,15 @@ list:
 ```bash
 ONLY=matrixmult,matrixtranspose SIM_JOBS=2 \
   ./run_sim.sh sim_out_lds
+```
+
+Run the matching full-line store-stride simulator probe directly:
+
+```bash
+/home/fedora/.local/go/bin/go run ./amd/samples/store_stride \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -stride-lines 64 -allocation-stride-lines 128 -repeats 32 \
+  -report-cache-hit-rate
 ```
 
 The comparison reports `HW/Sim`, signed error as `(HW/Sim - 1) × 100`, and

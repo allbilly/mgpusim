@@ -199,6 +199,30 @@ Record latency, generated memory transactions, and cache hit rate in both
 hardware tooling and MGPUSim. This isolates line formation and request issue
 width from raw cache latency.
 
+For store locality, avoid mapping one 16-byte lane store to each distant line:
+that creates partial-line transactions and measures read-modify-write or
+write-combine cost as well as stride. The checked-in gfx90c probe groups four
+adjacent lanes into each complete 64-byte line and varies only the distance
+between the 16 full lines emitted by one wave instruction:
+
+```bash
+/home/fedora/.local/go/bin/go run ./amd/samples/store_stride \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -stride-lines 64 -allocation-stride-lines 128 -repeats 32 \
+  -report-cache-hit-rate
+
+ALLOW_UNPINNED_CLOCK=1 \
+  gpu_perf_scripts/calibration/gfx90c/build_and_run.sh \
+  --only storestride --store-stride-lines 64 \
+  --store-allocation-stride-lines 128 --store-repeats 32
+```
+
+Sweep line distances `1, 2, 4, 8, 16, 32, 63, 64, 65, 128` while keeping the
+allocation stride at 128. This holds allocation size and initialization policy
+constant across the threshold. Use unpinned hardware results only for
+diagnostic curve shape; fit the timing model only after repeating the sweep at
+a pinned clock.
+
 ## 5. Measure cross-kernel reuse for K-means
 
 K-means first transposes its feature matrix, then immediately consumes that
