@@ -78,9 +78,11 @@ func MakeBuilder() r9nano.Builder {
 		WithDependentLoadFlatOnly(true).
 		// Partial-line stores pay write-combine/read-modify-write cost.
 		WithMaxWriteCoalescingPenalty(103).
-		// Ablate the unsupported 64-line step while retaining the broad
-		// non-local wide-store cost measured by the full-line probe.
+		// Retain the calibrated wide-store compensation until a pinned probe
+		// can replace it; the full-line diagnostic did not validate the exact
+		// 64-line threshold as a physical transition.
 		WithMaxWideWriteStridePenalty(240).
+		WithMaxWideWriteStrideFarPenalty(270, 64).
 		// The CU-to-cache issue path is shared and admits one coalesced
 		// transaction group per cycle.
 		WithVecMemTransPipelineWidth(1).

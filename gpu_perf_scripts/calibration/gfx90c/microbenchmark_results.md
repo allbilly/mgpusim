@@ -689,6 +689,35 @@ and transpose 129.145 us; ReLU failed at -10.36%. Commit `17117fab` restores
 narrow AES/ReLU margins; future work must measure launch behavior separately
 and validate adjacent sizes before changing the event phase.
 
+### Remove the 64-line wide-store tier
+
+Commit `24d78517` removed only the 270-cycle far tier while retaining the
+240-cycle non-local wide-store cost. This directly tested the store-stride
+result: hardware supports a broad far-stride cost at sufficient stream length,
+but not a discrete transition at exactly 64 lines.
+
+The probe behaved arithmetically: strides 63, 64, and 65 all became
+76.078 us, compared with 76.078, 85.060, and 85.060 us in the accepted
+configuration. Correctness verification passed. Targeted application results
+were:
+
+| Benchmark/size | Accepted sim (us) | No-far-tier sim (us) | Change |
+|----------------|------------------:|----------------------:|-------:|
+| transpose W=192 | 25.771 | 25.771 | 0.000 |
+| transpose W=256 | 35.498 | 35.498 | 0.000 |
+| transpose W=320 | 54.129 | 50.532 | -3.597 |
+| transpose W=512 | 129.067 | 118.220 | -10.847 |
+| matrixmult N=128 | 42.229 | 42.229 | 0.000 |
+| AES 4096 bytes | 15.476 | 15.476 | 0.000 |
+
+At W=512, the legacy transpose comparison regressed from +9.07% to +19.08%
+and failed the strict gate. The other nine default suite results were
+unchanged. The far tier is therefore synthetic compensation for a missing
+transpose cost, not a validated mechanism, but removing it alone is also not
+an acceptable calibration. The accepted tier is restored pending a pinned
+probe and a replacement mechanism that predicts both the smooth hardware
+stride curve and the transpose width curve.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
