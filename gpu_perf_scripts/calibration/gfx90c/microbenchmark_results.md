@@ -382,6 +382,18 @@ were zero and verification passed. Its raw artifacts are in
 reproducibility, while the legacy hardware-provenance limitation below still
 applies.
 
+A later completion audit at `9aebc535` again returned zero for all twenty
+overall/simulator status files and verified all ten outputs. A four-process
+run reproduced nine table values exactly, but vector-add reported 26.969 us
+once instead of 27.261 us. Five isolated fresh-process repetitions using that
+exact binary all returned 27.261 us; four concurrent vector copies and a
+repeat of the original heterogeneous first batch also returned 27.261 us.
+The one parallel value is therefore recorded as a non-reproducible outlier,
+not a new ground truth. Raw artifacts are in
+`/tmp/gfx90c-final-suite.9aebc535`, `/tmp/gfx90c-vector-repro.9aebc535`, and
+`/tmp/gfx90c-vector-parallel-repro.9aebc535`. Authoritative calibration runs
+now use `SIM_JOBS=1`; multi-process runs are throughput smoke tests.
+
 | Benchmark | Sim (us) | Pinned HW (us) | HW/Sim | Error | Gate |
 |-----------|---------:|---------------:|-------:|------:|------|
 | vectoradd | 27.261 | 29.364 | 1.0771x | +7.71% | Pass |
