@@ -85,18 +85,18 @@ func MakeBuilder() r9nano.Builder {
 		// The CU-to-cache issue path is shared and admits one coalesced
 		// transaction group per cycle.
 		WithVecMemTransPipelineWidth(1).
-		// Dispatch: 4 shader arrays; ~0.88 µs post-kernel tax per launch.
+		// Dispatch: 4 shader arrays; ~0.91 µs post-kernel tax per launch.
 		WithCPAlg("per-die").
 		WithCPNumDies(NumShaderArray).
 		WithCPWavefrontDispatchCycles(1).
-		// A cold first dispatch contributes ~2.5 us once queue submission is
+		// A cold first dispatch contributes ~2.3 us once queue submission is
 		// amortized; back-to-back launches expose the full ~6.2 us queue gap.
 		// Keep launch and completion costs separate so single- and
 		// multi-kernel workloads scale consistently.
-		WithCPConstantKernelLaunchOverhead(4050).
+		WithCPConstantKernelLaunchOverhead(3750).
 		WithCPSubsequentKernelLaunchOverhead(7500).
 		WithCPWGScalingThreshold(128).
-		WithCPConstantKernelOverhead(1400).
+		WithCPConstantKernelOverhead(1450).
 		// APU: small H2D transfers warm L2. Keep the two 64 KiB matrix
 		// inputs resident, while the 256 KiB+ streaming buffers bypass it.
 		WithDMAThroughL2(true).
