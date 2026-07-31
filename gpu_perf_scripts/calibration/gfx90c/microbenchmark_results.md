@@ -201,6 +201,31 @@ verification afterward. K-means improved from 59.096 to 50.473 us, and both
 the default one-iteration case and a three-iteration case passed CPU/RMSE
 verification. The remaining error is +28.7%, down from +50.7%.
 
+## Matrix-multiplication size sweep
+
+Commit `3fe47656` parameterized the exact-HSACO harness with
+`--matrix-size`. The same tiled kernel and 8x8 work-group were measured at
+three square sizes:
+
+| Matrix size | Work-groups | Sim (us) | HW auto/200 MHz (us) | Sim growth | HW growth |
+|------------:|------------:|---------:|---------------------:|-----------:|----------:|
+| 32          | 1           | 15.866   | 145.255              | -          | -         |
+| 64          | 4           | 22.685   | 267.803              | 1.43x      | 1.84x     |
+| 128         | 16          | 45.141   | 518.458              | 1.99x      | 1.94x     |
+
+Absolute comparison remains invalid while hardware is unpinned, but the
+saturated 64-to-128 growth agrees closely. Combined with the vector pointer
+chase and the disassembly result that scratch is only 1.2% of instructions,
+this provides no support for changing general L2 latency, LDS throughput, or
+matmul-specific execution timing. The remaining pinned-reference error is
++15.4%, already below 20%; a pinned-clock LDS/VALU component probe is required
+before another timing-model change.
+
+The benchmark verifier also contained an unrelated loop-variable error that
+checked only part of one row. Commit `91808957` now checks every output element
+and adds a regression test, ensuring future size/ISA variants cannot produce a
+false pass.
+
 ## Accepted general fixes
 
 Two benchmark-driven fixes improved the K-means/matmul state:

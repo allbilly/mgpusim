@@ -293,6 +293,13 @@ private-address mapping, coalescing, transaction issue width, or concurrency.
 If both scratch-free and spilled matmul disagree, investigate VALU, LDS,
 barriers, or occupancy before changing scratch.
 
+Also sweep the unchanged production kernel at square sizes 32, 64, and 128.
+This separates a one-work-group dispatch-dominated point from the 4- and
+16-work-group scaling regime. On the current gfx90c model, the 64-to-128
+growth is 1.99x in simulation versus 1.94x on unpinned hardware. That agreement
+does not calibrate absolute latency, but it argues against a matmul-specific
+throughput knob until a pinned-clock component measurement says otherwise.
+
 ## 7. Use counters as supporting evidence
 
 Query the counters that the installed ROCm stack actually exposes:
