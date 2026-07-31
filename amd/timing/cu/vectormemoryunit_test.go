@@ -90,16 +90,22 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(24))
 	})
 
-	It("charges the configured full-line write serialization cost", func() {
+	It("charges full-line serialization once per instruction", func() {
 		vecMemUnit.fullLineWritePenalty = 3
 		fullMask := make([]bool, 64)
 		for i := range fullMask {
 			fullMask[i] = true
 		}
+		inst1 := wavefront.NewInst(insts.NewInst())
+		inst2 := wavefront.NewInst(insts.NewInst())
 		writeTxn := VectorMemAccessInfo{
 			Write: &memprotocol.WriteReq{DirtyMask: fullMask},
+			Inst:  inst1,
 		}
 
+		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(3))
+		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(0))
+		writeTxn.Inst = inst2
 		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(3))
 	})
 

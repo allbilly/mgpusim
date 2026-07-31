@@ -7,9 +7,9 @@
 // are taken from the AMD RX 570 product page and corroborating spec sheets.
 // Timing latencies are calibrated against the ISCA-10 benchmark suite run on
 // the physical RX 570 (see gpu_perf_scripts/calibration/rx570/hw_ground_truth.txt).
-// The steady-state calibration achieves 6.3% MARE across the 9 benchmarks
-// with steady hardware data, with every error below 10%; all 10 benchmarks
-// execute and verify. Cold
+// The steady-state calibration achieves 7.0% MARE across 33 matched size
+// points and 10.0% canonical-size MARE; all 10 benchmarks execute and verify.
+// Cold
 // hipEvent measurements are reported separately because they include
 // workload-dependent host/runtime first-use costs outside the GPU model.
 package rx570
@@ -74,9 +74,9 @@ func MakeBuilder() r9nano.Builder {
 		WithL2ToDRAMRequestRate(1, 1).
 		WithL2ToDRAMRequestBurst(10000).
 		// Dense stores can burst through 192 KiB, then share the L2 ingress at
-		// one cache line per two GPU cycles. Reads and responses remain
+		// three cache lines per five GPU cycles. Reads and responses remain
 		// unrestricted on this path.
-		WithL1ToL2WriteRate(1, 2).
+		WithL1ToL2WriteRate(3, 5).
 		WithL1ToL2WriteBurst(3072).
 		// Structural timing mechanisms adopted from the calibrated gfx90c
 		// model; numeric values are calibrated against RX 570 hardware.
@@ -108,10 +108,11 @@ func MakeBuilder() r9nano.Builder {
 		// memory latency. An extra per-line read coalescing stall was double
 		// counting pagerank's random access cost, so its cap is disabled.
 		WithMaxCoalescingPenalty(0).
-		// Partial lines pay a write-combine/RMW cost; dense lines pay a small
-		// independent store-issue serialization cost.
+		// Partial lines pay a write-combine/RMW cost; dense stores pay a
+		// 48-cycle issue cost once per wave instruction, independent of the
+		// number of cache-line transactions that instruction generates.
 		WithMaxWriteCoalescingPenalty(120).
-		WithFullLineWritePenalty(12).
+		WithFullLineWritePenalty(48).
 		// Wide vector accesses pay for their generated transactions, cache
 		// latency, and LDS dependencies directly. Synthetic per-line read and
 		// stride penalties fitted one matrix point but overpredicted all four
@@ -126,7 +127,7 @@ func MakeBuilder() r9nano.Builder {
 		// GPU-side dispatch costs only: 2380 cycles before the first kernel,
 		// 1300 before later launches, and 2500 after each kernel completes.
 		// Host/KFD first-use overhead is intentionally excluded; it varies
-		// from 10 to 50 us in the recorded cold hipEvent measurements and
+		// from 10 to 71 us in the recorded cold hipEvent measurements and
 		// is not a property of GPU kernel execution.
 		WithCPAlg("per-die").
 		WithCPNumDies(NumShaderArray).

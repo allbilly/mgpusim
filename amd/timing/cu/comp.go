@@ -104,6 +104,8 @@ type Spec struct {
 	// write-combiner capacity when wide stores jump between cache lines.
 	MaxCoalescingPenalty      int `json:"max_coalescing_penalty"`
 	MaxWriteCoalescingPenalty int `json:"max_write_coalescing_penalty"`
+	// FullLineWritePenalty is charged once per wave instruction that produces
+	// at least one fully utilized cache-line write.
 	FullLineWritePenalty      int `json:"full_line_write_penalty"`
 	MaxWideReadPenalty        int `json:"max_wide_read_penalty"`
 	MaxWideWriteStridePenalty int `json:"max_wide_write_stride_penalty"`

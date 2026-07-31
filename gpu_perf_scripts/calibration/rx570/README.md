@@ -89,21 +89,21 @@ hardware/simulator slope ratio.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 9.299 | 7.387 | 20.6% |
-| relu | 6.997 | 6.648 | 5.0% |
-| matrixmult | 52.396 | 49.803 | 4.9% |
-| matrixtranspose | 22.579 | 29.040 | 28.6% |
-| bitonicsort | 348.697 | 320.969 | 8.0% |
-| aes | 18.595 | 16.998 | 8.6% |
-| fir | 7.875 | 7.557 | 4.0% |
-| kmeans | 30.045 | 27.358 | 8.9% |
+| vectoradd | 9.299 | 7.340 | 21.1% |
+| relu | 6.997 | 6.375 | 8.9% |
+| matrixmult | 52.396 | 49.350 | 5.8% |
+| matrixtranspose | 22.579 | 25.402 | 12.5% |
+| bitonicsort | 348.697 | 321.321 | 7.9% |
+| aes | 18.595 | 16.892 | 9.2% |
+| fir | 7.875 | 7.566 | 3.9% |
+| kmeans | 30.045 | 27.345 | 9.0% |
 | pagerank | 19.176 | 22.334 | 16.5% |
-| nw | 146.999 | 137.432 | 6.5% |
+| nw | 146.999 | 139.076 | 5.4% |
 
-Canonical-size MARE is **11.2%** across all ten remeasured benchmarks. The
-anti-overfit result is **8.6% MARE across 33 matched size points**; seven of
-the eight swept families have family MARE below 10%. Matrix transpose remains
-the explicit outlier (28.8% family MARE, 34.5% maximum). All points verify.
+Canonical-size MARE is **10.0%** across all ten remeasured benchmarks. The
+anti-overfit result is **7.0% MARE across 33 matched size points**; all eight
+swept families have family MARE below 10%. The maximum point error is the
+65K vectoradd holdout at 21.1%. All points verify.
 
 ## Main model corrections
 
@@ -116,19 +116,23 @@ the explicit outlier (28.8% family MARE, 34.5% maximum). All points verify.
   separately.
 - A shared L2-to-DRAM token bucket preserves a 625 KiB short/random burst and
   limits sustained cache-line issue; the large vectoradd point remains within
-  7% across the repeated hardware median.
+  9% across the repeated hardware median.
 - A write-filtered L1-to-L2 token bucket preserves the first 192 KiB of dense
-  stores, then limits sustained write ingress to one line per two cycles. The
-  five-point ReLU MARE is 4.6% without throttling reads or responses.
+  stores, then limits sustained write ingress to three lines per five cycles.
+  Reads and responses remain unrestricted.
+- Full-line write serialization is charged once per wave instruction rather
+  than once per generated cache-line request. This preserves scalar-store
+  timing without penalizing a wide store 16 times; transpose family MARE falls
+  from 28.8% to 8.8% while the 33-point MARE falls from 8.6% to 7.0%.
 - Sparse read coalescing no longer pays an extra per-line stall on top of the
   actual generated requests and memory latency.
 - Wide vector loads and stores use their actual cache, memory, and LDS timing;
   cross-size evidence rejected the synthetic per-line penalties previously
   fitted to one matrix-multiply point.
 - Vector XOR/AND/OR use a separate one-cycle timing class, and fully utilized
-  cache-line stores have an independent twelve-cycle issue cost.
+  stores have an independent 48-cycle per-instruction issue cost.
 - Dependent FMA execution uses a twelve-cycle effective occupancy; all four
-  matrix-multiply holdouts are within 5%, while FIR and k-means remain within
+  matrix-multiply holdouts are within 6.2%, while FIR and k-means remain within
   range.
 - GPU-side first/subsequent/post-kernel dispatch costs are calibrated for the
   RX 570's multi-launch workloads. Host cold-start costs remain excluded.
@@ -141,5 +145,5 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned; current auto-clock microseconds remain
   diagnostic despite three-process medians.
-- Diagnose matrix-transpose occupancy without adding benchmark-specific
-  timing, and add size sweeps for k-means and pagerank.
+- Add size sweeps for k-means and pagerank, and investigate the 65K
+  vectoradd and canonical pagerank residuals without benchmark-specific timing.

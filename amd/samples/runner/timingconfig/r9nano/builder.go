@@ -479,8 +479,8 @@ func (b Builder) WithMaxWriteCoalescingPenalty(penalty int) Builder {
 	return b
 }
 
-// WithFullLineWritePenalty sets the serialization cost for a fully utilized
-// cache-line write transaction.
+// WithFullLineWritePenalty sets the issue serialization cost, charged once
+// for each wave instruction that produces a fully utilized cache-line write.
 func (b Builder) WithFullLineWritePenalty(penalty int) Builder {
 	b.fullLineWritePenalty = penalty
 	return b
