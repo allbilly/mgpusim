@@ -90,6 +90,8 @@ The exact-HSACO harness supports application size sweeps without recompiling:
   --store-allocation-stride-lines 128 --store-repeats 32
 ./build/isca10_bench --only scratchspill --scratch-variant scratch4 \
   --scratch-workgroups 16 --warmup 20 --iters 1000
+./build/isca10_bench --only fp32fma --fma-blocks 28 \
+  --fma-threads 256 --fmas 4096 --warmup 20 --iters 2000
 ```
 
 The store-stride probe is explicit-only and is not part of the scored
@@ -112,6 +114,30 @@ private size 20 and four VGPR spills. Sweep both variants at work-group counts
 `1, 4, 7, 14, 16, 28, 56`. Interpret
 `scratchspill_ns_per_workgroup` only as a launch-normalized diagnostic; use
 randomized paired deltas between variants for comparison.
+
+The FP32-FMA probe is explicit-only and is not part of the scored ten. Its
+exact wave64 HSACO uses four independent accumulator chains, six VGPRs, no
+LDS/private segment, and no spills. Sweep FMA work at 28 work-groups and 256
+threads with `--fmas 4,64,256,1024,4096`, then sweep occupancy at 4,096 FMAs
+and 256 threads with `--fma-blocks 1,7,14,28,56`. Choose the outer `--iters`
+once per point so its timed window is 75--150 ms; keep `--warmup 20` and the
+clock/thermal protocol above. The reported `fp32fma_ns_per_wave_fma` divides
+launch time by the total dynamic wave-FMA count, so interpret it only after
+the occupancy sweep establishes saturation.
+
+The four accumulators reuse each result only after four FMA instructions.
+Consequently this probe identifies issue throughput but cannot identify FMA
+result latency at or below four issue intervals. Do not tune result latency
+from it; that requires a separate one-accumulator dependent-chain HSACO.
+
+Run the identical simulator points with, for example:
+
+```bash
+go run ./amd/samples/fp32_throughput \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -num-blocks 28 -threads-per-block 256 -fmas 4096 \
+  -report-inst-count -report-busy-time -report-cpi-stack
+```
 
 PageRank hardware fixtures are generated for 128, 256, and 512 nodes at
 sparsity 0.5, using the same deterministic CSR generator as the simulator.

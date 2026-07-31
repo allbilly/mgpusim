@@ -4,8 +4,8 @@
 //
 // Each work-item runs a chain of fused multiply-add (FMA) operations on
 // register-resident floats using four independent accumulators. The kernel
-// is memory-traffic free except for a single checksum write from work-item
-// (0,0), which is what Verify() reproduces on the CPU. The kernel binary is
+// is memory-traffic free except for one checksum write per work-item, which
+// Verify() reproduces on the CPU. The kernel binary is
 // compiled for gfx942 (CDNA3) and gfx90c (GCN5); see the embedded
 // `kernels_gfx*.hsaco` files.
 package fp32throughput
@@ -59,9 +59,8 @@ type Benchmark struct {
 	// down to a multiple of 4 to match the kernel's 4-way unrolled loop.
 	FmasPerThread int
 	// ThreadsPerBlock is the work-group (block) size. Defaults to 256; must be
-	// <= 1024 (the gfx942 hardware maximum). The kernel reads blockDim.x, so any
-	// value launches correctly and the sweep can match the ground-truth
-	// threads_per_block dimension.
+	// <= 1024. It is passed explicitly to the kernel, so any valid value launches
+	// correctly and the sweep can match the hardware threads-per-block dimension.
 	ThreadsPerBlock int
 
 	gOut driver.Ptr

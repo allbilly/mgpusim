@@ -103,6 +103,9 @@ static int store_repeats = 32;
 static int store_workgroups = 1;
 static std::string scratch_variant = "scratch4";
 static int scratch_workgroups = 16;
+static int fma_blocks = 4;
+static int fma_threads = 256;
+static int fma_count = 256;
 static int relu_length = 65536;
 static int matrix_size = 128;
 static int transpose_width = 512;
@@ -383,6 +386,83 @@ static void bench_fir(int iters) {
   HIP_CHECK(hipFree(coeff));
   HIP_CHECK(hipFree(in));
   HIP_CHECK(hipFree(hist));
+}
+
+static void bench_fp32fma(int iters) {
+  ModuleKernel kernel(
+      "amd/benchmarks/microbench/fp32throughput/kernels_gfx90c.hsaco",
+      "fp32_fma_kernel");
+
+  if (fma_blocks < 1 || fma_threads < 64 || fma_threads > 1024 ||
+      fma_threads % 64 != 0) {
+    fprintf(stderr,
+            "fp32fma requires positive blocks and 64--1024 threads in "
+            "multiples of 64\n");
+    std::exit(2);
+  }
+  if (fma_count <= 0)
+    fma_count = 256;
+  fma_count = (fma_count / 4) * 4;
+  if (fma_count == 0)
+    fma_count = 4;
+  if (fma_blocks > std::numeric_limits<int>::max() / fma_threads) {
+    fprintf(stderr, "fp32fma launch geometry exceeds its 32-bit ABI\n");
+    std::exit(2);
+  }
+
+  const int num_threads = fma_blocks * fma_threads;
+  const size_t bytes = size_t(num_threads) * sizeof(float);
+  float *output;
+  HIP_CHECK(hipMalloc(&output, bytes));
+  HIP_CHECK(hipMemset(output, 0, bytes));
+
+  const dim3 grid(fma_blocks);
+  const dim3 block(fma_threads);
+  float us = time_iters(iters, [&] {
+    void *args[] = {&output, &fma_count, &fma_threads};
+    kernel.launch(grid, block, 0, args);
+  });
+
+  std::vector<float> actual(num_threads);
+  HIP_CHECK(hipMemcpy(actual.data(), output, bytes, hipMemcpyDeviceToHost));
+  const int laps = fma_count / 4;
+  double max_abs_error = 0.0;
+  for (int tid = 0; tid < num_threads; ++tid) {
+    const int lane = tid % fma_threads;
+    float a0 = std::fma(float(lane), 0.001f, 1.0f);
+    float a1 = a0 + 0.1f;
+    float a2 = a0 + 0.2f;
+    float a3 = a0 + 0.3f;
+    for (int lap = 0; lap < laps; ++lap) {
+      a0 = std::fma(a0, 1.0000001f, 0.0000001f);
+      a1 = std::fma(a1, 1.0000001f, 0.0000001f);
+      a2 = std::fma(a2, 1.0000001f, 0.0000001f);
+      a3 = std::fma(a3, 1.0000001f, 0.0000001f);
+    }
+    const float expected = ((a0 + a1) + a2) + a3;
+    const double abs_error = std::abs(double(actual[tid]) - expected);
+    max_abs_error = std::max(max_abs_error, abs_error);
+    const double tolerance =
+        1e-6 + 1e-5 * std::max(std::abs(double(expected)), 1.0);
+    if (!std::isfinite(actual[tid]) || abs_error > tolerance) {
+      fprintf(stderr,
+              "fp32fma mismatch at thread %d: expected %.9g, got %.9g, "
+              "abs error %.3g exceeds %.3g\n",
+              tid, expected, actual[tid], abs_error, tolerance);
+      std::exit(3);
+    }
+  }
+  fprintf(stderr,
+          "fp32fma verification Passed! blocks=%d threads=%d fmas=%d "
+          "max_abs_error=%.3g\n",
+          fma_blocks, fma_threads, fma_count, max_abs_error);
+  printf("fp32fma %.3f\n", us);
+  const uint64_t wave_fmas = uint64_t(fma_blocks) *
+                             uint64_t(fma_threads / 64) *
+                             uint64_t(fma_count);
+  printf("fp32fma_ns_per_wave_fma %.9f\n",
+         double(us) * 1000.0 / double(wave_fmas));
+  HIP_CHECK(hipFree(output));
 }
 
 static uint64_t splitmix64_next(uint64_t &state) {
@@ -898,6 +978,12 @@ int main(int argc, char **argv) {
       scratch_variant = argv[++i];
     else if (!strcmp(argv[i], "--scratch-workgroups") && i + 1 < argc)
       scratch_workgroups = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--fma-blocks") && i + 1 < argc)
+      fma_blocks = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--fma-threads") && i + 1 < argc)
+      fma_threads = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--fmas") && i + 1 < argc)
+      fma_count = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--relu-length") && i + 1 < argc)
       relu_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--matrix-size") && i + 1 < argc)
@@ -949,5 +1035,7 @@ int main(int argc, char **argv) {
     bench_storestride(iters);
   if (only == "scratchspill")
     bench_scratchspill(iters);
+  if (only == "fp32fma")
+    bench_fp32fma(iters);
   return 0;
 }

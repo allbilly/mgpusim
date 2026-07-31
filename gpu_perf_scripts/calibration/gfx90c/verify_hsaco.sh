@@ -93,6 +93,36 @@ while read -r name expected _source destination symbols; do
       done
     done
   fi
+
+  if [[ "$name" == "fp32fma" ]]; then
+    notes="$(
+      podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
+        /opt/rocm/llvm/bin/llvm-readelf --notes "$object"
+    )"
+    if [[ "$(grep -Fc '.wavefront_size: 64' <<<"$notes")" != 1 ||
+          "$(grep -Fc '.private_segment_fixed_size: 0' <<<"$notes")" != 1 ||
+          "$(grep -Fc '.vgpr_spill_count: 0' <<<"$notes")" != 1 ]]; then
+      echo "fp32fma: metadata does not describe a spill-free wave64 kernel" >&2
+      failed=1
+    fi
+
+    disasm="$(
+      podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
+        /opt/rocm/llvm/bin/llvm-objdump --mcpu=gfx90c \
+        --disassemble-symbols=fp32_fma_kernel "$object"
+    )"
+    fma_count="$(
+      grep -Ec '^[[:space:]]*v_fma_f32[[:space:]]' <<<"$disasm" || true
+    )"
+    store_count="$(
+      grep -Ec '^[[:space:]]*global_store_dword[[:space:]]' \
+        <<<"$disasm" || true
+    )"
+    if [[ "$fma_count" != 5 || "$store_count" != 1 ]]; then
+      echo "fp32fma: disassembly has $fma_count FP32 FMAs/$store_count stores, want 5/1" >&2
+      failed=1
+    fi
+  fi
   echo "$name: OK"
 done <"$MANIFEST"
 
