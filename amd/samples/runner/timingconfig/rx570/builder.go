@@ -7,8 +7,8 @@
 // are taken from the AMD RX 570 product page and corroborating spec sheets.
 // Timing latencies are calibrated against the ISCA-10 benchmark suite run on
 // the physical RX 570 (see gpu_perf_scripts/calibration/rx570/hw_ground_truth.txt).
-// The steady-state calibration achieves 6.1% MARE across 33 matched size
-// points and 7.7% canonical-size MARE; all 10 benchmarks execute and verify.
+// The steady-state calibration achieves 6.1% MARE across 37 matched size
+// points and 7.5% canonical-size MARE; all 10 benchmarks execute and verify.
 // Cold
 // hipEvent measurements are reported separately because they include
 // workload-dependent host/runtime first-use costs outside the GPU model.
@@ -73,11 +73,12 @@ func MakeBuilder() r9nano.Builder {
 		// matching the measured large-vector slope.
 		WithL2ToDRAMRequestRate(1, 1).
 		WithL2ToDRAMRequestBurst(16384).
-		// Dense stores can burst through 192 KiB, then share the L2 ingress at
-		// one cache line per GPU cycle. Reads and responses remain
+		// Dense stores can burst through 768 KiB, approximating the L2 capacity
+		// left after resident input/cache state, then share L2 ingress at one
+		// cache line per two GPU cycles. Reads and responses remain
 		// unrestricted on this path.
-		WithL1ToL2WriteRate(1, 1).
-		WithL1ToL2WriteBurst(3072).
+		WithL1ToL2WriteRate(1, 2).
+		WithL1ToL2WriteBurst(12288).
 		// Structural timing mechanisms adopted from the calibrated gfx90c
 		// model; numeric values are calibrated against RX 570 hardware.
 		WithRegisterScoreboard(true).
@@ -109,10 +110,10 @@ func MakeBuilder() r9nano.Builder {
 		// counting pagerank's random access cost, so its cap is disabled.
 		WithMaxCoalescingPenalty(0).
 		// Partial lines pay a write-combine/RMW cost; dense stores pay a
-		// 48-cycle issue cost once per wave instruction, independent of the
+		// 90-cycle issue cost once per wave instruction, independent of the
 		// number of cache-line transactions that instruction generates.
 		WithMaxWriteCoalescingPenalty(120).
-		WithFullLineWritePenalty(48).
+		WithFullLineWritePenalty(90).
 		// Wide vector accesses pay for their generated transactions, cache
 		// latency, and LDS dependencies directly. Synthetic per-line read and
 		// stride penalties fitted one matrix point but overpredicted all four

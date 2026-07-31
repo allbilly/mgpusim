@@ -26,7 +26,9 @@ SPECS = {
     "vectoradd": ([4096, 16384, 65536, 262144], lambda n: n),
     "relu": ([4096, 16384, 65536, 131072, 262144], lambda n: n),
     "matrixmult": ([64, 96, 128, 160], lambda n: n**3),
-    "matrixtranspose": ([128, 256, 384, 512], lambda n: n**2),
+    "matrixtranspose": (
+        [128, 256, 320, 384, 448, 512, 576, 640], lambda n: n**2
+    ),
     "bitonicsort": (
         [1024, 2048, 4096, 8192],
         lambda n: n * math.log2(n) * (math.log2(n) + 1) / 2,

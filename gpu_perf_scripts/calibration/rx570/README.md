@@ -75,10 +75,11 @@ calibration points:
 ./compare_size_sweeps.py hw_size_sweep.csv sim_size_sweep.csv
 ```
 
-The sweep uses four launch-compatible sizes for each of eight scalable
-families plus a ReLU midpoint at 131K. It writes every point and its status
+The sweep uses four launch-compatible sizes for seven scalable families,
+eight matrix-transpose sizes spanning its L2-capacity transition, plus a ReLU
+midpoint at 131K. It writes every point and its status
 even if an individual run fails, so a failed holdout cannot silently
-disappear. Both committed CSV files contain all 33 matched points. Hardware
+disappear. Both committed CSV files contain all 37 matched points. Hardware
 mode checks `/dev/kfd` access, runs three independent processes per point by
 default, warms the GPU for at least 50 ms per process, and records their
 median. `--warmup-ms 0` explicitly disables the duration floor.
@@ -92,21 +93,21 @@ hardware/simulator slope ratio.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 6.765 | 7.340 | 8.5% |
-| relu | 7.155 | 6.286 | 12.1% |
-| matrixmult | 51.803 | 49.350 | 4.7% |
-| matrixtranspose | 16.989 | 18.288 | 7.6% |
-| bitonicsort | 347.854 | 321.321 | 7.6% |
-| aes | 18.314 | 16.892 | 7.8% |
-| fir | 7.699 | 7.566 | 1.7% |
-| kmeans | 29.615 | 27.345 | 7.7% |
+| vectoradd | 6.765 | 7.996 | 18.2% |
+| relu | 7.155 | 7.256 | 1.4% |
+| matrixmult | 51.803 | 49.485 | 4.5% |
+| matrixtranspose | 16.989 | 14.154 | 16.7% |
+| bitonicsort | 347.854 | 323.743 | 6.9% |
+| aes | 18.314 | 16.925 | 7.6% |
+| fir | 7.699 | 7.646 | 0.7% |
+| kmeans | 29.615 | 28.473 | 3.9% |
 | pagerank | 19.455 | 22.168 | 13.9% |
-| nw | 146.510 | 139.076 | 5.1% |
+| nw | 146.510 | 144.844 | 1.1% |
 
-Canonical-size MARE is **7.7%** across all ten remeasured benchmarks. The
-anti-overfit result is **6.1% MARE across 33 matched size points**; seven of
+Canonical-size MARE is **7.5%** across all ten remeasured benchmarks. The
+anti-overfit result is **6.1% MARE across 37 matched size points**; seven of
 the eight swept families have family MARE below 10%. The maximum point error
-is the isolated 384-wide transpose holdout at 43.8%. All points verify.
+is the 384-wide transpose holdout at 25.0%. All points verify.
 
 ## Main model corrections
 
@@ -119,9 +120,11 @@ is the isolated 384-wide transpose holdout at 43.8%. All points verify.
   separately.
 - A shared L2-to-DRAM token bucket preserves a 1 MiB short/random burst and
   limits sustained cache-line issue; the large vectoradd point remains within
-  6% across the clock-warmed hardware median.
-- A write-filtered L1-to-L2 token bucket preserves the first 192 KiB of dense
-  stores, then limits sustained write ingress to one line per cycle.
+  11% across the clock-warmed hardware median.
+- A write-filtered L1-to-L2 token bucket preserves the first 768 KiB of dense
+  stores, then limits sustained write ingress to one line per two cycles. The
+  burst represents cache-resident dirty capacity and reproduces the measured
+  transpose transition without a benchmark or size rule.
   Reads and responses remain unrestricted.
 - Full-line write serialization is charged once per wave instruction rather
   than once per generated cache-line request. This preserves scalar-store
@@ -132,9 +135,9 @@ is the isolated 384-wide transpose holdout at 43.8%. All points verify.
   cross-size evidence rejected the synthetic per-line penalties previously
   fitted to one matrix-multiply point.
 - Vector XOR/AND/OR use a separate one-cycle timing class, and fully utilized
-  stores have an independent 48-cycle per-instruction issue cost.
+  stores have an independent 90-cycle per-instruction issue cost.
 - Dependent FMA execution uses a twelve-cycle effective occupancy; all four
-  matrix-multiply holdouts are within 6.2%, while FIR and k-means remain within
+  matrix-multiply holdouts are within 4.9%, while FIR and k-means remain within
   range.
 - GPU-side first/subsequent/post-kernel dispatch costs are calibrated for the
   RX 570's multi-launch workloads. Host cold-start costs remain excluded.
@@ -147,6 +150,6 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned; current auto-clock microseconds remain
   diagnostic despite three-process medians.
-- Add size sweeps for k-means and pagerank, and investigate the isolated
+- Add size sweeps for k-means and pagerank, and investigate the remaining
   transpose-384 and canonical pagerank residuals without benchmark-specific
   timing.

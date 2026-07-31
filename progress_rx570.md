@@ -9,21 +9,21 @@ the exact gfx803 binaries used by the hardware harness.
 
 | Benchmark | HW steady (µs) | Sim (µs) | Error |
 |---|---:|---:|---:|
-| vectoradd | 6.765 | 7.340 | 8.5% |
-| relu | 7.155 | 6.286 | 12.1% |
-| matrixmult | 51.803 | 49.350 | 4.7% |
-| matrixtranspose | 16.989 | 18.288 | 7.6% |
-| bitonicsort | 347.854 | 321.321 | 7.6% |
-| aes | 18.314 | 16.892 | 7.8% |
-| fir | 7.699 | 7.566 | 1.7% |
-| kmeans | 29.615 | 27.345 | 7.7% |
+| vectoradd | 6.765 | 7.996 | 18.2% |
+| relu | 7.155 | 7.256 | 1.4% |
+| matrixmult | 51.803 | 49.485 | 4.5% |
+| matrixtranspose | 16.989 | 14.154 | 16.7% |
+| bitonicsort | 347.854 | 323.743 | 6.9% |
+| aes | 18.314 | 16.925 | 7.6% |
+| fir | 7.699 | 7.646 | 0.7% |
+| kmeans | 29.615 | 28.473 | 3.9% |
 | pagerank | 19.455 | 22.168 | 13.9% |
-| nw | 146.510 | 139.076 | 5.1% |
+| nw | 146.510 | 144.844 | 1.1% |
 
-Canonical-size MARE is **7.7%** across all ten freshly measured workloads.
-The stronger anti-overfit result is **6.1% MARE across 33 matched size
+Canonical-size MARE is **7.5%** across all ten freshly measured workloads.
+The stronger anti-overfit result is **6.1% MARE across 37 matched size
 points**. Seven of the eight swept families have family MARE below 10%; the
-maximum point error is the isolated 384-wide transpose holdout at 43.8%.
+maximum point error is the 384-wide transpose holdout at 25.0%.
 All points run and verify.
 The original headline errors were vectoradd 38.0%, ReLU 21.5%, and matrix
 multiplication 58.7%.
@@ -43,8 +43,8 @@ vectoradd processes consequently ranged from 8.038 to 9.507 µs.
 
 The harness now adds a minimum 50 ms GPU-active warmup, measured with HIP
 events, before the timed launches. Five independent 65K processes then ranged
-only from 6.650 to 6.712 µs in the full-size rerun. All 33 hardware points were
-recollected under this protocol before changing the model. This is still not
+only from 6.650 to 6.712 µs in the full-size rerun. All original 33 hardware
+points were recollected under this protocol before changing the model. This is still not
 a substitute for pinned clocks, but it removes the observed idle-clock bias.
 
 ## What was wrong
@@ -99,7 +99,7 @@ random misses. A shared L2-to-DRAM token bucket then separates a 1 MiB
 burst region from sustained bandwidth: it begins with 16,384 cache-line
 credits and refills at one 64-byte request per 1.244 GHz GPU cycle. The burst
 avoids imposing the sustained streaming rate on short random traffic; the
-final model puts the 262,144-element vector at 22.164 µs versus a 20.978 µs
+final model puts the 262,144-element vector at 23.283 µs versus a 20.978 µs
 three-process hardware median.
 
 ### Sustained writes need a separate shared path
@@ -107,26 +107,28 @@ three-process hardware median.
 The original per-transaction dense-store delay could not represent the size
 curve: increasing it enough for 262K ReLU overcharged 16K and 65K grids. The
 shared L1-to-L2 connection now supports filtering token credits by request
-class. RX 570 writes can burst for 3,072 cache lines (192 KiB), then issue at
-one line per GPU cycle; reads and responses remain unlimited.
+class. RX 570 writes can burst for 12,288 cache lines (768 KiB), then issue at
+one line per two GPU cycles; reads and responses remain unlimited. The burst
+approximates dirty L2 capacity after resident input and cache state.
 
 This mechanism was selected from five ReLU sizes, including a new 131K
 midpoint, and checked against all four vectoradd sizes. Full-line store issue
 cost is now charged once per wave instruction rather than once per generated
 cache-line request. This distinction preserves the scalar-store path while
 allowing wide stores to use the transaction bandwidth they already model.
-After the clock-warmed recollection and rate correction, ReLU has 5.7% family
-MARE, vectoradd 4.1%, and the complete 33-point MARE is 6.1%.
+After the clock-warmed recollection and capacity correction, ReLU has 4.8%
+family MARE, vectoradd 8.9%, and the complete 37-point MARE is 6.1%.
 
 | vector length | HW steady (µs) | Sim (µs) | Error |
 |---:|---:|---:|---:|
-| 4,096 | 4.749 | 4.808 | 1.2% |
-| 16,384 | 5.093 | 5.044 | 1.0% |
-| 65,536 | 6.765 | 7.340 | 8.5% |
-| 262,144 | 20.978 | 22.164 | 5.7% |
+| 4,096 | 4.749 | 4.844 | 2.0% |
+| 16,384 | 5.093 | 5.308 | 4.2% |
+| 65,536 | 6.765 | 7.996 | 18.2% |
+| 262,144 | 20.978 | 23.283 | 11.0% |
 
-All four vectoradd sizes are within 8.5%. The model was selected from the full
-curves rather than tuned to a single point.
+Vectoradd retains 8.9% family MARE. Its 65K and 262K residuals are kept
+visible because reducing the shared store-issue cost enough to remove them
+regresses the measured ReLU and transpose curves.
 
 ### Sparse reads were charged twice
 
@@ -144,7 +146,7 @@ penalties made matrix multiply 53–58% too slow and matrix transpose 248–603%
 too slow. Removing both penalties lets the existing transaction, cache, LDS,
 and dependency timing carry the accesses directly. A shared twelve-cycle FMA
 issue/result occupancy then corrects matrix multiply's uniform compute-path
-shortfall: its four size errors are 3.8%, 4.9%, 4.7%, and 3.9%. FIR, k-means,
+shortfall: its four size errors are 3.3%, 4.6%, 4.5%, and 3.7%. FIR, k-means,
 and pagerank remain in range. The later per-instruction store-issue correction
 resolves transpose without restoring an opcode-width penalty.
 
@@ -152,7 +154,7 @@ resolves transpose without restoring an opcode-width penalty.
 
 AES is dominated by bitwise vector operations. Classifying vector XOR, AND,
 and OR separately from the four-cycle default VALU class models their
-one-cycle issue/result timing and produces 16.892 µs versus the 18.314 µs
+one-cycle issue/result timing and produces 16.925 µs versus the 18.314 µs
 hardware median.
 
 Partial stores and fully utilized cache-line stores also have different
@@ -178,7 +180,7 @@ dispatch costs are:
 | subsequent launch | 1,300 |
 | completion/post-kernel | 2,500 |
 
-This produces 321.3 µs for bitonic versus 347.9 µs hardware. The much larger
+This produces 323.7 µs for bitonic versus 347.9 µs hardware. The much larger
 10–72 µs cold-minus-steady values in the hardware file include ROCm/KFD
 first-use, page mapping, and other host-side effects; they are deliberately
 not folded into GPU execution time.
@@ -186,30 +188,33 @@ not folded into GPU execution time.
 ## Cross-size holdout evidence
 
 The exact-HSACO harness and simulator runner now accept a single benchmark
-size, and the sweep driver records four predetermined, launch-compatible
-sizes for vectoradd, ReLU, matrix multiplication, matrix transpose, bitonic
-sort, AES, FIR, and NW, plus a ReLU midpoint. The committed hardware CSV uses
-the median of three independent processes per point. All 33 matched hardware
-and simulator points are present and every simulator point verifies.
+size. The sweep driver records four predetermined, launch-compatible sizes
+for seven families, eight transpose sizes spanning its cache-capacity
+transition, plus a ReLU midpoint. The committed hardware CSV uses the median
+of three independent processes per point. All 37 matched hardware and
+simulator points are present and every simulator point verifies.
 
 | Family | MARE | Maximum error | Sim/HW slope ratio |
 |---|---:|---:|---:|
-| vectoradd | 4.1% | 8.5% | 1.070 |
-| relu | 5.7% | 12.1% | 0.945 |
-| matrixmult | 4.3% | 4.9% | 0.965 |
-| matrixtranspose | 14.4% | 43.8% | 1.147 |
-| bitonicsort | 6.2% | 7.6% | 1.202 |
-| aes | 7.9% | 8.0% | — |
-| fir | 1.8% | 2.7% | — |
-| nw | 4.7% | 5.5% | 0.942 |
+| vectoradd | 8.9% | 18.2% | 1.128 |
+| relu | 4.8% | 9.4% | 0.886 |
+| matrixmult | 4.0% | 4.6% | 0.965 |
+| matrixtranspose | 11.2% | 25.0% | 0.913 |
+| bitonicsort | 6.1% | 6.9% | 1.232 |
+| aes | 7.7% | 7.8% | — |
+| fir | 0.3% | 0.7% | — |
+| nw | 1.2% | 1.5% | 0.981 |
 
 The transpose correction is structural rather than benchmark-specific. A
 wide store generates up to 16 line requests but issues one wave instruction;
 charging the full-line issue delay to each request was double-counting work.
 LDS latency and barrier-cost experiments had changed transpose by less than
-0.1 µs or regressed matrix multiplication, so both remain reverted. The 384
-transpose point is retained as an isolated cache-transition residual rather
-than hidden with a size- or benchmark-specific rule.
+0.1 µs or regressed matrix multiplication, so both remain reverted. Six new
+points around widths 320–640 showed a real capacity transition: removing the
+write limiter fits 320–448 but makes 512–640 up to 51% too fast. A 768 KiB
+write burst followed by one line per two cycles gives the expanded transpose
+curve a 0.913 slope ratio and reduces the maximum error from 43.8% to 25.0%
+without a size- or benchmark-specific rule.
 
 ## Parameter sweep evidence
 
@@ -230,7 +235,7 @@ than hidden with a size- or benchmark-specific rule.
   random-miss concurrency needed by the suite.
 - Four banks at 62.5 MHz produced 36.620 µs for the large vector, but
   over-serialized the default vectoradd and pagerank cases; rejected.
-- Full-line store cost is 48 cycles once per wave instruction, while L1V
+- Full-line store cost is 90 cycles once per wave instruction, while L1V
   latency remains 56 cycles. Charging that cost once per cache-line request
   was rejected by the wide-store cross-size evidence.
 - A shared one-request/cycle limiter without burst capacity fixed the large
@@ -260,6 +265,6 @@ the deliberately unmatched cold runtime measurement:
 ## Remaining work
 
 - Add `s_memtime` cycle-counter measurements and rerun with a pinned clock.
-- Add size sweeps for k-means and pagerank, and investigate the isolated
+- Add size sweeps for k-means and pagerank, and investigate the remaining
   transpose-384 and canonical pagerank residuals without benchmark-specific
   timing.
