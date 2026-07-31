@@ -104,12 +104,15 @@ type Spec struct {
 	// SplitLineLoadPenalty is a calibrated alignment overhead for contiguous,
 	// unaligned vector loads spanning multiple cache lines. It is not an
 	// extra-transaction counter.
-	SplitLineLoadPenalty      int `json:"split_line_load_penalty"`
-	DependentLoadIssuePenalty int `json:"dependent_load_issue_penalty"`
-	DependentLoadMinAge       int `json:"dependent_load_min_age"`
-	DependentLoadMaxAge       int `json:"dependent_load_max_age"`
-	MaxWriteCoalescingPenalty int `json:"max_write_coalescing_penalty"`
-	MaxWideWriteStridePenalty int `json:"max_wide_write_stride_penalty"`
+	SplitLineLoadPenalty      int  `json:"split_line_load_penalty"`
+	SplitLineLoadMaxDwords    int  `json:"split_line_load_max_dwords"`
+	DependentLoadIssuePenalty int  `json:"dependent_load_issue_penalty"`
+	DependentLoadMinAge       int  `json:"dependent_load_min_age"`
+	DependentLoadMaxAge       int  `json:"dependent_load_max_age"`
+	DependentLoadMaxDwords    int  `json:"dependent_load_max_dwords"`
+	DependentLoadFlatOnly     bool `json:"dependent_load_flat_only"`
+	MaxWriteCoalescingPenalty int  `json:"max_write_coalescing_penalty"`
+	MaxWideWriteStridePenalty int  `json:"max_wide_write_stride_penalty"`
 
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.

@@ -99,9 +99,12 @@ type Builder struct {
 	barrierLatency                   int
 	maxCoalescingPenalty             int
 	splitLineLoadPenalty             int
+	splitLineLoadMaxDwords           int
 	dependentLoadIssuePenalty        int
 	dependentLoadMinAge              int
 	dependentLoadMaxAge              int
+	dependentLoadMaxDwords           int
+	dependentLoadFlatOnly            bool
 	maxWriteCoalescingPenalty        int
 	maxWideWriteStridePenalty        int
 	vecMemTransPipelineWidth         int
@@ -437,6 +440,13 @@ func (b Builder) WithSplitLineLoadPenalty(penalty int) Builder {
 	return b
 }
 
+// WithSplitLineLoadMaxDwords restricts the alignment overhead to loads no
+// wider than n dwords. Zero disables the width restriction; negative is invalid.
+func (b Builder) WithSplitLineLoadMaxDwords(n int) Builder {
+	b.splitLineLoadMaxDwords = n
+	return b
+}
+
 // WithDependentLoadIssuePenalty sets the delay for a vector load whose
 // address was derived from a load completed within maxAge instructions.
 func (b Builder) WithDependentLoadIssuePenalty(
@@ -453,6 +463,20 @@ func (b Builder) WithDependentLoadIssueWindow(
 	b.dependentLoadIssuePenalty = penalty
 	b.dependentLoadMinAge = minAge
 	b.dependentLoadMaxAge = maxAge
+	return b
+}
+
+// WithDependentLoadMaxDwords restricts the dependency delay to vector loads
+// no wider than n dwords. Zero disables the width restriction; negative is invalid.
+func (b Builder) WithDependentLoadMaxDwords(n int) Builder {
+	b.dependentLoadMaxDwords = n
+	return b
+}
+
+// WithDependentLoadFlatOnly restricts the dependency delay to FLAT/GLOBAL
+// loads, excluding MUBUF scratch/spill traffic.
+func (b Builder) WithDependentLoadFlatOnly(enabled bool) Builder {
+	b.dependentLoadFlatOnly = enabled
 	return b
 }
 
@@ -884,14 +908,16 @@ func (b *Builder) buildSAs() {
 	if b.splitLineLoadPenalty > 0 {
 		saBuilder = saBuilder.WithSplitLineLoadPenalty(
 			b.splitLineLoadPenalty,
-		)
+		).WithSplitLineLoadMaxDwords(b.splitLineLoadMaxDwords)
 	}
 	if b.dependentLoadIssuePenalty > 0 {
 		saBuilder = saBuilder.WithDependentLoadIssueWindow(
 			b.dependentLoadIssuePenalty,
 			b.dependentLoadMinAge,
 			b.dependentLoadMaxAge,
-		)
+		).
+			WithDependentLoadMaxDwords(b.dependentLoadMaxDwords).
+			WithDependentLoadFlatOnly(b.dependentLoadFlatOnly)
 	}
 	if b.maxWriteCoalescingPenalty > 0 {
 		saBuilder = saBuilder.WithMaxWriteCoalescingPenalty(

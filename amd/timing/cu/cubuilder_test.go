@@ -92,4 +92,18 @@ var _ = Describe("Builder", func() {
 				Build("GPU.CU")
 		}).To(PanicWith("cu: dependent-load age window is invalid"))
 	})
+
+	It("rejects negative load-width filters", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+		spec := DefaultSpec()
+		spec.SplitLineLoadMaxDwords = -1
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithSpec(spec).
+				Build("GPU.CU")
+		}).To(PanicWith("cu: SplitLineLoadMaxDwords cannot be negative"))
+	})
 })

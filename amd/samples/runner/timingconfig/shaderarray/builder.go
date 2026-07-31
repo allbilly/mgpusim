@@ -78,9 +78,12 @@ type Builder struct {
 	memPipelineBufferSize     int
 	maxCoalescingPenalty      int
 	splitLineLoadPenalty      int
+	splitLineLoadMaxDwords    int
 	dependentLoadIssuePenalty int
 	dependentLoadMinAge       int
 	dependentLoadMaxAge       int
+	dependentLoadMaxDwords    int
+	dependentLoadFlatOnly     bool
 	maxWriteCoalescingPenalty int
 	maxWideWriteStridePenalty int
 	registerScoreboard        bool
@@ -266,6 +269,13 @@ func (b Builder) WithSplitLineLoadPenalty(n int) Builder {
 	return b
 }
 
+// WithSplitLineLoadMaxDwords restricts the alignment overhead to loads no
+// wider than n dwords. Zero disables the width restriction; negative is invalid.
+func (b Builder) WithSplitLineLoadMaxDwords(n int) Builder {
+	b.splitLineLoadMaxDwords = n
+	return b
+}
+
 // WithDependentLoadIssuePenalty sets the delay for a vector load whose
 // address was derived from a load completed within maxAge instructions.
 func (b Builder) WithDependentLoadIssuePenalty(
@@ -282,6 +292,20 @@ func (b Builder) WithDependentLoadIssueWindow(
 	b.dependentLoadIssuePenalty = penalty
 	b.dependentLoadMinAge = minAge
 	b.dependentLoadMaxAge = maxAge
+	return b
+}
+
+// WithDependentLoadMaxDwords restricts the dependency delay to vector loads
+// no wider than n dwords. Zero disables the width restriction; negative is invalid.
+func (b Builder) WithDependentLoadMaxDwords(n int) Builder {
+	b.dependentLoadMaxDwords = n
+	return b
+}
+
+// WithDependentLoadFlatOnly restricts the dependency delay to FLAT/GLOBAL
+// loads, excluding MUBUF scratch/spill traffic.
+func (b Builder) WithDependentLoadFlatOnly(enabled bool) Builder {
+	b.dependentLoadFlatOnly = enabled
 	return b
 }
 
@@ -530,11 +554,14 @@ func (b *Builder) cuSpec() cu.Spec {
 	}
 	if b.splitLineLoadPenalty > 0 {
 		spec.SplitLineLoadPenalty = b.splitLineLoadPenalty
+		spec.SplitLineLoadMaxDwords = b.splitLineLoadMaxDwords
 	}
 	if b.dependentLoadIssuePenalty > 0 {
 		spec.DependentLoadIssuePenalty = b.dependentLoadIssuePenalty
 		spec.DependentLoadMinAge = b.dependentLoadMinAge
 		spec.DependentLoadMaxAge = b.dependentLoadMaxAge
+		spec.DependentLoadMaxDwords = b.dependentLoadMaxDwords
+		spec.DependentLoadFlatOnly = b.dependentLoadFlatOnly
 	}
 	if b.maxWriteCoalescingPenalty > 0 {
 		spec.MaxWriteCoalescingPenalty = b.maxWriteCoalescingPenalty

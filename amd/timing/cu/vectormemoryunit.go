@@ -29,6 +29,7 @@ type VectorMemoryUnit struct {
 
 	maxCoalescingPenalty      int
 	splitLineLoadPenalty      int
+	splitLineLoadMaxDwords    int
 	maxWriteCoalescingPenalty int
 	maxWideWriteStridePenalty int
 	coalescingStallRemaining  int
@@ -214,10 +215,15 @@ func (u *VectorMemoryUnit) writeStridePenalty(
 	if txn.Wavefront == nil {
 		return 0
 	}
-	return txn.Wavefront.WideWriteStridePenalty(
+	instID := uint64(0)
+	if txn.Inst != nil {
+		instID = txn.Inst.ID
+	}
+	return txn.Wavefront.WideWriteInstructionStridePenalty(
 		txn.Write.Address,
 		uint64(cacheLineBytes),
 		u.maxWideWriteStridePenalty,
+		instID,
 	)
 }
 
@@ -391,6 +397,12 @@ func (u *VectorMemoryUnit) computeSplitLineLoadPenalty(
 	transactions []VectorMemAccessInfo,
 ) int {
 	if u.splitLineLoadPenalty <= 0 || len(transactions) < 2 {
+		return 0
+	}
+	if u.splitLineLoadMaxDwords > 0 &&
+		transactions[0].Inst != nil &&
+		transactions[0].Inst.Dst != nil &&
+		transactions[0].Inst.Dst.RegCount > u.splitLineLoadMaxDwords {
 		return 0
 	}
 

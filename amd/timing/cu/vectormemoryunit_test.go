@@ -172,6 +172,16 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.computeSplitLineLoadPenalty(
 			contiguous(0, 17))).To(Equal(0))
 
+		wide := contiguous(4, 17)
+		wideInst := wavefront.NewInst(insts.NewInst())
+		wideInst.Dst = insts.NewVRegOperand(0, 8, 4)
+		for i := range wide {
+			wide[i].Inst = wideInst
+		}
+		vecMemUnit.splitLineLoadMaxDwords = 2
+		Expect(vecMemUnit.computeSplitLineLoadPenalty(wide)).To(Equal(0))
+		vecMemUnit.splitLineLoadMaxDwords = 0
+
 		noncontiguous := contiguous(4, 17)
 		noncontiguous[1].laneInfo[0].addrOffsetInCacheLine += 4
 		Expect(vecMemUnit.computeSplitLineLoadPenalty(
@@ -238,6 +248,34 @@ var _ = Describe("Vector Memory Unit", func() {
 			fullLine(wf2, 0x8000))).To(Equal(0))
 		Expect(vecMemUnit.computeCoalescingPenalty(
 			fullLine(wf1, 0x1040))).To(Equal(0))
+	})
+
+	It("starts a new wide-write stream for each instruction", func() {
+		vecMemUnit.maxWideWriteStridePenalty = 20
+		wf := wavefront.NewWavefront(nil)
+		fullLine := func(inst *wavefront.Inst, address uint64) VectorMemAccessInfo {
+			inst.FormatType = insts.FLAT
+			inst.Opcode = 31
+			mask := make([]bool, 64)
+			for i := range mask {
+				mask[i] = true
+			}
+			return VectorMemAccessInfo{
+				Write: &memprotocol.WriteReq{
+					Address:   address,
+					DirtyMask: mask,
+				},
+				Wavefront: wf,
+				Inst:      inst,
+			}
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			fullLine(wavefront.NewInst(insts.NewInst()), 0x1000),
+		)).To(Equal(0))
+		Expect(vecMemUnit.computeCoalescingPenalty(
+			fullLine(wavefront.NewInst(insts.NewInst()), 0x1800),
+		)).To(Equal(0))
 	})
 
 	It("only recognizes opcode 31 stores in vector-memory formats", func() {

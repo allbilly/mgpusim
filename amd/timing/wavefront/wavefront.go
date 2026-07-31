@@ -70,6 +70,7 @@ type Wavefront struct {
 
 	MemoryDependency  *MemoryDependencyState
 	lastWideWriteLine uint64
+	lastWideWriteInst uint64
 	hasWideWriteLine  bool
 
 	// InFlightInsts counts this wavefront's instruction tasks currently in
@@ -190,7 +191,37 @@ func (wf *Wavefront) StallRecentLoadAddressInWindow(
 	inst *insts.Inst,
 	penalty, minAge, maxAge int,
 ) bool {
+	return wf.StallNarrowRecentLoadAddressInWindow(
+		inst, penalty, minAge, maxAge, 0,
+	)
+}
+
+// StallNarrowRecentLoadAddressInWindow optionally restricts the dependency
+// delay to loads no wider than maxDwords. A non-positive limit accepts every
+// load width.
+func (wf *Wavefront) StallNarrowRecentLoadAddressInWindow(
+	inst *insts.Inst,
+	penalty, minAge, maxAge, maxDwords int,
+) bool {
+	return wf.StallFilteredRecentLoadAddressInWindow(
+		inst, penalty, minAge, maxAge, maxDwords, false,
+	)
+}
+
+// StallFilteredRecentLoadAddressInWindow optionally restricts the dependency
+// delay by load width and to FLAT/GLOBAL loads.
+func (wf *Wavefront) StallFilteredRecentLoadAddressInWindow(
+	inst *insts.Inst,
+	penalty, minAge, maxAge, maxDwords int,
+	flatOnly bool,
+) bool {
 	if penalty <= 0 || wf.EXEC() == 0 || !isVectorMemoryLoad(inst) {
+		return false
+	}
+	if flatOnly && inst.FormatType != insts.FLAT {
+		return false
+	}
+	if maxDwords > 0 && inst.Dst != nil && inst.Dst.RegCount > maxDwords {
 		return false
 	}
 	state := wf.MemoryDependency
@@ -364,12 +395,28 @@ func (wf *Wavefront) WideWriteStridePenalty(
 	current, lineBytes uint64,
 	penalty int,
 ) int {
+	return wf.WideWriteInstructionStridePenalty(
+		current, lineBytes, penalty, 0,
+	)
+}
+
+// WideWriteInstructionStridePenalty tracks locality within one dynamic store
+// instruction. A new instruction starts a new write-combining stream.
+func (wf *Wavefront) WideWriteInstructionStridePenalty(
+	current, lineBytes uint64,
+	penalty int,
+	instID uint64,
+) int {
+	if wf.hasWideWriteLine && wf.lastWideWriteInst != instID {
+		wf.ResetWideWriteTracking()
+	}
 	result := 0
 	if penalty > 0 && wf.hasWideWriteLine &&
 		!wideWriteLinesAreLocal(wf.lastWideWriteLine, current, lineBytes) {
 		result = penalty
 	}
 	wf.lastWideWriteLine = current
+	wf.lastWideWriteInst = instID
 	wf.hasWideWriteLine = true
 	return result
 }
@@ -377,6 +424,7 @@ func (wf *Wavefront) WideWriteStridePenalty(
 // ResetWideWriteTracking ends the current wide-store stream.
 func (wf *Wavefront) ResetWideWriteTracking() {
 	wf.lastWideWriteLine = 0
+	wf.lastWideWriteInst = 0
 	wf.hasWideWriteLine = false
 }
 

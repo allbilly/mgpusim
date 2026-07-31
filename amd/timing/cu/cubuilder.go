@@ -26,9 +26,12 @@ var defaultSpec = Spec{
 	MemPipelineBufferSize:        8,
 	MaxCoalescingPenalty:         0,
 	SplitLineLoadPenalty:         0,
+	SplitLineLoadMaxDwords:       0,
 	DependentLoadIssuePenalty:    0,
 	DependentLoadMinAge:          0,
 	DependentLoadMaxAge:          0,
+	DependentLoadMaxDwords:       0,
+	DependentLoadFlatOnly:        false,
 	MaxWriteCoalescingPenalty:    0,
 	MaxWideWriteStridePenalty:    0,
 	RegisterScoreboard:           false,
@@ -168,6 +171,12 @@ func (b *Builder) mustHaveValidSpec() {
 		b.spec.DependentLoadMinAge > b.spec.DependentLoadMaxAge {
 		panic("cu: dependent-load age window is invalid")
 	}
+	if b.spec.DependentLoadMaxDwords < 0 {
+		panic("cu: DependentLoadMaxDwords cannot be negative")
+	}
+	if b.spec.SplitLineLoadMaxDwords < 0 {
+		panic("cu: SplitLineLoadMaxDwords cannot be negative")
+	}
 }
 
 func (b *Builder) fillResourceDefaults() {
@@ -189,6 +198,8 @@ func (b *Builder) equipScheduler(cu *ComputeUnit) {
 		b.spec.DependentLoadIssuePenalty
 	issueArbitor.dependentLoadMinAge = b.spec.DependentLoadMinAge
 	issueArbitor.dependentLoadMaxAge = b.spec.DependentLoadMaxAge
+	issueArbitor.dependentLoadMaxDwords = b.spec.DependentLoadMaxDwords
+	issueArbitor.dependentLoadFlatOnly = b.spec.DependentLoadFlatOnly
 	scheduler := NewScheduler(cu, fetchArbitor, issueArbitor)
 	scheduler.scoreboardEnabled = b.spec.RegisterScoreboard
 	scheduler.scoreboardVALULatency = b.spec.ScoreboardVALULatency
@@ -256,6 +267,7 @@ func (b *Builder) equipVectorMemoryUnit(cu *ComputeUnit, name string) {
 	vectorMemoryUnit := NewVectorMemoryUnit(cu, coalescer)
 	vectorMemoryUnit.maxCoalescingPenalty = b.spec.MaxCoalescingPenalty
 	vectorMemoryUnit.splitLineLoadPenalty = b.spec.SplitLineLoadPenalty
+	vectorMemoryUnit.splitLineLoadMaxDwords = b.spec.SplitLineLoadMaxDwords
 	vectorMemoryUnit.maxWriteCoalescingPenalty =
 		b.spec.MaxWriteCoalescingPenalty
 	vectorMemoryUnit.maxWideWriteStridePenalty =

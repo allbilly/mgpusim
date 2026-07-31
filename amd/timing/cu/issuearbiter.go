@@ -9,6 +9,8 @@ type IssueArbiter struct {
 	dependentLoadIssuePenalty int
 	dependentLoadMinAge       int
 	dependentLoadMaxAge       int
+	dependentLoadMaxDwords    int
+	dependentLoadFlatOnly     bool
 	timingProgress            bool
 }
 
@@ -47,11 +49,13 @@ func (a *IssueArbiter) Arbitrate(
 				}
 			}
 
-			if wf.StallRecentLoadAddressInWindow(
+			if wf.StallFilteredRecentLoadAddressInWindow(
 				wf.InstToIssue.Inst,
 				a.dependentLoadIssuePenalty,
 				a.dependentLoadMinAge,
 				a.dependentLoadMaxAge,
+				a.dependentLoadMaxDwords,
+				a.dependentLoadFlatOnly,
 			) {
 				a.timingProgress = true
 				continue
