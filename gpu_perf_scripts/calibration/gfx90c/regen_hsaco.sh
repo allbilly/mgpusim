@@ -21,6 +21,7 @@ SPECS=(
   "fir|amd/benchmarks/heteromark/fir/native/fir.cpp|amd/benchmarks/heteromark/fir/kernels_gfx90c.hsaco|FIR"
   "cachelatency|amd/benchmarks/microbench/cachelatency/native/cache_latency.cpp|amd/benchmarks/microbench/cachelatency/kernels_gfx90c.hsaco|pointer_chase_kernel,vector_pointer_chase_kernel"
   "storestride|amd/benchmarks/microbench/storestride/native/store_stride.cpp|amd/benchmarks/microbench/storestride/kernels_gfx90c.hsaco|full_line_store_stride_kernel"
+  "scratchspill|amd/benchmarks/microbench/scratchspill/native/scratch_spill.cpp|amd/benchmarks/microbench/scratchspill/kernels_gfx90c.hsaco|private_control4_kernel,private_scratch4_kernel"
   "kmeans|amd/benchmarks/heteromark/kmeans/native/kmeans.cpp|amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco|kmeans_kernel_swap,kmeans_kernel_compute"
   "pagerank|amd/benchmarks/heteromark/pagerank/native/pagerank.cpp|amd/benchmarks/heteromark/pagerank/kernels_gfx90c.hsaco|PageRankUpdateGpu"
   "nw|amd/benchmarks/rodinia/nw/native/nw.cpp|amd/benchmarks/rodinia/nw/kernels_gfx90c.hsaco|nw_kernel1,nw_kernel2"

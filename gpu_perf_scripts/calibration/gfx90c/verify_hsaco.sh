@@ -33,6 +33,66 @@ while read -r name expected _source destination symbols; do
       failed=1
     fi
   done
+
+  if [[ "$name" == "scratchspill" ]]; then
+    notes="$(
+      podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
+        /opt/rocm/llvm/bin/llvm-readelf --notes "$object"
+    )"
+    if [[ "$(grep -Fc '.private_segment_fixed_size: 0' <<<"$notes")" != 1 ||
+          "$(grep -Fc '.private_segment_fixed_size: 20' <<<"$notes")" != 1 ||
+          "$(grep -Fc '.vgpr_spill_count: 0' <<<"$notes")" != 1 ||
+          "$(grep -Fc '.vgpr_spill_count: 4' <<<"$notes")" != 1 ]]; then
+      echo "scratchspill: metadata does not describe the 0/4-spill pair" >&2
+      failed=1
+    fi
+
+    control_disasm="$(
+      podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
+        /opt/rocm/llvm/bin/llvm-objdump --mcpu=gfx90c \
+        --disassemble-symbols=private_control4_kernel "$object"
+    )"
+    scratch_disasm="$(
+      podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
+        /opt/rocm/llvm/bin/llvm-objdump --mcpu=gfx90c \
+        --disassemble-symbols=private_scratch4_kernel "$object"
+    )"
+    if grep -Eq '^[[:space:]]*buffer_(load|store)' <<<"$control_disasm"; then
+      echo "scratchspill: control4 unexpectedly contains MUBUF traffic" >&2
+      failed=1
+    fi
+    store_count="$(
+      grep -Ec '^[[:space:]]*buffer_store_dword[[:space:]]' \
+        <<<"$scratch_disasm" || true
+    )"
+    load_count="$(
+      grep -Ec '^[[:space:]]*buffer_load_dword[[:space:]]' \
+        <<<"$scratch_disasm" || true
+    )"
+    if [[ "$store_count" != 4 || "$load_count" != 4 ]]; then
+      echo "scratchspill: scratch4 has $store_count stores/$load_count loads, want 4/4" >&2
+      failed=1
+    fi
+    for opcode in buffer_store_dword buffer_load_dword; do
+      for offset in 0 4 8 12; do
+        if [[ "$offset" == 0 ]]; then
+          count="$(
+            grep -Ec "^[[:space:]]*$opcode .*[, ]0[[:space:]]+//" \
+              <<<"$scratch_disasm" || true
+          )"
+        else
+          count="$(
+            grep -Ec "^[[:space:]]*$opcode .*offset:$offset[[:space:]]+//" \
+              <<<"$scratch_disasm" || true
+          )"
+        fi
+        if [[ "$count" != 1 ]]; then
+          echo "scratchspill: $opcode offset $offset occurs $count times, want 1" >&2
+          failed=1
+        fi
+      done
+    done
+  fi
   echo "$name: OK"
 done <"$MANIFEST"
 

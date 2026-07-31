@@ -100,6 +100,8 @@ static int store_stride_lines = 1;
 static int store_allocation_stride_lines = 128;
 static int store_repeats = 32;
 static int store_workgroups = 1;
+static std::string scratch_variant = "scratch4";
+static int scratch_workgroups = 16;
 static int relu_length = 65536;
 static int matrix_size = 128;
 static int transpose_width = 512;
@@ -540,6 +542,74 @@ static void bench_storestride(int iters) {
   HIP_CHECK(hipFree(output));
 }
 
+static void bench_scratchspill(int iters) {
+  if (scratch_variant != "control4" && scratch_variant != "scratch4") {
+    fprintf(stderr, "scratch variant must be control4 or scratch4\n");
+    std::exit(2);
+  }
+  if (scratch_workgroups < 1 || scratch_workgroups > INT32_MAX / 32) {
+    fprintf(stderr, "invalid private-spill work-group count\n");
+    std::exit(2);
+  }
+  const char *symbol = scratch_variant == "control4"
+                           ? "private_control4_kernel"
+                           : "private_scratch4_kernel";
+  ModuleKernel kernel(
+      "amd/benchmarks/microbench/scratchspill/kernels_gfx90c.hsaco",
+      symbol);
+  constexpr int width_a = 32;
+  constexpr int rows = 32;
+  const int cols = scratch_workgroups * 32;
+  const size_t a_count = size_t(rows) * width_a;
+  const size_t b_count = size_t(width_a) * cols;
+  const size_t c_count = size_t(rows) * cols;
+  std::vector<float> host_a(a_count), host_b(b_count), expected(c_count);
+  for (int row = 0; row < rows; ++row)
+    for (int k = 0; k < width_a; ++k)
+      host_a[size_t(row) * width_a + k] = float((row + k) % 7 - 3);
+  for (int k = 0; k < width_a; ++k)
+    for (int col = 0; col < cols; ++col)
+      host_b[size_t(k) * cols + col] = float((k * 3 + col) % 5 - 2);
+  for (int row = 0; row < rows; ++row)
+    for (int col = 0; col < cols; ++col)
+      for (int k = 0; k < width_a; ++k)
+        expected[size_t(row) * cols + col] +=
+            host_a[size_t(row) * width_a + k] *
+            host_b[size_t(k) * cols + col];
+
+  float *matrix_a, *matrix_b, *matrix_c;
+  HIP_CHECK(hipMalloc(&matrix_a, a_count * sizeof(float)));
+  HIP_CHECK(hipMalloc(&matrix_b, b_count * sizeof(float)));
+  HIP_CHECK(hipMalloc(&matrix_c, c_count * sizeof(float)));
+  HIP_CHECK(hipMemcpy(matrix_a, host_a.data(), a_count * sizeof(float),
+                      hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemcpy(matrix_b, host_b.data(), b_count * sizeof(float),
+                      hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemset(matrix_c, 0, c_count * sizeof(float)));
+  int width_arg = width_a;
+  float us = time_iters(iters, [&] {
+    void *args[] = {&matrix_a, &matrix_b, &matrix_c, &width_arg};
+    kernel.launch(dim3(scratch_workgroups, 1), dim3(8, 8), 0, args);
+  });
+  std::vector<float> actual(c_count);
+  HIP_CHECK(hipMemcpy(actual.data(), matrix_c, c_count * sizeof(float),
+                      hipMemcpyDeviceToHost));
+  for (size_t i = 0; i < c_count; ++i) {
+    if (std::fabs(actual[i] - expected[i]) > 1e-4f) {
+      fprintf(stderr,
+              "scratchspill %s element %zu mismatch: expected %g, got %g\n",
+              scratch_variant.c_str(), i, expected[i], actual[i]);
+      std::exit(3);
+    }
+  }
+  printf("scratchspill_%s %.3f\n", scratch_variant.c_str(), us);
+  printf("scratchspill_ns_per_workgroup %.6f\n",
+         double(us) * 1000.0 / double(scratch_workgroups));
+  HIP_CHECK(hipFree(matrix_a));
+  HIP_CHECK(hipFree(matrix_b));
+  HIP_CHECK(hipFree(matrix_c));
+}
+
 static void bench_kmeans(int iters) {
   ModuleKernel swap_kernel(
       "amd/benchmarks/heteromark/kmeans/kernels_gfx90c.hsaco",
@@ -779,6 +849,10 @@ int main(int argc, char **argv) {
       store_repeats = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--store-workgroups") && i + 1 < argc)
       store_workgroups = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--scratch-variant") && i + 1 < argc)
+      scratch_variant = argv[++i];
+    else if (!strcmp(argv[i], "--scratch-workgroups") && i + 1 < argc)
+      scratch_workgroups = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--relu-length") && i + 1 < argc)
       relu_length = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--matrix-size") && i + 1 < argc)
@@ -828,5 +902,7 @@ int main(int argc, char **argv) {
   run("nw", bench_nw, iters);
   if (only == "storestride")
     bench_storestride(iters);
+  if (only == "scratchspill")
+    bench_scratchspill(iters);
   return 0;
 }
