@@ -1,5 +1,6 @@
-// Package requestlimitedconnection provides a zero-latency connection with a
-// shared memory-request issue limit. Responses are never throttled.
+// Package requestlimitedconnection provides a zero-latency connection with
+// one or two independent shared memory-request issue limits. Responses are
+// never throttled.
 package requestlimitedconnection
 
 import (
@@ -18,6 +19,12 @@ type Spec struct {
 	RequestRateDenominator int           `json:"request_rate_denominator"`
 	BurstRequests          int           `json:"burst_requests"`
 	RequestFilter          RequestFilter `json:"request_filter"`
+	// The optional secondary bucket lets one request class (such as writes)
+	// obey an additional rate while still consuming the primary total budget.
+	SecondaryRequestRateNumerator   int           `json:"secondary_request_rate_numerator"`
+	SecondaryRequestRateDenominator int           `json:"secondary_request_rate_denominator"`
+	SecondaryBurstRequests          int           `json:"secondary_burst_requests"`
+	SecondaryRequestFilter          RequestFilter `json:"secondary_request_filter"`
 }
 
 // RequestFilter selects which memory request class consumes token credits.
@@ -32,9 +39,11 @@ const (
 
 // State stores arbitration and token-bucket state.
 type State struct {
-	NextPortID      int    `json:"next_port_id"`
-	RequestCredit   int    `json:"request_credit"`
-	LastCreditCycle uint64 `json:"last_credit_cycle"`
+	NextPortID               int    `json:"next_port_id"`
+	RequestCredit            int    `json:"request_credit"`
+	LastCreditCycle          uint64 `json:"last_credit_cycle"`
+	SecondaryRequestCredit   int    `json:"secondary_request_credit"`
+	SecondaryLastCreditCycle uint64 `json:"secondary_last_credit_cycle"`
 }
 
 type ports struct {
@@ -68,7 +77,7 @@ func (p *ports) len() int {
 	return len(p.ports)
 }
 
-// Comp connects ports while sharing one request budget across all sources and
+// Comp connects ports while sharing request budgets across all sources and
 // destinations.
 type Comp struct {
 	*modeling.Component[Spec, State, modeling.None]
@@ -121,30 +130,24 @@ func (m *middleware) Tick() bool {
 
 	state := m.comp.State
 	spec := m.comp.Spec()
-	unlimited := spec.RequestRateNumerator <= 0
-	creditDenominator := spec.RequestRateDenominator
-	if creditDenominator <= 0 {
-		creditDenominator = 1
-	}
-	requestCredit := m.comp.State.RequestCredit
-	if !unlimited {
-		capacity := spec.BurstRequests * creditDenominator
-		minCapacity := spec.RequestRateNumerator + creditDenominator - 1
-		if capacity < minCapacity {
-			capacity = minCapacity
-		}
-		if capacity < creditDenominator {
-			capacity = creditDenominator
-		}
-		currentCycle := spec.Freq.Cycle(m.comp.CurrentTime())
-		elapsedCycles := currentCycle - state.LastCreditCycle
-		if elapsedCycles == 0 {
-			elapsedCycles = 1
-		}
-		requestCredit = refillRequestCredit(
-			requestCredit, capacity, spec.RequestRateNumerator, elapsedCycles,
+	currentCycle := spec.Freq.Cycle(m.comp.CurrentTime())
+	requestCredit, creditDenominator, unlimited := refillTokenBucket(
+		state.RequestCredit, state.LastCreditCycle,
+		spec.RequestRateNumerator, spec.RequestRateDenominator,
+		spec.BurstRequests, currentCycle,
+	)
+	secondaryRequestCredit, secondaryCreditDenominator, secondaryUnlimited :=
+		refillTokenBucket(
+			state.SecondaryRequestCredit, state.SecondaryLastCreditCycle,
+			spec.SecondaryRequestRateNumerator,
+			spec.SecondaryRequestRateDenominator,
+			spec.SecondaryBurstRequests, currentCycle,
 		)
+	if !unlimited {
 		(&m.comp.State).LastCreditCycle = currentCycle
+	}
+	if !secondaryUnlimited {
+		(&m.comp.State).SecondaryLastCreditCycle = currentCycle
 	}
 	madeProgress := false
 	waitingForCredit := false
@@ -154,14 +157,49 @@ func (m *middleware) Tick() bool {
 		port := m.ports.getPortIndex(portID)
 		madeProgress = m.forwardMany(
 			port, &requestCredit, creditDenominator, unlimited,
+			&secondaryRequestCredit, secondaryCreditDenominator,
+			secondaryUnlimited,
 			&waitingForCredit,
 		) || madeProgress
 	}
 
 	(&m.comp.State).NextPortID = (state.NextPortID + 1) % numPorts
 	(&m.comp.State).RequestCredit = requestCredit
+	(&m.comp.State).SecondaryRequestCredit = secondaryRequestCredit
 
 	return madeProgress || waitingForCredit
+}
+
+func refillTokenBucket(
+	current int,
+	lastCycle uint64,
+	rateNumerator, rateDenominator, burstRequests int,
+	currentCycle uint64,
+) (credit, denominator int, unlimited bool) {
+	denominator = rateDenominator
+	if denominator <= 0 {
+		denominator = 1
+	}
+	if rateNumerator <= 0 {
+		return current, denominator, true
+	}
+
+	capacity := burstRequests * denominator
+	minCapacity := rateNumerator + denominator - 1
+	if capacity < minCapacity {
+		capacity = minCapacity
+	}
+	if capacity < denominator {
+		capacity = denominator
+	}
+	elapsedCycles := currentCycle - lastCycle
+	if elapsedCycles == 0 {
+		elapsedCycles = 1
+	}
+	credit = refillRequestCredit(
+		current, capacity, rateNumerator, elapsedCycles,
+	)
+	return credit, denominator, false
 }
 
 func refillRequestCredit(
@@ -188,6 +226,9 @@ func (m *middleware) forwardMany(
 	requestCredit *int,
 	creditDenominator int,
 	unlimited bool,
+	secondaryRequestCredit *int,
+	secondaryCreditDenominator int,
+	secondaryUnlimited bool,
 	waitingForCredit *bool,
 ) bool {
 	madeProgress := false
@@ -199,7 +240,14 @@ func (m *middleware) forwardMany(
 		}
 
 		isRequest := requestConsumesCredit(head, m.comp.Spec().RequestFilter)
-		if isRequest && !unlimited && *requestCredit < creditDenominator {
+		isSecondaryRequest := requestConsumesCredit(
+			head, m.comp.Spec().SecondaryRequestFilter,
+		)
+		primaryBlocked := isRequest && !unlimited &&
+			*requestCredit < creditDenominator
+		secondaryBlocked := isSecondaryRequest && !secondaryUnlimited &&
+			*secondaryRequestCredit < secondaryCreditDenominator
+		if primaryBlocked || secondaryBlocked {
 			*waitingForCredit = true
 			break
 		}
@@ -215,6 +263,9 @@ func (m *middleware) forwardMany(
 
 		if isRequest && !unlimited {
 			*requestCredit -= creditDenominator
+		}
+		if isSecondaryRequest && !secondaryUnlimited {
+			*secondaryRequestCredit -= secondaryCreditDenominator
 		}
 	}
 

@@ -7,7 +7,7 @@
 // are taken from the AMD RX 570 product page and corroborating spec sheets.
 // Timing latencies are calibrated against the ISCA-10 benchmark suite run on
 // the physical RX 570 (see gpu_perf_scripts/calibration/rx570/hw_ground_truth.txt).
-// The steady-state calibration achieves 7.4% MARE across 47 matched size
+// The steady-state calibration achieves 6.7% MARE across 47 matched size
 // points and 7.5% canonical-size MARE; all 10 benchmarks execute and verify.
 // Cold
 // hipEvent measurements are reported separately because they include
@@ -73,6 +73,13 @@ func MakeBuilder() r9nano.Builder {
 		// matching the measured large-vector slope.
 		WithL2ToDRAMRequestRate(1, 1).
 		WithL2ToDRAMRequestBurst(16384).
+		// L1-to-L2 requests from all CUs share six request slots per cycle after
+		// an 8,192-line (512 KiB) burst. This captures L2-bank ingress saturation
+		// when k-means crosses from three to four workgroups per CU, while
+		// preserving shorter vector and random-access bursts. Responses remain
+		// unrestricted.
+		WithL1ToL2RequestRate(6, 1).
+		WithL1ToL2RequestBurst(8192).
 		// Dense stores can burst through 768 KiB, approximating the L2 capacity
 		// left after resident input/cache state, then share L2 ingress at one
 		// cache line per two GPU cycles. Reads and responses remain

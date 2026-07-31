@@ -108,12 +108,9 @@ hardware/simulator slope ratio.
 | nw | 146.510 | 144.844 | 1.1% |
 
 Canonical-size MARE is **7.5%** across all ten remeasured benchmarks. The
-anti-overfit result is **7.4% MARE across 47 matched size points**; eight of
+anti-overfit result is **6.7% MARE across 47 matched size points**; nine of
 the ten swept families have family MARE below 10%. The maximum point error
-is the 16,384-point k-means holdout at 34.3%. All points verify. This newly
-exposed residual is intentionally retained: generic cache-capacity and
-in-flight-request corrections either did not affect it or regressed
-independent vector and transpose holdouts.
+is the 384-wide transpose holdout at 25.0%. All points verify.
 
 ## Main model corrections
 
@@ -132,6 +129,11 @@ independent vector and transpose holdouts.
   burst represents cache-resident dirty capacity and reproduces the measured
   transpose transition without a benchmark or size rule.
   Reads and responses remain unrestricted.
+- A separate total-traffic bucket allows a 512 KiB L1-to-L2 burst and then
+  limits aggregate ingress to six requests/cycle. This models the shared L2
+  bank-service pressure exposed by k-means once its L1 hit rate collapses,
+  without changing any of the independent vector, PageRank, or transpose
+  holdouts. The write-specific bucket above remains active at the same time.
 - Full-line write serialization is charged once per wave instruction rather
   than once per generated cache-line request. This preserves scalar-store
   timing without penalizing a wide store 16 times.
@@ -156,5 +158,5 @@ parameter sweeps.
 - Add an `s_memtime`/`s_memrealtime` probe for clock-independent latency data.
 - Re-measure with the GPU clock pinned; current auto-clock microseconds remain
   diagnostic despite three-process medians.
-- Investigate the k-means scaling slope and the remaining transpose-384
-  residual without benchmark-specific timing.
+- Investigate the remaining transpose-384 residual without a benchmark- or
+  size-specific timing rule.

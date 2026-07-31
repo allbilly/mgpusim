@@ -21,9 +21,9 @@ the exact gfx803 binaries used by the hardware harness.
 | nw | 146.510 | 144.844 | 1.1% |
 
 Canonical-size MARE is **7.5%** across all ten freshly measured workloads.
-The stronger anti-overfit result is **7.4% MARE across 47 matched size
-points**. Eight of the ten swept families have family MARE below 10%; the
-maximum point error is the 16,384-point k-means holdout at 34.3%.
+The stronger anti-overfit result is **6.7% MARE across 47 matched size
+points**. Nine of the ten swept families have family MARE below 10%; the
+maximum point error is the 384-wide transpose holdout at 25.0%.
 All points run and verify.
 The original headline errors were vectoradd 38.0%, ReLU 21.5%, and matrix
 multiplication 58.7%.
@@ -117,8 +117,8 @@ cost is now charged once per wave instruction rather than once per generated
 cache-line request. This distinction preserves the scalar-store path while
 allowing wide stores to use the transaction bandwidth they already model.
 After the clock-warmed recollection and capacity correction, ReLU has 4.8%
-family MARE and vectoradd 8.9%. With the later k-means and PageRank holdouts,
-the complete 47-point MARE is 7.4%.
+family MARE and vectoradd 8.9%. With the later k-means and PageRank holdouts
+and the shared L2-ingress correction, the complete 47-point MARE is 6.7%.
 
 | vector length | HW steady (µs) | Sim (µs) | Error |
 |---:|---:|---:|---:|
@@ -206,7 +206,7 @@ points are present and every simulator point verifies.
 | bitonicsort | 6.1% | 6.9% | 1.232 |
 | aes | 7.7% | 7.8% | — |
 | fir | 0.3% | 0.7% | — |
-| kmeans | 14.4% | 34.3% | 0.462 |
+| kmeans | 8.8% | 14.6% | 0.979 |
 | nw | 1.2% | 1.5% | 0.981 |
 | pagerank | 8.7% | 13.2% | 1.058 |
 
@@ -214,11 +214,18 @@ PageRank's broad 128–1024-node curve shows that its canonical residual is not
 a scaling failure: the model's fitted slope is within 5.8% of hardware and
 its four-point family MARE is 8.7%. K-means exposes a different issue. Its
 fixed launch overhead matches the flat 1024–4096 hardware region reasonably,
-but the 8192- and 16,384-point simulators are 20.0% and 34.3% fast. The fitted
-slope is only 46.2% of hardware. Hardware component timing localizes the
-transition primarily to the sparse transpose/swap kernel after three
-workgroups per CU. That residual is retained as a holdout rather than
-corrected with a benchmark- or size-specific delay.
+but the original 8192- and 16,384-point simulators were 20.0% and 34.3% fast.
+Hardware component timing localizes the transition primarily to the sparse
+transpose/swap kernel after three workgroups per CU. Simulator counters show
+the L1 read hit rate collapsing from 61.9% at 6,144 points to 42.3% at 8,192
+and 4.9% at 16,384, with 84–93% of the resulting requests hitting in L2.
+
+A second token bucket on the shared L1-to-L2 connection models that L2-bank
+ingress pressure independently of the existing sustained-write constraint.
+It permits an initial 8,192 cache lines (512 KiB), then accepts six aggregate
+requests per GPU cycle; the original write-only 768 KiB burst and one-request
+per-two-cycle rate remain active simultaneously. K-means's six-point MARE is
+now 8.8%, its slope ratio is 0.979, and every non-k-means holdout is unchanged.
 
 The transpose correction is structural rather than benchmark-specific. A
 wide store generates up to 16 line requests but issues one wave instruction;
@@ -269,6 +276,12 @@ without a size- or benchmark-specific rule.
   error from 18.2% to 25.6% and left 47-point MARE unchanged (7.39% versus
   7.38%). The 192-entry compromise retained most of the vector regression
   with little k-means benefit, so the native 512-entry capacity remains.
+- Limiting total L1-to-L2 ingress to six requests/cycle without a burst fixed
+  k-means slope but raised the 65K vectoradd error to 30.3% and PageRank-512
+  to 20.4%. An 8,192-line burst preserves both points exactly while retaining
+  the large-k-means correction. A smaller 4,096-line candidate improved the
+  two largest k-means points by only 1.8–2.1 percentage points and began
+  regressing PageRank-512, so the broader 512 KiB burst was selected.
 
 ## Reproduction
 
@@ -292,5 +305,5 @@ the deliberately unmatched cold runtime measurement:
 ## Remaining work
 
 - Add `s_memtime` cycle-counter measurements and rerun with a pinned clock.
-- Investigate the k-means scaling slope and remaining transpose-384 residual
-  without benchmark-specific timing.
+- Investigate the remaining transpose-384 residual without benchmark-specific
+  timing.

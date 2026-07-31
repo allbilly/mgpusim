@@ -57,6 +57,14 @@ func (b Builder) Build(name string) *Comp {
 		}
 		modelComp.State.RequestCredit = b.spec.BurstRequests * denominator
 	}
+	if b.spec.SecondaryBurstRequests > 0 {
+		denominator := b.spec.SecondaryRequestRateDenominator
+		if denominator <= 0 {
+			denominator = 1
+		}
+		modelComp.State.SecondaryRequestCredit =
+			b.spec.SecondaryBurstRequests * denominator
+	}
 
 	modelComp.TickingComponent = modeling.NewSecondaryTickingComponent(
 		name, engine, b.spec.Freq, modelComp,

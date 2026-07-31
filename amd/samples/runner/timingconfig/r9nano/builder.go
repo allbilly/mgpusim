@@ -84,6 +84,9 @@ type Builder struct {
 	l2ToDramRequestRateNumerator     int
 	l2ToDramRequestRateDenominator   int
 	l2ToDramRequestBurst             int
+	l1ToL2RequestRateNumerator       int
+	l1ToL2RequestRateDenominator     int
+	l1ToL2RequestBurst               int
 	l1ToL2WriteRateNumerator         int
 	l1ToL2WriteRateDenominator       int
 	l1ToL2WriteBurst                 int
@@ -344,6 +347,23 @@ func (b Builder) WithL2ToDRAMRequestRate(
 // credit balance. Zero disables bursting beyond one cycle's request budget.
 func (b Builder) WithL2ToDRAMRequestBurst(n int) Builder {
 	b.l2ToDramRequestBurst = n
+	return b
+}
+
+// WithL1ToL2RequestRate limits aggregate requests from all L1 caches to the
+// shared L2 to numerator/denominator requests per GPU cycle. Responses are
+// unrestricted. This total-traffic limit can be combined with the separate
+// write-rate limit below.
+func (b Builder) WithL1ToL2RequestRate(numerator, denominator int) Builder {
+	b.l1ToL2RequestRateNumerator = numerator
+	b.l1ToL2RequestRateDenominator = denominator
+	return b
+}
+
+// WithL1ToL2RequestBurst sets the number of unused total-request credits that
+// the shared L1-to-L2 path can accumulate.
+func (b Builder) WithL1ToL2RequestBurst(n int) Builder {
+	b.l1ToL2RequestBurst = n
 	return b
 }
 
@@ -789,7 +809,22 @@ func (b *Builder) connectCPWithDRAMControllers() {
 
 func (b *Builder) connectL1ToL2() {
 	var l1ToL2Conn messaging.Connection
-	if b.l1ToL2WriteRateNumerator > 0 {
+	if b.l1ToL2RequestRateNumerator > 0 {
+		l1ToL2Conn = requestlimitedconnection.MakeBuilder().
+			WithRegistrar(b.simulation).
+			WithSpec(requestlimitedconnection.Spec{
+				Freq:                            b.freq,
+				RequestRateNumerator:            b.l1ToL2RequestRateNumerator,
+				RequestRateDenominator:          b.l1ToL2RequestRateDenominator,
+				BurstRequests:                   b.l1ToL2RequestBurst,
+				RequestFilter:                   requestlimitedconnection.AllRequests,
+				SecondaryRequestRateNumerator:   b.l1ToL2WriteRateNumerator,
+				SecondaryRequestRateDenominator: b.l1ToL2WriteRateDenominator,
+				SecondaryBurstRequests:          b.l1ToL2WriteBurst,
+				SecondaryRequestFilter:          requestlimitedconnection.WriteRequests,
+			}).
+			Build(b.name + ".L1ToL2")
+	} else if b.l1ToL2WriteRateNumerator > 0 {
 		l1ToL2Conn = requestlimitedconnection.MakeBuilder().
 			WithRegistrar(b.simulation).
 			WithSpec(requestlimitedconnection.Spec{
