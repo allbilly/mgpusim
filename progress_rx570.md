@@ -115,9 +115,11 @@ The original calibration added 126 cycles per wide read and 161 cycles for
 wide-store strides from one matrix-multiply point. Across four sizes, those
 penalties made matrix multiply 53–58% too slow and matrix transpose 248–603%
 too slow. Removing both penalties lets the existing transaction, cache, LDS,
-and dependency timing carry the accesses directly. All eight matrix holdouts
-verify; the remaining 8–37% errors are visible rather than hidden by another
-single-point fit and are handled separately from opcode-width classification.
+and dependency timing carry the accesses directly. A shared twelve-cycle FMA
+issue/result occupancy then corrects matrix multiply's uniform compute-path
+shortfall: its four size errors are 4.6%, 4.2%, 4.9%, and 4.1%. FIR, k-means,
+and pagerank remain in range. Matrix transpose retains a separate scaling miss
+and is not hidden by another opcode-width penalty.
 
 ### AES and dense stores need distinct issue timing
 

@@ -81,8 +81,11 @@ func MakeBuilder() r9nano.Builder {
 			DefaultResultLatency:         4,
 			BitwiseIssueInterval:         1,
 			BitwiseResultLatency:         1,
-			FMAIssueInterval:             4,
-			FMAResultLatency:             4,
+			// Effective dependent-FMA occupancy validated at four matrix sizes;
+			// the generic four-cycle wave issue path undercounted this kernel by
+			// a nearly constant 20-22% without the removed memory stalls.
+			FMAIssueInterval:             12,
+			FMAResultLatency:             12,
 			IntegerMultiplyIssueInterval: 4,
 			IntegerMultiplyResultLatency: 4,
 			TranscendentalIssueInterval:  4,

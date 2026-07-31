@@ -127,6 +127,9 @@ is deliberately blank until recollected. Multi-size evidence is recorded in
   fitted to one matrix-multiply point.
 - Vector XOR/AND/OR use a separate one-cycle timing class, and fully utilized
   cache-line stores have an independent twelve-cycle issue cost.
+- Dependent FMA execution uses a twelve-cycle effective occupancy; all four
+  matrix-multiply holdouts are within 5%, while FIR and k-means remain within
+  range.
 - GPU-side first/subsequent/post-kernel dispatch costs are calibrated for the
   RX 570's multi-launch workloads. Host cold-start costs remain excluded.
 
