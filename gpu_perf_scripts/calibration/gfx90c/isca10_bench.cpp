@@ -415,16 +415,29 @@ static void bench_fir(int iters) {
   HIP_CHECK(hipFree(hist));
 }
 
-static void bench_fp32fma(int iters) {
+static void bench_fp32arithmetic(int iters, const std::string &operation) {
+  const bool dependent = operation == "fma-dependent";
+  const char *benchmark = dependent ? "fp32fma_dependent"
+                          : operation == "mul" ? "fp32mul"
+                          : operation == "add" ? "fp32add"
+                                               : "fp32fma";
+  const char *symbol = dependent ? "fp32_fma_dependent_kernel"
+                       : operation == "mul" ? "fp32_mul_kernel"
+                       : operation == "add" ? "fp32_add_kernel"
+                                            : "fp32_fma_kernel";
+  const char *work_label = operation == "mul" || operation == "add"
+                               ? "ops"
+                               : "fmas";
   ModuleKernel kernel(
       "amd/benchmarks/microbench/fp32throughput/kernels_gfx90c.hsaco",
-      "fp32_fma_kernel");
+      symbol);
 
   if (fma_blocks < 1 || fma_threads < 64 || fma_threads > 1024 ||
       fma_threads % 64 != 0) {
     fprintf(stderr,
-            "fp32fma requires positive blocks and 64--1024 threads in "
-            "multiples of 64\n");
+            "%s requires positive blocks and 64--1024 threads in "
+            "multiples of 64\n",
+            benchmark);
     std::exit(2);
   }
   if (fma_count <= 0)
@@ -433,7 +446,7 @@ static void bench_fp32fma(int iters) {
   if (fma_count == 0)
     fma_count = 4;
   if (fma_blocks > std::numeric_limits<int>::max() / fma_threads) {
-    fprintf(stderr, "fp32fma launch geometry exceeds its 32-bit ABI\n");
+    fprintf(stderr, "%s launch geometry exceeds its 32-bit ABI\n", benchmark);
     std::exit(2);
   }
 
@@ -452,42 +465,65 @@ static void bench_fp32fma(int iters) {
 
   std::vector<float> actual(num_threads);
   HIP_CHECK(hipMemcpy(actual.data(), output, bytes, hipMemcpyDeviceToHost));
-  const int laps = fma_count / 4;
+  const int laps = dependent ? fma_count : fma_count / 4;
   double max_abs_error = 0.0;
   for (int tid = 0; tid < num_threads; ++tid) {
     const int lane = tid % fma_threads;
     float a0 = std::fma(float(lane), 0.001f, 1.0f);
-    float a1 = a0 + 0.1f;
-    float a2 = a0 + 0.2f;
-    float a3 = a0 + 0.3f;
-    for (int lap = 0; lap < laps; ++lap) {
-      a0 = std::fma(a0, 1.0000001f, 0.0000001f);
-      a1 = std::fma(a1, 1.0000001f, 0.0000001f);
-      a2 = std::fma(a2, 1.0000001f, 0.0000001f);
-      a3 = std::fma(a3, 1.0000001f, 0.0000001f);
+    float expected;
+    if (dependent) {
+      for (int lap = 0; lap < laps; ++lap)
+        a0 = std::fma(a0, 1.0000001f, 0.0000001f);
+      expected = a0;
+    } else {
+      float a1 = a0 + 0.1f;
+      float a2 = a0 + 0.2f;
+      float a3 = a0 + 0.3f;
+      for (int lap = 0; lap < laps; ++lap) {
+        if (operation == "mul") {
+          a0 *= 1.0000001f;
+          a1 *= 1.0000001f;
+          a2 *= 1.0000001f;
+          a3 *= 1.0000001f;
+        } else if (operation == "add") {
+          a0 += 0.0000001f;
+          a1 += 0.0000001f;
+          a2 += 0.0000001f;
+          a3 += 0.0000001f;
+        } else {
+          a0 = std::fma(a0, 1.0000001f, 0.0000001f);
+          a1 = std::fma(a1, 1.0000001f, 0.0000001f);
+          a2 = std::fma(a2, 1.0000001f, 0.0000001f);
+          a3 = std::fma(a3, 1.0000001f, 0.0000001f);
+        }
+      }
+      expected = ((a0 + a1) + a2) + a3;
     }
-    const float expected = ((a0 + a1) + a2) + a3;
     const double abs_error = std::abs(double(actual[tid]) - expected);
     max_abs_error = std::max(max_abs_error, abs_error);
     const double tolerance =
         1e-6 + 1e-5 * std::max(std::abs(double(expected)), 1.0);
     if (!std::isfinite(actual[tid]) || abs_error > tolerance) {
       fprintf(stderr,
-              "fp32fma mismatch at thread %d: expected %.9g, got %.9g, "
+              "%s mismatch at thread %d: expected %.9g, got %.9g, "
               "abs error %.3g exceeds %.3g\n",
-              tid, expected, actual[tid], abs_error, tolerance);
+              benchmark, tid, expected, actual[tid], abs_error, tolerance);
       std::exit(3);
     }
   }
   fprintf(stderr,
-          "fp32fma verification Passed! blocks=%d threads=%d fmas=%d "
+          "%s verification Passed! blocks=%d threads=%d %s=%d "
           "max_abs_error=%.3g\n",
-          fma_blocks, fma_threads, fma_count, max_abs_error);
-  printf("fp32fma %.3f\n", us);
+          benchmark, fma_blocks, fma_threads, work_label, fma_count,
+          max_abs_error);
+  printf("%s %.3f\n", benchmark, us);
   const uint64_t wave_fmas = uint64_t(fma_blocks) *
                              uint64_t(fma_threads / 64) *
                              uint64_t(fma_count);
-  printf("fp32fma_ns_per_wave_fma %.9f\n",
+  const char *metric_suffix = operation == "mul" || operation == "add"
+                                  ? "ns_per_wave_op"
+                                  : "ns_per_wave_fma";
+  printf("%s_%s %.9f\n", benchmark, metric_suffix,
          double(us) * 1000.0 / double(wave_fmas));
   HIP_CHECK(hipFree(output));
 }
@@ -1264,7 +1300,13 @@ int main(int argc, char **argv) {
   if (only == "scratchspill")
     bench_scratchspill(iters);
   if (only == "fp32fma")
-    bench_fp32fma(iters);
+    bench_fp32arithmetic(iters, "fma");
+  if (only == "fp32fma_dependent")
+    bench_fp32arithmetic(iters, "fma-dependent");
+  if (only == "fp32mul")
+    bench_fp32arithmetic(iters, "mul");
+  if (only == "fp32add")
+    bench_fp32arithmetic(iters, "add");
   if (only == "vmemloadshape")
     bench_vmemloadshape(iters);
   return 0;

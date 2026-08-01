@@ -55,6 +55,47 @@ class StatisticsTests(unittest.TestCase):
 
 
 class ParsingTests(unittest.TestCase):
+    def test_dependent_fma_uses_exact_object_and_verification_marker(self):
+        self.assertEqual(
+            acquire.BENCHMARK_HSACO["fp32fma_dependent"],
+            acquire.BENCHMARK_HSACO["fp32fma"],
+        )
+        self.assertEqual(
+            acquire.AUTO_VERIFICATION["fp32fma_dependent"],
+            ("marker", r"fp32fma_dependent verification Passed!"),
+        )
+        command = acquire.build_container_command(
+            podman="podman",
+            image="image",
+            container_name="batch",
+            binary=Path("/bench"),
+            benchmark="fp32fma_dependent",
+            warmup=20,
+            iterations=2000,
+            benchmark_args=[
+                "--fma-blocks",
+                "16",
+                "--fma-threads",
+                "64",
+                "--fmas",
+                "4096",
+            ],
+        )
+        self.assertIn("fp32fma_dependent", command)
+        self.assertEqual(command[-6:], [
+            "--fma-blocks", "16", "--fma-threads", "64", "--fmas", "4096"
+        ])
+
+        for benchmark in ("fp32mul", "fp32add"):
+            self.assertEqual(
+                acquire.BENCHMARK_HSACO[benchmark],
+                acquire.BENCHMARK_HSACO["fp32fma"],
+            )
+            self.assertEqual(
+                acquire.AUTO_VERIFICATION[benchmark],
+                ("marker", rf"{benchmark} verification Passed!"),
+            )
+
     def test_parse_selected_clock(self):
         text = "0: 200Mhz  1: 700Mhz\n2: 1600Mhz *\n"
         self.assertEqual(acquire.parse_selected_clock_mhz(text), 1600)

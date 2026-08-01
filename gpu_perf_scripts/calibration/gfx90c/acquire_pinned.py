@@ -51,6 +51,15 @@ BENCHMARK_HSACO = {
     "fp32fma": (
         "amd/benchmarks/microbench/fp32throughput/kernels_gfx90c.hsaco"
     ),
+    "fp32fma_dependent": (
+        "amd/benchmarks/microbench/fp32throughput/kernels_gfx90c.hsaco"
+    ),
+    "fp32mul": (
+        "amd/benchmarks/microbench/fp32throughput/kernels_gfx90c.hsaco"
+    ),
+    "fp32add": (
+        "amd/benchmarks/microbench/fp32throughput/kernels_gfx90c.hsaco"
+    ),
     "vmemloadshape": (
         "amd/benchmarks/microbench/vmemloadshape/kernels_gfx90c.hsaco"
     ),
@@ -74,6 +83,12 @@ BENCHMARK_HSACO = {
 AUTO_VERIFICATION = {
     "matrixmult": ("marker", r"matrixmult .*verification Passed!"),
     "fp32fma": ("marker", r"fp32fma verification Passed!"),
+    "fp32fma_dependent": (
+        "marker",
+        r"fp32fma_dependent verification Passed!",
+    ),
+    "fp32mul": ("marker", r"fp32mul verification Passed!"),
+    "fp32add": ("marker", r"fp32add verification Passed!"),
     "vmemloadshape": ("marker", r"vmemloadshape verification Passed!"),
     "kmeans": ("marker", r"kmeans .*verification Passed!"),
     "cache_latency": ("rc-guarded", None),

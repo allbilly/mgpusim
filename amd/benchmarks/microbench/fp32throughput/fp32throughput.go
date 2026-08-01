@@ -22,11 +22,15 @@ import (
 	"github.com/sarchlab/mgpusim/v5/amd/insts"
 )
 
-// FMA multiplier / addend constants, kept identical to the HIP kernel so the
+// Arithmetic multiplier / addend constants, kept identical to the HIP kernel so the
 // CPU reference in Verify() matches the GPU result bit-for-bit in spirit.
 const (
 	fmaMul float32 = 1.0000001
 	fmaAdd float32 = 0.0000001
+
+	OperationFMA = "fma"
+	OperationMul = "mul"
+	OperationAdd = "add"
 )
 
 // KernelArgs defines the kernel arguments for the gfx942/gfx90c kernels.
@@ -55,13 +59,18 @@ type Benchmark struct {
 
 	// NumBlocks is the number of thread blocks to launch.
 	NumBlocks int
-	// FmasPerThread is the number of FMA iterations per thread. It is rounded
-	// down to a multiple of 4 to match the kernel's 4-way unrolled loop.
+	// FmasPerThread is the number of arithmetic operations per thread. It is
+	// rounded down to a multiple of 4 to match the throughput kernels' unroll.
 	FmasPerThread int
 	// ThreadsPerBlock is the work-group (block) size. Defaults to 256; must be
 	// <= 1024. It is passed explicitly to the kernel, so any valid value launches
 	// correctly and the sweep can match the hardware threads-per-block dimension.
 	ThreadsPerBlock int
+	// Dependent selects the one-accumulator latency kernel. The default false
+	// selects the original four-accumulator throughput kernel.
+	Dependent bool
+	// Operation selects fma, mul, or add. The empty value defaults to fma.
+	Operation string
 
 	gOut driver.Ptr
 
@@ -95,12 +104,42 @@ func (b *Benchmark) loadProgram() {
 	default:
 		log.Panic("the fp32_throughput benchmark requires -arch cdna3 or gcn5")
 	}
+	if (b.Dependent || b.operation() != OperationFMA) && b.Arch != arch.GCN5 {
+		log.Panic("the extended fp32 arithmetic probes require -arch gcn5")
+	}
+	if b.Dependent && b.operation() != OperationFMA {
+		log.Panic("-dependent cannot be combined with a non-FMA operation")
+	}
 
 	b.hsaco = insts.LoadKernelCodeObjectFromBytes(
-		hsacoBytes, "fp32_fma_kernel")
+		hsacoBytes, b.symbol())
 	if b.hsaco == nil {
 		log.Panic("Failed to load kernel binary")
 	}
+}
+
+func (b *Benchmark) symbol() string {
+	if b.Dependent {
+		return "fp32_fma_dependent_kernel"
+	}
+	switch b.operation() {
+	case OperationFMA:
+		return "fp32_fma_kernel"
+	case OperationMul:
+		return "fp32_mul_kernel"
+	case OperationAdd:
+		return "fp32_add_kernel"
+	default:
+		log.Panicf("unsupported FP32 operation %q", b.Operation)
+	}
+	return ""
+}
+
+func (b *Benchmark) operation() string {
+	if b.Operation == "" {
+		return OperationFMA
+	}
+	return b.Operation
 }
 
 // SelectGPU selects the GPUs to run on. This benchmark uses a single GPU.
@@ -196,17 +235,18 @@ func (b *Benchmark) exec() {
 
 // Verify checks the GPU result against a CPU reference computation.
 //
-// Each thread writes out[tid] = a0+a1+a2+a3, where the four accumulators start
-// at (1 + threadIdx.x*0.001) plus 0/0.1/0.2/0.3 and each is iterated
-// fmas_per_thread/4 times through a = a*mul + add. Since threadIdx.x is the
-// lane index within a block, the reference depends only on threadIdx.x and is
-// reproduced exactly here using float32 arithmetic.
+// Throughput variants write the sum of four independent accumulators. The
+// dependent variant writes its sole accumulator. Since the initial value only
+// depends on threadIdx.x, one reference value per work-group lane is enough.
 func (b *Benchmark) Verify() {
 	numElem := b.numThreads()
 	gpu := make([]float32, numElem)
 	b.driver.MemCopyD2H(b.context, gpu, b.gOut)
 
 	iters := int(b.fmasPerThread()) / 4
+	if b.Dependent {
+		iters = int(b.fmasPerThread())
+	}
 	tpb := b.threadsPerBlock()
 
 	// The result for a thread depends only on threadIdx.x (== tid % block size),
@@ -214,17 +254,36 @@ func (b *Benchmark) Verify() {
 	ref := make([]float32, tpb)
 	for lane := 0; lane < tpb; lane++ {
 		a0 := float32(1.0) + float32(lane)*0.001
-		a1 := a0 + 0.1
-		a2 := a0 + 0.2
-		a3 := a0 + 0.3
-
-		for i := 0; i < iters; i++ {
-			a0 = a0*fmaMul + fmaAdd
-			a1 = a1*fmaMul + fmaAdd
-			a2 = a2*fmaMul + fmaAdd
-			a3 = a3*fmaMul + fmaAdd
+		if b.Dependent {
+			for i := 0; i < iters; i++ {
+				a0 = a0*fmaMul + fmaAdd
+			}
+			ref[lane] = a0
+		} else {
+			a1 := a0 + 0.1
+			a2 := a0 + 0.2
+			a3 := a0 + 0.3
+			for i := 0; i < iters; i++ {
+				switch b.operation() {
+				case OperationFMA:
+					a0 = a0*fmaMul + fmaAdd
+					a1 = a1*fmaMul + fmaAdd
+					a2 = a2*fmaMul + fmaAdd
+					a3 = a3*fmaMul + fmaAdd
+				case OperationMul:
+					a0 *= fmaMul
+					a1 *= fmaMul
+					a2 *= fmaMul
+					a3 *= fmaMul
+				case OperationAdd:
+					a0 += fmaAdd
+					a1 += fmaAdd
+					a2 += fmaAdd
+					a3 += fmaAdd
+				}
+			}
+			ref[lane] = a0 + a1 + a2 + a3
 		}
-		ref[lane] = a0 + a1 + a2 + a3
 	}
 
 	for tid := 0; tid < numElem; tid++ {

@@ -140,6 +140,12 @@ The exact-HSACO harness supports application size sweeps without recompiling:
   --scratch-workgroups 16 --warmup 20 --iters 1000
 ./build/isca10_bench --only fp32fma --fma-blocks 28 \
   --fma-threads 256 --fmas 4096 --warmup 20 --iters 2000
+./build/isca10_bench --only fp32fma_dependent --fma-blocks 16 \
+  --fma-threads 64 --fmas 4096 --warmup 20 --iters 2000
+./build/isca10_bench --only fp32mul --fma-blocks 16 \
+  --fma-threads 64 --fmas 4096 --warmup 20 --iters 2000
+./build/isca10_bench --only fp32add --fma-blocks 16 \
+  --fma-threads 64 --fmas 4096 --warmup 20 --iters 2000
 ./build/isca10_bench --only vmemloadshape --vmem-width-dwords 4 \
   --vmem-mode serial --vmem-alias-lanes 8 --vmem-array-bytes 65536 \
   --vmem-repeats 512 --vmem-workgroups 1 --warmup 20 --iters 1000
@@ -177,9 +183,25 @@ launch time by the total dynamic wave-FMA count, so interpret it only after
 the occupancy sweep establishes saturation.
 
 The four accumulators reuse each result only after four FMA instructions.
-Consequently this probe identifies issue throughput but cannot identify FMA
-result latency at or below four issue intervals. Do not tune result latency
-from it; that requires a separate one-accumulator dependent-chain HSACO.
+Consequently that symbol identifies issue throughput but cannot identify FMA
+result latency at or below four issue intervals. The companion explicit-only
+`fp32fma_dependent` symbol uses one accumulator, and each loop FMA consumes the
+immediately preceding result. Compare both symbols at the same 16 blocks by 64
+threads and sweep `--fmas 4,64,256,1024,4096`; this holds the 16-wave launch
+geometry fixed while exposing the dependent-chain slope. The verifier checks
+every output, while `verify_hsaco.sh` requires exactly two self-dependent
+`v_fma_f32` instructions (initialization and loop body) and one global store.
+The `fp32mul` and `fp32add` controls use four independent chains and the same
+geometry/count flags. Their exact disassembly has four loop `v_mul_f32`
+instructions or four constant loop `v_add_f32` instructions, respectively.
+
+Guarded hardware acquisition accepts the dependent probe directly:
+
+```bash
+python3 gpu_perf_scripts/calibration/gfx90c/acquire_pinned.py \
+  --batches 9 --warmup 20 --iters 2000 fp32fma_dependent -- \
+  --fma-blocks 16 --fma-threads 64 --fmas 4096
+```
 
 The VMEM load-shape probe is explicit-only and is not part of the scored ten.
 Its twelve exact-HSACO symbols cross load widths `dword`, `dwordx2`, and
@@ -227,6 +249,19 @@ Run the identical simulator points with, for example:
 go run ./amd/samples/fp32_throughput \
   -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
   -num-blocks 28 -threads-per-block 256 -fmas 4096 \
+  -report-inst-count -report-busy-time -report-cpi-stack
+
+go run ./amd/samples/fp32_throughput \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -operation mul -num-blocks 16 -threads-per-block 64 -fmas 4096
+
+go run ./amd/samples/fp32_throughput \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+  -operation add -num-blocks 16 -threads-per-block 64 -fmas 4096
+
+go run ./amd/samples/fp32_throughput \
+  -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify -dependent \
+  -num-blocks 16 -threads-per-block 64 -fmas 4096 \
   -report-inst-count -report-busy-time -report-cpi-stack
 
 go run ./amd/samples/vmem_load_shape \

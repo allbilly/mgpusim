@@ -99,27 +99,86 @@ while read -r name expected _source destination symbols; do
       podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
         /opt/rocm/llvm/bin/llvm-readelf --notes "$object"
     )"
-    if [[ "$(grep -Fc '.wavefront_size: 64' <<<"$notes")" != 1 ||
-          "$(grep -Fc '.private_segment_fixed_size: 0' <<<"$notes")" != 1 ||
-          "$(grep -Fc '.vgpr_spill_count: 0' <<<"$notes")" != 1 ]]; then
-      echo "fp32fma: metadata does not describe a spill-free wave64 kernel" >&2
+    if [[ "$(grep -Fc '.wavefront_size: 64' <<<"$notes")" != 4 ||
+          "$(grep -Fc '.private_segment_fixed_size: 0' <<<"$notes")" != 4 ||
+          "$(grep -Fc '.vgpr_spill_count: 0' <<<"$notes")" != 4 ]]; then
+      echo "fp32fma: metadata does not describe four spill-free wave64 kernels" >&2
       failed=1
     fi
 
-    disasm="$(
+    throughput_disasm="$(
       podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
         /opt/rocm/llvm/bin/llvm-objdump --mcpu=gfx90c \
         --disassemble-symbols=fp32_fma_kernel "$object"
     )"
-    fma_count="$(
-      grep -Ec '^[[:space:]]*v_fma_f32[[:space:]]' <<<"$disasm" || true
+    dependent_disasm="$(
+      podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
+        /opt/rocm/llvm/bin/llvm-objdump --mcpu=gfx90c \
+        --disassemble-symbols=fp32_fma_dependent_kernel "$object"
     )"
-    store_count="$(
+    mul_disasm="$(
+      podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
+        /opt/rocm/llvm/bin/llvm-objdump --mcpu=gfx90c \
+        --disassemble-symbols=fp32_mul_kernel "$object"
+    )"
+    add_disasm="$(
+      podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
+        /opt/rocm/llvm/bin/llvm-objdump --mcpu=gfx90c \
+        --disassemble-symbols=fp32_add_kernel "$object"
+    )"
+    throughput_fmas="$(
+      grep -Ec '^[[:space:]]*v_fma_f32[[:space:]]' \
+        <<<"$throughput_disasm" || true
+    )"
+    throughput_stores="$(
       grep -Ec '^[[:space:]]*global_store_dword[[:space:]]' \
-        <<<"$disasm" || true
+        <<<"$throughput_disasm" || true
     )"
-    if [[ "$fma_count" != 5 || "$store_count" != 1 ]]; then
-      echo "fp32fma: disassembly has $fma_count FP32 FMAs/$store_count stores, want 5/1" >&2
+    dependent_fmas="$(
+      grep -Ec '^[[:space:]]*v_fma_f32[[:space:]]' \
+        <<<"$dependent_disasm" || true
+    )"
+    dependent_stores="$(
+      grep -Ec '^[[:space:]]*global_store_dword[[:space:]]' \
+        <<<"$dependent_disasm" || true
+    )"
+    dependent_self_fmas="$(
+      grep -Ec \
+        '^[[:space:]]*v_fma_f32[[:space:]]+v([0-9]+), v\1,' \
+        <<<"$dependent_disasm" || true
+    )"
+    if [[ "$throughput_fmas" != 5 || "$throughput_stores" != 1 ]]; then
+      echo "fp32fma: throughput disassembly has $throughput_fmas FP32 FMAs/$throughput_stores stores, want 5/1" >&2
+      failed=1
+    fi
+    if [[ "$dependent_fmas" != 2 || "$dependent_self_fmas" != 2 ||
+          "$dependent_stores" != 1 ]]; then
+      echo "fp32fma: dependent disassembly has $dependent_fmas FP32 FMAs ($dependent_self_fmas self-dependent)/$dependent_stores stores, want 2 (2 self-dependent)/1" >&2
+      failed=1
+    fi
+    mul_ops="$(
+      grep -Ec '^[[:space:]]*v_mul_f32(_e32)?[[:space:]]' \
+        <<<"$mul_disasm" || true
+    )"
+    mul_stores="$(
+      grep -Ec '^[[:space:]]*global_store_dword[[:space:]]' \
+        <<<"$mul_disasm" || true
+    )"
+    add_loop_ops="$(
+      grep -Ec \
+        '^[[:space:]]*v_add_f32[^/]*0x33d6bf95' \
+        <<<"$add_disasm" || true
+    )"
+    add_stores="$(
+      grep -Ec '^[[:space:]]*global_store_dword[[:space:]]' \
+        <<<"$add_disasm" || true
+    )"
+    if [[ "$mul_ops" != 4 || "$mul_stores" != 1 ]]; then
+      echo "fp32fma: multiply disassembly has $mul_ops loop multiplies/$mul_stores stores, want 4/1" >&2
+      failed=1
+    fi
+    if [[ "$add_loop_ops" != 4 || "$add_stores" != 1 ]]; then
+      echo "fp32fma: add disassembly has $add_loop_ops constant loop adds/$add_stores stores, want 4/1" >&2
       failed=1
     fi
   fi
