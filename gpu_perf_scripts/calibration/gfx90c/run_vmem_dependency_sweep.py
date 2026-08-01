@@ -215,6 +215,17 @@ def run_sweep(
         )
         try:
             guard_waiter()
+        except KeyboardInterrupt:
+            manifest["status"] = "interrupted"
+            manifest["failed_point"] = point.name
+            manifest["guard_wait_failure"] = "operator interrupted guard wait"
+            write_manifest(manifest_path, manifest)
+            print(
+                f"interrupted while waiting before {point.name}; artifacts "
+                f"remain under {output_root}",
+                file=sys.stderr,
+            )
+            return 130
         except (OSError, RuntimeError, TimeoutError, ValueError) as error:
             manifest["status"] = "failed"
             manifest["failed_point"] = point.name

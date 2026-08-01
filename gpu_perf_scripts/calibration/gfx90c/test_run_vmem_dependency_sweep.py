@@ -215,6 +215,28 @@ class ExecutionTests(unittest.TestCase):
         )
         self.assertEqual(sleeps, [1.0, 1.0, 1.0, 1.0])
 
+    def test_guard_interrupt_is_recorded(self):
+        def interrupt():
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "new-run"
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                rc = sweep.run_sweep(
+                    output_root=root,
+                    batches=1,
+                    execute=True,
+                    guard_waiter=interrupt,
+                )
+            manifest = json.loads((root / "sweep_manifest.json").read_text())
+
+        self.assertEqual(rc, 130)
+        self.assertEqual(manifest["status"], "interrupted")
+        self.assertEqual(manifest["failed_point"], "independent2-g16-r0")
+
     def test_execute_requires_a_new_run_root(self):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaises(FileExistsError):
