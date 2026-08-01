@@ -1318,6 +1318,53 @@ K-means, PageRank, and FIR stay outside the queue. This formula and CU ownership
 are phenomenological and are not production values until repeated hardware
 batches confirm the pilots.
 
+### Packed-width CU FIFO result
+
+Commits `e1078dce` and `786e3947` add and expose that default-off candidate as
+`-vmem-cu-wide-return-units-per-cycle`. At B=1, the exact G1/R64 width sweep is:
+
+| Mode | Width | Default raw (us) | CU B=1 raw (us) | CU B=1 body (us) |
+|------|------:|-----------------:|-----------------:|------------------:|
+| serial | 1 | 9.343 | 9.343 | 5.543 |
+| serial | 2 | 10.903 | 13.423 | 9.623 |
+| serial | 4 | 11.450 | 15.250 | 11.450 |
+| independent4 | 1 | 6.695 | 6.695 | 2.848 |
+| independent4 | 2 | 6.975 | 9.111 | 5.228 |
+| independent4 | 4 | 7.468 | 10.905 | 7.057 |
+
+The dword rows are exactly unchanged. The x2 rows equal the old wave-wide
+B=1 result, while x4 equals its B=2 result. The packed 0/64/96 work law thus
+resolves the incompatible x2/x4 bandwidth choices with one B value.
+
+One FIFO for the whole CU does not survive the occupancy control:
+
+| Mode | WGs | Hardware body | Default body | CU B=1 body |
+|------|----:|--------------:|-------------:|------------:|
+| serial | 1 | 12.015 | 7.650 | 11.450 |
+| serial | 7 | 11.928 | 7.546 | 11.346 |
+| serial | 16 | 11.390 | 7.532 | 11.670 |
+| serial | 28 | 11.146 | 7.412 | 15.553 |
+| independent4 | 1 | 7.782 | 3.620 | 7.057 |
+| independent4 | 7 | 7.899 | 3.541 | 6.948 |
+| independent4 | 16 | 9.782 | 3.523 | 11.735 |
+| independent4 | 28 | 11.149 | 3.505 | 15.549 |
+
+The shared FIFO creates the desired post-G7 independent knee, but makes it too
+large and also creates a false serial knee by G28. Increasing the same global
+budget to B=2 removes the serial knee (G1/G7/G16/G28 bodies
+9.530/9.426/9.440/9.425 us), but underfits both the G1 width cost and the
+independent G28 body (7.924 us). Therefore one aggregate CU server cannot fit
+latency and occupancy with one bandwidth. The packed work law remains useful;
+the single-FIFO topology is rejected and remains default-off.
+
+The next discriminating hypothesis keeps one FIFO per wave and permits a
+small, swept number P of wave queues to receive B units in parallel per CU.
+P=1 must reproduce this rejected control; P=2 and P=3 test whether limited
+cross-wave concurrency removes the false serial knee while retaining moderate
+independent burst contention. No P value may be enabled without the full
+width, dependency, work-group, application-size, and guarded hardware gates.
+Simulator artifacts are under `/tmp/mgpusim-cu-wide-sweep.786e3947`.
+
 The nine-batch serial-zero production attempt accepted one batch, then stopped
 at batch 2 when external `pytest` restarted. The run is rejected as a whole;
 its single batch is not promoted or combined. Its failure artifact is

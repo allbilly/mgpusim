@@ -301,6 +301,28 @@ bit-identical, and equal-load-count serial/independent probes should receive
 nearly the same absolute added body cost. Never set both experimental flags in
 one run.
 
+If the matched width sweep shows that x2 and x4 require different linear
+extra-dword bandwidths, exercise the packed-width CU candidate separately:
+
+```bash
+for units_per_cycle in 0 1 2; do
+  /home/fedora/.local/go/bin/go run ./amd/samples/vmem_load_shape \
+    -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+    -vmem-cu-wide-return-units-per-cycle "$units_per_cycle" \
+    -width-dwords 4 -mode independent4 -alias-lanes 8 \
+    -array-bytes 8192 -repeats 64 -workgroups 1
+done
+```
+
+This third default-off candidate assigns a returned wide load
+`ceil(2*A*(w-1)/w)` work units, where `A` is the active-lane count and `w` is
+the uniform dword width. A full wave therefore contributes 0/64/86/96 units
+for dword/x2/x3/x4. It is a phenomenological calibration hypothesis, not an
+AMD architectural claim. Run it at G1/G7/G16/G28 in both dependency modes:
+a useful queue topology must preserve the G1 width fit, leave dword traffic
+bit-identical, create the independent-load occupancy knee, and avoid creating
+a serial-load knee. Never combine it with either older return-model flag.
+
 #### Zero-trip baseline and repeat slope
 
 An explicit repeat count of zero is a matched launch control. It uses the same
