@@ -1613,6 +1613,42 @@ targets and the G7 control. Simulator artifacts are under
 `/tmp/mgpusim-depth-assist-dff38d11` and
 `/tmp/mgpusim-depth-assist-79a75aae`.
 
+### Scalar FP32 add/multiply production targets
+
+The exact scalar `v_mul_f32` and `v_add_f32` four-chain probes completed nine
+guarded batches at the same 16-block, 64-thread geometry used for the FMA
+controls. Results are:
+
+| Probe | Operations/thread | Hardware median (us) | CV | Bootstrap 95% median (us) |
+|-------|------------------:|---------------------:|---:|--------------------------:|
+| FP32 multiply | 1,024 | 12.878 | 0.200% | 12.828--12.882 |
+| FP32 multiply | 4,096 | 47.472 | 0.024% | 47.469--47.494 |
+| FP32 add | 1,024 | 12.880 | 0.181% | 12.828--12.886 |
+| FP32 add | 4,096 | 47.492 | 0.009% | 47.486--47.495 |
+
+The corresponding endpoint slopes are 0.7038 ns per aggregate wave-multiply
+and 0.7042 ns per aggregate wave-add. The identical slopes support one issue
+interval for these two scalar classes, while their separation from FMA keeps
+the calibration falsifiable. Issue interval 14 produces simulator endpoints
+14.232 and 45.432 us for both operations. Under the project gate
+`hardware/simulator - 1`, multiply errors are -9.51% and +4.49%, and add
+errors are -9.50% and +4.53%; all four are strictly below 10%.
+
+The four artifacts are under
+`/tmp/gfx90c-prod-fp32{mul,add}-b16-t64-f{1024,4096}-42685616` and their full
+samples and provenance are recorded in `hw_production_targets.json`. The
+collector manifests for the add runs report simulator-only worktree changes;
+the exact HSACO, hardware harness, and harness-source hashes are identical
+across all four acquisitions, and every batch passed verification, process,
+clock, thermal, telemetry, and timed-window gates.
+
+Combining add/multiply interval 14 with FMA interval 20 and B=1/Q=1/K=16
+gives k-means P=4,096 at 43.271 us versus 39.220 us hardware (-9.36%), which
+passes narrowly. Corrected matrix N=128 reaches only 61.746 us versus 75.765
+us hardware (+22.71%), so this arithmetic calibration is necessary but does
+not close the remaining matrix-specific gap. The combined profile remains
+experimental and is not enabled by default.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
