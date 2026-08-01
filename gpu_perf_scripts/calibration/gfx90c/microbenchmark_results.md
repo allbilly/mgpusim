@@ -1498,6 +1498,39 @@ recurring external RTL simulation, so no new hardware values are reported.
 Assist artifacts use `assist-w4-*` and `app-assist-i6-*` in the same temporary
 sweep directory.
 
+### Exact-window guarded pilot follow-up
+
+The explicit timed-window collector admitted the following one-batch
+directional points before recurring external RTL stages stopped the sweeps:
+
+| Mode | WGs | R0 (us) | R64 (us) | Body (us) |
+|------|----:|--------:|---------:|----------:|
+| independent2 | 16 | 9.359 | 19.715 | 10.356 |
+| independent2 | 28 | 8.124 | 19.797 | 11.673 |
+| independent8 | 16 | 9.229 | 18.349 | 9.120 |
+| independent8 | 28 | 8.455 | rejected | unavailable |
+
+Every accepted point passed exact output verification, the global forbidden
+process guard, the 50/58 C start/abort limits, and the marker-bounded 1600 MHz
+check with 15--25 in-window samples. These are not production measurements:
+each has one batch, and the eight-point sweep failed when the external job
+restarted before independent8/G28 R64. Artifacts are under
+`/tmp/gfx90c-vmem-window-pilot-f9153a67-20260801T0345`.
+
+The directional bodies distinguish window depth. For independent2, I=6 is
+3.0% fast at G16 and 2.8% slow at G28. For independent8/G16, I=2 is only 0.2%
+fast (9.101 versus 9.120 us), while I=6 is 20.0% slow. Together with the
+independent4 surface, this rejects one fixed assist cadence as the final model:
+the extra service must increase with the same-wave outstanding window or burst
+depth. No value is selected or enabled. The missing independent8/G28 matched
+pair remains the immediate hardware blocker.
+
+Two focused recovery runs also stopped before their R64 point when an external
+RTL process restarted; their R0-only results are not combined with another
+run. The latest preserved manifest is
+`/tmp/gfx90c-vmem-window-i8-g28-835bda00-20260801T0420/sweep_manifest.json`
+and is explicitly marked `interrupted`.
+
 The nine-batch serial-zero production attempt accepted one batch, then stopped
 at batch 2 when external `pytest` restarted. The run is rejected as a whole;
 its single batch is not promoted or combined. Its failure artifact is
