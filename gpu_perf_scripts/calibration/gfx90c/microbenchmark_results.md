@@ -1559,6 +1559,60 @@ application gap. The immutable measurement and provenance are recorded in
 `hw_production_targets.json`; the full collector artifact is
 `/tmp/gfx90c-prod-matrixmult-n128-5153c9cc-20260801`.
 
+### Depth-scaled burst-assist result
+
+Commit `79a75aae` adds a mutually exclusive, default-off depth scale K for the
+intermittent second burst-wave grant. With N contending burst waves and total
+classified depth S, its cadence is
+`clamp(ceil(K*N/S), 2, ceil(K/2))`. A first implementation used the current
+outstanding count. Exact K=10/12/13/14/16 sweeps rejected that definition:
+as an independent8 burst drained, it was reclassified as a shallow window and
+slowed mid-burst. K=13, for example, fit independent4/G16 but left
+independent8/G16 11.5% slow.
+
+Commit `dff38d11` instead retains each wave's peak outstanding depth until it
+leaves the burst. At K=16, the matched directional bodies are:
+
+| Mode | WGs | Hardware body (us) | Simulator body (us) | Sim/HW error |
+|------|----:|-------------------:|--------------------:|-------------:|
+| independent2 | 16 | 10.356 | 10.119 | -2.29% |
+| independent2 | 28 | 11.673 | 12.317 | +5.52% |
+| independent4 | 16 | 9.782 | 8.818 | -9.85% |
+| independent4 | 28 | 11.149 | 10.791 | -3.21% |
+| independent8 | 16 | 9.120 | 9.994 | +9.58% |
+| independent8 | 28 | 12.330 | 12.327 | -0.02% |
+
+Thus all six depth-discriminating G16/G28 bodies are below 10% error under one
+rule. K=15 produced identical depth2/4 values and slightly worse depth8
+values, so K=16 is the directional minimax candidate. The serial G1/G7/G16/G28
+bodies remain 11.450/11.346/11.331/11.213 us, all within 5% of hardware. The
+full pilot surface is not yet a pass: independent4/G1 is 7.057 us versus
+7.782 us hardware (-9.3%), but G7 is 6.948 versus 7.899 us (-12.0%). A
+separate single-wave turnaround term would be required to address that point;
+it is not folded into K.
+
+The application size gate confirms that K=16 is selective but cannot absorb
+the matrix residual:
+
+| Application size | Default (us) | B1/Q1/K16 (us) |
+|------------------|-------------:|----------------:|
+| matrix N=32 | 14.444 | 16.258 |
+| matrix N=64 | 20.036 | 23.680 |
+| matrix N=128 | 42.229 | 51.649 |
+| K-means P=1,024 | 21.975 | 21.975 |
+| K-means P=2,048 | 29.538 | 29.538 |
+| K-means P=4,096 | 40.439 | 40.439 |
+| K-means P=8,192 | 82.660 | 82.660 |
+
+Every run passed exact verification and SQLite integrity checking. K-means is
+bit-for-bit timing-neutral across the requested size sweep. Matrix N=128 is
+still 31.8% faster than the 75.765 us production target, proving that its
+remaining 24.116 us gap is outside this wide-return arbitration mechanism.
+K=16 remains experimental and default-off pending repeated window production
+targets and the G7 control. Simulator artifacts are under
+`/tmp/mgpusim-depth-assist-dff38d11` and
+`/tmp/mgpusim-depth-assist-79a75aae`.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
