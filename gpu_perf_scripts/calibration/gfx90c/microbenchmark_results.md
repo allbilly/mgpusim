@@ -1357,6 +1357,24 @@ independent G28 body (7.924 us). Therefore one aggregate CU server cannot fit
 latency and occupancy with one bandwidth. The packed work law remains useful;
 the single-FIFO topology is rejected and remains default-off.
 
+The exact application size gate is selective but does not close the matrix
+gap:
+
+| Application size | Default (us) | CU B=1 (us) |
+|------------------|-------------:|------------:|
+| matrix N=32 | 14.444 | 16.258 |
+| matrix N=64 | 20.036 | 23.680 |
+| matrix N=128 | 42.229 | 51.600 |
+| K-means P=1,024 | 21.975 | 21.975 |
+| K-means P=4,096 | 40.439 | 40.439 |
+
+All ten runs passed exact output verification. K-means identity is the required
+dword-bypass result. The single CU queue adds 9.371 us at matrix N=128, but
+still leaves 22.388/24.112 us to the two guarded 73.988/75.712-us diagnostics.
+Because the occupancy control already rejects that topology, its larger
+matrix movement is not evidence for enabling it or absorbing the residual
+application error into VMEM return bandwidth.
+
 The next discriminating hypothesis keeps one FIFO per wave and permits a
 small, swept number P of wave queues to receive B units in parallel per CU.
 P=1 must reproduce this rejected control; P=2 and P=3 test whether limited
