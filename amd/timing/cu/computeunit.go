@@ -70,6 +70,7 @@ type ComputeUnit struct {
 	vmemCUWideNextWave       int
 	vmemCUWideBurstNextWave  *wavefront.Wavefront
 	vmemCUWideOutstanding    map[*wavefront.Wavefront]int
+	vmemCUWideBurstPeakDepth map[*wavefront.Wavefront]int
 	vmemCUWideTrackedInstIDs map[uint64]*wavefront.Wavefront
 
 	Scheduler        Scheduler
@@ -963,6 +964,12 @@ func (cu *ComputeUnit) trackCUWideReturnIssue(
 	}
 	cu.vmemCUWideTrackedInstIDs[inst.ID] = wf
 	cu.vmemCUWideOutstanding[wf]++
+	if cu.vmemCUWideBurstPeakDepth == nil {
+		cu.vmemCUWideBurstPeakDepth = make(map[*wavefront.Wavefront]int)
+	}
+	if cu.vmemCUWideOutstanding[wf] > cu.vmemCUWideBurstPeakDepth[wf] {
+		cu.vmemCUWideBurstPeakDepth[wf] = cu.vmemCUWideOutstanding[wf]
+	}
 }
 
 func (cu *ComputeUnit) retireTrackedCUWideReturn(inst *wavefront.Inst) {
@@ -976,8 +983,12 @@ func (cu *ComputeUnit) retireTrackedCUWideReturn(inst *wavefront.Inst) {
 	delete(cu.vmemCUWideTrackedInstIDs, inst.ID)
 	if cu.vmemCUWideOutstanding[wf] <= 1 {
 		delete(cu.vmemCUWideOutstanding, wf)
+		delete(cu.vmemCUWideBurstPeakDepth, wf)
 	} else {
 		cu.vmemCUWideOutstanding[wf]--
+		if cu.vmemCUWideOutstanding[wf] <= 1 {
+			delete(cu.vmemCUWideBurstPeakDepth, wf)
+		}
 	}
 }
 
@@ -1182,7 +1193,11 @@ func (cu *ComputeUnit) cuWideBurstAssistInterval(
 
 	totalDepth := 0
 	for _, wf := range burstWaves {
-		totalDepth += cu.vmemCUWideOutstanding[wf]
+		depth := cu.vmemCUWideBurstPeakDepth[wf]
+		if depth < cu.vmemCUWideOutstanding[wf] {
+			depth = cu.vmemCUWideOutstanding[wf]
+		}
+		totalDepth += depth
 	}
 	if totalDepth <= 0 {
 		return 0

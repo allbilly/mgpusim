@@ -105,6 +105,12 @@ func trackPendingVMemRetirements(
 		cu.vmemCUWideTrackedInstIDs = make(map[uint64]*wavefront.Wavefront)
 	}
 	cu.vmemCUWideOutstanding[wf] += len(retirements)
+	if cu.vmemCUWideBurstPeakDepth == nil {
+		cu.vmemCUWideBurstPeakDepth = make(map[*wavefront.Wavefront]int)
+	}
+	if cu.vmemCUWideOutstanding[wf] > cu.vmemCUWideBurstPeakDepth[wf] {
+		cu.vmemCUWideBurstPeakDepth[wf] = cu.vmemCUWideOutstanding[wf]
+	}
 	for _, retirement := range retirements {
 		cu.vmemCUWideTrackedInstIDs[retirement.inst.ID] = wf
 	}
@@ -120,6 +126,7 @@ func runBurstReturnTrace(
 	cu.vmemCUWideReturnBurstAssistDepthScale = 0
 	cu.vmemCUWideReturnBurstAssistCountdown = 0
 	cu.vmemCUWideOutstanding = nil
+	cu.vmemCUWideBurstPeakDepth = nil
 	cu.vmemCUWideTrackedInstIDs = nil
 	cu.vmemCUWideWaveOrder = nil
 	cu.vmemCUWideBurstNextWave = nil
@@ -1307,7 +1314,7 @@ var _ = Describe("ComputeUnit", func() {
 				To(Equal(before - 1))
 		})
 
-		It("recomputes the dynamic interval after a tracked load retires", func() {
+		It("holds the peak-depth interval while a burst drains", func() {
 			cu.vmemCUWideReturnBurstAssistDepthScale = 16
 			firstWf, first := makePendingVMemWave(0, 1, 1, 1, 1)
 			secondWf, second := makePendingVMemWave(1, 1, 1, 1, 1)
@@ -1317,7 +1324,20 @@ var _ = Describe("ComputeUnit", func() {
 
 			Expect(cu.cuWideBurstAssistInterval(burstWaves)).To(Equal(4))
 			cu.retireTrackedCUWideReturn(first[0].inst)
-			Expect(cu.cuWideBurstAssistInterval(burstWaves)).To(Equal(5))
+			Expect(cu.vmemCUWideOutstanding[firstWf]).To(Equal(3))
+			Expect(cu.vmemCUWideBurstPeakDepth[firstWf]).To(Equal(4))
+			Expect(cu.cuWideBurstAssistInterval(burstWaves)).To(Equal(4))
+		})
+
+		It("clears peak depth when a wave leaves its burst", func() {
+			firstWf, first := makePendingVMemWave(0, 1, 1)
+			trackPendingVMemRetirements(cu, firstWf, first)
+
+			Expect(cu.vmemCUWideBurstPeakDepth[firstWf]).To(Equal(2))
+			cu.retireTrackedCUWideReturn(first[0].inst)
+			Expect(cu.vmemCUWideOutstanding[firstWf]).To(Equal(1))
+			_, tracked := cu.vmemCUWideBurstPeakDepth[firstWf]
+			Expect(tracked).To(BeFalse())
 		})
 
 		It("preserves disabled and fixed assist interval selection", func() {
