@@ -88,6 +88,7 @@ class ExecutionTests(unittest.TestCase):
                     batches=1,
                     execute=False,
                     runner=unexpected_runner,
+                    sleeper=lambda _: self.fail("dry run slept"),
                 )
             self.assertEqual(rc, 0)
             self.assertFalse(root.exists())
@@ -118,6 +119,7 @@ class ExecutionTests(unittest.TestCase):
                     batches=1,
                     execute=True,
                     runner=fake_runner,
+                    sleeper=lambda _: None,
                 )
             self.assertEqual(rc, 7)
             self.assertEqual(len(calls), 2)
@@ -127,6 +129,32 @@ class ExecutionTests(unittest.TestCase):
             self.assertEqual(len(manifest["completed"]), 2)
             for record in manifest["completed"]:
                 self.assertTrue(Path(record["collector_manifest"]).is_file())
+
+    def test_execute_cools_down_between_successful_points(self):
+        sleeps = []
+
+        def fake_runner(command, *, check):
+            self.assertFalse(check)
+            output_dir = Path(command[command.index("--output-dir") + 1])
+            output_dir.mkdir()
+            (output_dir / "manifest.json").write_text("{}\n")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = sweep.run_sweep(
+                    output_root=Path(temporary) / "new-run",
+                    batches=1,
+                    execute=True,
+                    runner=fake_runner,
+                    sleeper=sleeps.append,
+                )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            sleeps,
+            [sweep.INTER_POINT_COOLDOWN_SECONDS] * 7,
+        )
 
     def test_execute_requires_a_new_run_root(self):
         with tempfile.TemporaryDirectory() as temporary:

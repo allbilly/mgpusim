@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ ACQUIRE = HERE / "acquire_pinned.py"
 FORBIDDEN_PROCESS_REGEX = (
     r"Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4"
 )
+INTER_POINT_COOLDOWN_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -113,6 +115,7 @@ def run_sweep(
     batches: int,
     execute: bool,
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    sleeper: Callable[[float], None] = time.sleep,
     python: str = sys.executable,
     acquire_script: Path = ACQUIRE,
 ) -> int:
@@ -142,6 +145,7 @@ def run_sweep(
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "status": "running",
         "batches_per_point": batches,
+        "inter_point_cooldown_seconds": INTER_POINT_COOLDOWN_SECONDS,
         "forbidden_process_regex": FORBIDDEN_PROCESS_REGEX,
         "points": [asdict(point) for point in points],
         "completed": [],
@@ -151,7 +155,7 @@ def run_sweep(
 
     completed = manifest["completed"]
     assert isinstance(completed, list)
-    for point, command in zip(points, commands):
+    for index, (point, command) in enumerate(zip(points, commands)):
         print(f"running {point.name}: {shlex.join(command)}", flush=True)
         result = runner(command, check=False)
         point_record = {
@@ -174,6 +178,13 @@ def run_sweep(
             )
             return result.returncode
         write_manifest(manifest_path, manifest)
+        if index + 1 < len(points):
+            print(
+                f"cooling down {INTER_POINT_COOLDOWN_SECONDS:.0f} seconds "
+                "before the next point",
+                flush=True,
+            )
+            sleeper(INTER_POINT_COOLDOWN_SECONDS)
 
     manifest["status"] = "complete"
     write_manifest(manifest_path, manifest)

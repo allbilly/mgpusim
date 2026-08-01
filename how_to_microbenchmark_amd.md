@@ -420,7 +420,9 @@ conflicting process. Every point retains the collector's `manifest.json`, raw
 stdout/stderr, telemetry, and summary in its own directory; the parent
 `sweep_manifest.json` records progress and the first failed point. Never merge
 a partial run with a later run, and never promote the one-batch pilot as a
-production measurement.
+production measurement. The driver also waits 30 seconds after each successful
+point; this is required because each point uses a fresh collector process, so
+the collector's own per-batch cooldown cannot span point boundaries.
 
 #### Zero-trip baseline and repeat slope
 
