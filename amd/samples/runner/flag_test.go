@@ -10,7 +10,7 @@ func setVMemReturnFlags(
 	t *testing.T,
 	timing bool,
 	gpuType string,
-	loadReturn, wideLoadReturn, cuWideReturn int,
+	loadReturn, wideLoadReturn, cuWideReturn, cuWideWaves int,
 ) {
 	t.Helper()
 
@@ -20,6 +20,7 @@ func setVMemReturnFlags(
 	oldLoadReturn := *vmemLoadReturnLaneDwordsPerCycleFlag
 	oldWideLoadReturn := *vmemWideLoadReturnLaneDwordsPerCycleFlag
 	oldCUWideReturn := *vmemCUWideReturnUnitsPerCycleFlag
+	oldCUWideWaves := *vmemCUWideReturnConcurrentWavesFlag
 	t.Cleanup(func() {
 		*timingFlag = oldTiming
 		*archFlag = oldArch
@@ -27,6 +28,7 @@ func setVMemReturnFlags(
 		*vmemLoadReturnLaneDwordsPerCycleFlag = oldLoadReturn
 		*vmemWideLoadReturnLaneDwordsPerCycleFlag = oldWideLoadReturn
 		*vmemCUWideReturnUnitsPerCycleFlag = oldCUWideReturn
+		*vmemCUWideReturnConcurrentWavesFlag = oldCUWideWaves
 	})
 
 	*timingFlag = timing
@@ -35,6 +37,7 @@ func setVMemReturnFlags(
 	*vmemLoadReturnLaneDwordsPerCycleFlag = loadReturn
 	*vmemWideLoadReturnLaneDwordsPerCycleFlag = wideLoadReturn
 	*vmemCUWideReturnUnitsPerCycleFlag = cuWideReturn
+	*vmemCUWideReturnConcurrentWavesFlag = cuWideWaves
 }
 
 func requireParseSimulationFlagsPanic(t *testing.T, want string) {
@@ -57,10 +60,13 @@ func TestVMemCUWideReturnFlagIsRegistered(t *testing.T) {
 	if flag.Lookup("vmem-cu-wide-return-units-per-cycle") == nil {
 		t.Fatal("expected CU-wide vector-memory return flag to be registered")
 	}
+	if flag.Lookup("vmem-cu-wide-return-concurrent-waves") == nil {
+		t.Fatal("expected CU-wide vector-memory concurrent-wave flag to be registered")
+	}
 }
 
 func TestParseVMemCUWideReturnBudget(t *testing.T) {
-	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13)
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 3)
 
 	runner := new(Runner)
 	runner.parseSimulationFlags()
@@ -71,17 +77,38 @@ func TestParseVMemCUWideReturnBudget(t *testing.T) {
 			runner.VMemCUWideReturnUnitsPerCycle,
 		)
 	}
+	if runner.VMemCUWideReturnConcurrentWaves != 3 {
+		t.Fatalf(
+			"expected CU-wide concurrent waves 3, got %d",
+			runner.VMemCUWideReturnConcurrentWaves,
+		)
+	}
+}
+
+func TestDefaultVMemCUWideReturnConcurrentWavesToOne(t *testing.T) {
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0)
+
+	runner := new(Runner)
+	runner.parseSimulationFlags()
+
+	if runner.VMemCUWideReturnConcurrentWaves != 1 {
+		t.Fatalf(
+			"expected CU-wide concurrent waves to default to 1, got %d",
+			runner.VMemCUWideReturnConcurrentWaves,
+		)
+	}
 }
 
 func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 	tests := []struct {
-		name       string
-		timing     bool
-		gpuType    string
-		loadReturn int
-		wideReturn int
-		cuWide     int
-		want       string
+		name        string
+		timing      bool
+		gpuType     string
+		loadReturn  int
+		wideReturn  int
+		cuWide      int
+		cuWideWaves int
+		want        string
 	}{
 		{
 			name:    "negative",
@@ -89,6 +116,21 @@ func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 			gpuType: "gfx90c",
 			cuWide:  -1,
 			want:    "CU-wide vector-memory load return budget cannot be negative",
+		},
+		{
+			name:        "negative concurrent waves",
+			timing:      true,
+			gpuType:     "gfx90c",
+			cuWide:      13,
+			cuWideWaves: -1,
+			want:        "CU-wide vector-memory concurrent waves cannot be negative",
+		},
+		{
+			name:        "concurrent waves without model",
+			timing:      true,
+			gpuType:     "gfx90c",
+			cuWideWaves: 2,
+			want:        "CU-wide vector-memory concurrent waves requires the CU-wide return model",
 		},
 		{
 			name:    "without timing",
@@ -130,6 +172,7 @@ func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 				test.loadReturn,
 				test.wideReturn,
 				test.cuWide,
+				test.cuWideWaves,
 			)
 			requireParseSimulationFlagsPanic(t, test.want)
 		})

@@ -113,6 +113,7 @@ type Builder struct {
 	vmemLoadReturnLaneDwordsPerCycle      int
 	vmemWideLoadReturnLaneDwordsPerCycle  int
 	vmemCUWideReturnUnitsPerCycle         int
+	vmemCUWideReturnConcurrentWaves       int
 	vecMemTransPipelineWidth              int
 	numSinglePrecisionUnits               int
 	dmaThroughL2                          bool
@@ -466,6 +467,13 @@ func (b Builder) WithVMemWideLoadReturnLaneDwordsPerCycle(n int) Builder {
 // work-conserving wide-load return FIFO. Zero disables it.
 func (b Builder) WithVMemCUWideReturnUnitsPerCycle(n int) Builder {
 	b.vmemCUWideReturnUnitsPerCycle = n
+	return b
+}
+
+// WithVMemCUWideReturnConcurrentWaves sets the number of distinct wave
+// return FIFOs serviced per cycle by the CU-wide return model.
+func (b Builder) WithVMemCUWideReturnConcurrentWaves(n int) Builder {
+	b.vmemCUWideReturnConcurrentWaves = n
 	return b
 }
 
@@ -991,6 +999,9 @@ func (b *Builder) buildSAs() {
 	)
 	saBuilder = saBuilder.WithVMemCUWideReturnUnitsPerCycle(
 		b.vmemCUWideReturnUnitsPerCycle,
+	)
+	saBuilder = saBuilder.WithVMemCUWideReturnConcurrentWaves(
+		b.vmemCUWideReturnConcurrentWaves,
 	)
 	if b.vecMemTransPipelineWidth > 0 {
 		saBuilder = saBuilder.WithVecMemTransPipelineWidth(

@@ -48,6 +48,7 @@ type Builder struct {
 	vmemLoadReturnLaneDwordsPerCycle     int
 	vmemWideLoadReturnLaneDwordsPerCycle int
 	vmemCUWideReturnUnitsPerCycle        int
+	vmemCUWideReturnConcurrentWaves      int
 
 	globalStorage     *mem.Storage
 	rdmaAddressMapper *mem.BankedAddressPortMapper
@@ -119,6 +120,14 @@ func (b Builder) WithVMemCUWideReturnUnitsPerCycle(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnConcurrentWaves sets the number of distinct wave
+// return FIFOs serviced per cycle by the CU-wide return model. Zero selects
+// one wave when that model is enabled.
+func (b Builder) WithVMemCUWideReturnConcurrentWaves(n int) Builder {
+	b.vmemCUWideReturnConcurrentWaves = n
+	return b
+}
+
 // Build builds the hardware platform and returns the driver. The driver, the
 // GPUs, and all the connections register themselves with the simulation.
 func (b Builder) Build() *driver.Driver {
@@ -130,6 +139,17 @@ func (b Builder) Build() *driver.Driver {
 	}
 	if b.vmemCUWideReturnUnitsPerCycle < 0 {
 		panic("timingconfig: CU-wide vector-memory load return budget cannot be negative")
+	}
+	if b.vmemCUWideReturnConcurrentWaves < 0 {
+		panic("timingconfig: CU-wide vector-memory concurrent waves cannot be negative")
+	}
+	if b.vmemCUWideReturnUnitsPerCycle == 0 &&
+		b.vmemCUWideReturnConcurrentWaves > 0 {
+		panic("timingconfig: CU-wide vector-memory concurrent waves requires the CU-wide return model")
+	}
+	if b.vmemCUWideReturnUnitsPerCycle > 0 &&
+		b.vmemCUWideReturnConcurrentWaves == 0 {
+		b.vmemCUWideReturnConcurrentWaves = 1
 	}
 	configuredReturnModels := 0
 	for _, bandwidth := range []int{
@@ -321,6 +341,9 @@ func (b *Builder) createGPUBuilder(
 			).
 			WithVMemCUWideReturnUnitsPerCycle(
 				b.vmemCUWideReturnUnitsPerCycle,
+			).
+			WithVMemCUWideReturnConcurrentWaves(
+				b.vmemCUWideReturnConcurrentWaves,
 			).
 			WithDriverPort(driverPort)
 	default:

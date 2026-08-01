@@ -126,6 +126,7 @@ func TestBuildGfx90cPlatformWithVMemCUWideReturnBudget(t *testing.T) {
 		WithSimulation(s).
 		WithGPUType("gfx90c").
 		WithVMemCUWideReturnUnitsPerCycle(13).
+		WithVMemCUWideReturnConcurrentWaves(3).
 		Build()
 
 	component := s.GetComponentByName("GPU[1].SA[0].CU[0]")
@@ -137,6 +138,12 @@ func TestBuildGfx90cPlatformWithVMemCUWideReturnBudget(t *testing.T) {
 		t.Fatalf(
 			"expected CU-wide vector-memory return budget 13, got %d",
 			computeUnit.Spec().VMemCUWideReturnUnitsPerCycle,
+		)
+	}
+	if computeUnit.Spec().VMemCUWideReturnConcurrentWaves != 3 {
+		t.Fatalf(
+			"expected CU-wide concurrent waves 3, got %d",
+			computeUnit.Spec().VMemCUWideReturnConcurrentWaves,
 		)
 	}
 }
@@ -216,6 +223,59 @@ func TestRejectVMemCUWideReturnBudgetForOtherGPUs(t *testing.T) {
 		WithGPUType("vega64").
 		WithVMemCUWideReturnUnitsPerCycle(13).
 		Build()
+}
+
+func TestDefaultVMemCUWideConcurrentWavesToOne(t *testing.T) {
+	s := simulation.MakeBuilder().
+		WithoutMonitoring().
+		WithOutputFileName(t.TempDir() + "/sim").
+		Build()
+	defer s.Terminate()
+
+	MakeBuilder().
+		WithSimulation(s).
+		WithGPUType("gfx90c").
+		WithVMemCUWideReturnUnitsPerCycle(13).
+		Build()
+
+	component := s.GetComponentByName("GPU[1].SA[0].CU[0]")
+	computeUnit, ok := component.(*cu.Comp)
+	if !ok {
+		t.Fatalf("expected gfx90c compute unit, got %T", component)
+	}
+	if computeUnit.Spec().VMemCUWideReturnConcurrentWaves != 1 {
+		t.Fatalf(
+			"expected CU-wide concurrent waves to default to 1, got %d",
+			computeUnit.Spec().VMemCUWideReturnConcurrentWaves,
+		)
+	}
+}
+
+func TestRejectInvalidVMemCUWideConcurrentWaves(t *testing.T) {
+	tests := []struct {
+		name  string
+		units int
+		waves int
+	}{
+		{name: "negative", units: 13, waves: -1},
+		{name: "without CU-wide model", units: 0, waves: 2},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected invalid concurrent-wave configuration to panic")
+				}
+			}()
+
+			MakeBuilder().
+				WithGPUType("gfx90c").
+				WithVMemCUWideReturnUnitsPerCycle(test.units).
+				WithVMemCUWideReturnConcurrentWaves(test.waves).
+				Build()
+		})
+	}
 }
 
 func TestBuildPolaris10Platform(t *testing.T) {

@@ -33,6 +33,11 @@ var vmemCUWideReturnUnitsPerCycleFlag = flag.Int(
 	0,
 	"Experimental gfx90c CU-wide vector-load return budget; zero disables the model.",
 )
+var vmemCUWideReturnConcurrentWavesFlag = flag.Int(
+	"vmem-cu-wide-return-concurrent-waves",
+	0,
+	"Concurrent wave FIFOs for the gfx90c CU-wide return model; zero selects one.",
+)
 
 var verifyFlag = flag.Bool("verify", false, "Verify the emulation result.")
 var memTracing = flag.Bool("trace-mem", false, "Generate memory trace")
@@ -142,6 +147,8 @@ func (r *Runner) parseSimulationFlags() {
 		*vmemWideLoadReturnLaneDwordsPerCycleFlag
 	r.VMemCUWideReturnUnitsPerCycle =
 		*vmemCUWideReturnUnitsPerCycleFlag
+	r.VMemCUWideReturnConcurrentWaves =
+		*vmemCUWideReturnConcurrentWavesFlag
 	if r.VMemLoadReturnLaneDwordsPerCycle < 0 {
 		panic("vector-memory load return bandwidth cannot be negative")
 	}
@@ -150,6 +157,17 @@ func (r *Runner) parseSimulationFlags() {
 	}
 	if r.VMemCUWideReturnUnitsPerCycle < 0 {
 		panic("CU-wide vector-memory load return budget cannot be negative")
+	}
+	if r.VMemCUWideReturnConcurrentWaves < 0 {
+		panic("CU-wide vector-memory concurrent waves cannot be negative")
+	}
+	if r.VMemCUWideReturnUnitsPerCycle == 0 &&
+		r.VMemCUWideReturnConcurrentWaves > 0 {
+		panic("CU-wide vector-memory concurrent waves requires the CU-wide return model")
+	}
+	if r.VMemCUWideReturnUnitsPerCycle > 0 &&
+		r.VMemCUWideReturnConcurrentWaves == 0 {
+		r.VMemCUWideReturnConcurrentWaves = 1
 	}
 	configuredReturnModels := 0
 	for _, bandwidth := range []int{

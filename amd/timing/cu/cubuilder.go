@@ -40,6 +40,7 @@ var defaultSpec = Spec{
 	VMemLoadReturnLaneDwordsPerCycle:      0,
 	VMemWideLoadReturnLaneDwordsPerCycle:  0,
 	VMemCUWideReturnUnitsPerCycle:         0,
+	VMemCUWideReturnConcurrentWaves:       0,
 	RegisterScoreboard:                    false,
 	LDSPipelineLatency:                    14,
 	LDSIssueInterval:                      0,
@@ -122,6 +123,14 @@ func (b Builder) WithVMemCUWideReturnUnitsPerCycle(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnConcurrentWaves sets the number of distinct wave
+// return FIFOs that the CU-wide model may service per cycle. Zero selects one
+// wave when that model is enabled.
+func (b Builder) WithVMemCUWideReturnConcurrentWaves(n int) Builder {
+	b.spec.VMemCUWideReturnConcurrentWaves = n
+	return b
+}
+
 // WithResources sets the shared references of the compute unit. Decoder and
 // ALU default to insts.NewDisassembler() and gcn3.NewALU(nil) when left nil.
 func (b Builder) WithResources(resources Resources) Builder {
@@ -164,6 +173,8 @@ func (b Builder) Build(name string) *Comp {
 		b.spec.VMemWideLoadReturnLaneDwordsPerCycle
 	cuMW.vmemCUWideReturnUnitsPerCycle =
 		b.spec.VMemCUWideReturnUnitsPerCycle
+	cuMW.vmemCUWideReturnConcurrentWaves =
+		b.spec.VMemCUWideReturnConcurrentWaves
 
 	wfDispatcher := NewWfDispatcher(cuMW)
 	wfDispatcher.scoreboardEnabled = b.spec.RegisterScoreboard
@@ -248,6 +259,17 @@ func (b *Builder) mustHaveValidSpec() {
 	}
 	if b.spec.VMemCUWideReturnUnitsPerCycle < 0 {
 		panic("cu: VMemCUWideReturnUnitsPerCycle cannot be negative")
+	}
+	if b.spec.VMemCUWideReturnConcurrentWaves < 0 {
+		panic("cu: VMemCUWideReturnConcurrentWaves cannot be negative")
+	}
+	if b.spec.VMemCUWideReturnUnitsPerCycle == 0 &&
+		b.spec.VMemCUWideReturnConcurrentWaves > 0 {
+		panic("cu: VMemCUWideReturnConcurrentWaves requires the CU-wide return model")
+	}
+	if b.spec.VMemCUWideReturnUnitsPerCycle > 0 &&
+		b.spec.VMemCUWideReturnConcurrentWaves == 0 {
+		b.spec.VMemCUWideReturnConcurrentWaves = 1
 	}
 	configuredReturnModels := 0
 	for _, bandwidth := range []int{

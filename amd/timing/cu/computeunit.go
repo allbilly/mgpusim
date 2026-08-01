@@ -52,15 +52,18 @@ type ComputeUnit struct {
 	vmemLoadReturnLaneDwordsPerCycle     int
 	vmemWideLoadReturnLaneDwordsPerCycle int
 	vmemCUWideReturnUnitsPerCycle        int
+	vmemCUWideReturnConcurrentWaves      int
 
 	// Return assemblies accumulate the selected lane-dword accounting mode
 	// across all cache-line response siblings of one dynamic vector load. The
-	// wave-wide model services a FIFO per wave, while the CU-wide model uses
-	// one work-conserving FIFO. The two older models service each pending
-	// instruction independently.
+	// wave-wide and CU-wide models service a FIFO per wave. The CU-wide model
+	// selects a configurable number of distinct wave queues each tick. The two
+	// older models service each pending instruction independently.
 	vmemReturnAssemblies     map[uint64]int
 	vmemWideReturnAssemblies map[uint64]*vmemWideReturnAssembly
 	pendingVMemRetirements   []pendingVMemLoadRetirement
+	vmemCUWideWaveOrder      []*wavefront.Wavefront
+	vmemCUWideNextWave       int
 
 	Scheduler        Scheduler
 	BranchUnit       SubComponent
@@ -971,14 +974,15 @@ func (cu *ComputeUnit) finishVectorMemLoadReturn(
 			remaining++
 		}
 	}
-	cu.pendingVMemRetirements = append(
-		cu.pendingVMemRetirements,
-		pendingVMemLoadRetirement{
-			wf:              wf,
-			inst:            inst,
-			remainingCycles: remaining,
-		},
-	)
+	retirement := pendingVMemLoadRetirement{
+		wf:              wf,
+		inst:            inst,
+		remainingCycles: remaining,
+	}
+	cu.pendingVMemRetirements = append(cu.pendingVMemRetirements, retirement)
+	if cu.vmemCUWideReturnUnitsPerCycle > 0 {
+		cu.addCUWideWaveQueue(wf)
+	}
 }
 
 func (cu *ComputeUnit) advanceVMemLoadRetirements() bool {
@@ -1020,9 +1024,94 @@ func (cu *ComputeUnit) advanceVMemLoadRetirements() bool {
 }
 
 func (cu *ComputeUnit) advanceCUWideVMemLoadRetirements() bool {
+	cu.syncCUWideWaveOrder()
+	if len(cu.vmemCUWideWaveOrder) == 0 {
+		return false
+	}
+
+	concurrentWaves := cu.vmemCUWideReturnConcurrentWaves
+	if concurrentWaves <= 0 {
+		concurrentWaves = 1
+	}
+	if concurrentWaves > len(cu.vmemCUWideWaveOrder) {
+		concurrentWaves = len(cu.vmemCUWideWaveOrder)
+	}
+
+	selected := make([]*wavefront.Wavefront, 0, concurrentWaves)
+	for i := 0; i < concurrentWaves; i++ {
+		index := (cu.vmemCUWideNextWave + i) % len(cu.vmemCUWideWaveOrder)
+		selected = append(selected, cu.vmemCUWideWaveOrder[index])
+	}
+
+	for _, wf := range selected {
+		cu.advanceOneCUWideWave(wf)
+	}
+
+	cu.advanceCUWideRoundRobin(selected[len(selected)-1])
+	return true
+}
+
+func (cu *ComputeUnit) addCUWideWaveQueue(wf *wavefront.Wavefront) {
+	for _, queuedWf := range cu.vmemCUWideWaveOrder {
+		if queuedWf == wf {
+			return
+		}
+	}
+	cu.vmemCUWideWaveOrder = append(cu.vmemCUWideWaveOrder, wf)
+}
+
+func (cu *ComputeUnit) hasPendingCUWideWave(wf *wavefront.Wavefront) bool {
+	for i := range cu.pendingVMemRetirements {
+		if cu.pendingVMemRetirements[i].wf == wf {
+			return true
+		}
+	}
+	return false
+}
+
+func (cu *ComputeUnit) syncCUWideWaveOrder() {
+	for i := range cu.pendingVMemRetirements {
+		cu.addCUWideWaveQueue(cu.pendingVMemRetirements[i].wf)
+	}
+
+	if len(cu.vmemCUWideWaveOrder) == 0 {
+		cu.vmemCUWideNextWave = 0
+		return
+	}
+
+	nextWave := cu.vmemCUWideWaveOrder[cu.vmemCUWideNextWave%len(cu.vmemCUWideWaveOrder)]
+	active := cu.vmemCUWideWaveOrder[:0]
+	for _, wf := range cu.vmemCUWideWaveOrder {
+		if cu.hasPendingCUWideWave(wf) {
+			active = append(active, wf)
+		}
+	}
+	clear(cu.vmemCUWideWaveOrder[len(active):])
+	cu.vmemCUWideWaveOrder = active
+	cu.vmemCUWideNextWave = 0
+	for i, wf := range cu.vmemCUWideWaveOrder {
+		if wf == nextWave {
+			cu.vmemCUWideNextWave = i
+			break
+		}
+	}
+}
+
+func (cu *ComputeUnit) advanceOneCUWideWave(wf *wavefront.Wavefront) {
 	budget := cu.vmemCUWideReturnUnitsPerCycle
-	for budget > 0 && len(cu.pendingVMemRetirements) > 0 {
-		head := &cu.pendingVMemRetirements[0]
+	for budget > 0 {
+		index := -1
+		for i := range cu.pendingVMemRetirements {
+			if cu.pendingVMemRetirements[i].wf == wf {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return
+		}
+
+		head := &cu.pendingVMemRetirements[index]
 		consumed := head.remainingCycles
 		if consumed > budget {
 			consumed = budget
@@ -1030,16 +1119,57 @@ func (cu *ComputeUnit) advanceCUWideVMemLoadRetirements() bool {
 		head.remainingCycles -= consumed
 		budget -= consumed
 		if head.remainingCycles > 0 {
-			break
+			return
 		}
 
 		retirement := *head
-		cu.pendingVMemRetirements[0] = pendingVMemLoadRetirement{}
-		cu.pendingVMemRetirements = cu.pendingVMemRetirements[1:]
+		copy(
+			cu.pendingVMemRetirements[index:],
+			cu.pendingVMemRetirements[index+1:],
+		)
+		last := len(cu.pendingVMemRetirements) - 1
+		cu.pendingVMemRetirements[last] = pendingVMemLoadRetirement{}
+		cu.pendingVMemRetirements = cu.pendingVMemRetirements[:last]
 		cu.retireVectorMemLoad(retirement.wf, retirement.inst)
 	}
+}
 
-	return true
+func (cu *ComputeUnit) advanceCUWideRoundRobin(
+	lastSelected *wavefront.Wavefront,
+) {
+	oldOrder := cu.vmemCUWideWaveOrder
+	lastIndex := 0
+	for i, wf := range oldOrder {
+		if wf == lastSelected {
+			lastIndex = i
+			break
+		}
+	}
+
+	var nextWave *wavefront.Wavefront
+	for offset := 1; offset <= len(oldOrder); offset++ {
+		candidate := oldOrder[(lastIndex+offset)%len(oldOrder)]
+		if cu.hasPendingCUWideWave(candidate) {
+			nextWave = candidate
+			break
+		}
+	}
+
+	active := oldOrder[:0]
+	for _, wf := range oldOrder {
+		if cu.hasPendingCUWideWave(wf) {
+			active = append(active, wf)
+		}
+	}
+	clear(oldOrder[len(active):])
+	cu.vmemCUWideWaveOrder = active
+	cu.vmemCUWideNextWave = 0
+	for i, wf := range active {
+		if wf == nextWave {
+			cu.vmemCUWideNextWave = i
+			break
+		}
+	}
 }
 
 func (cu *ComputeUnit) retireVectorMemLoad(

@@ -140,6 +140,11 @@ type Spec struct {
 	// is mutually exclusive with all other vector-memory return models.
 	VMemCUWideReturnUnitsPerCycle int `json:"vmem_cu_wide_return_units_per_cycle"`
 
+	// VMemCUWideReturnConcurrentWaves is the number of distinct wave return
+	// FIFOs that the CU-wide model can service in one cycle. Zero selects one
+	// wave for backward compatibility when the CU-wide model is enabled.
+	VMemCUWideReturnConcurrentWaves int `json:"vmem_cu_wide_return_concurrent_waves"`
+
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`

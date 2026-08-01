@@ -69,6 +69,30 @@ func exampleGrid() *kernels.Grid {
 	return grid
 }
 
+func makePendingVMemWave(
+	simdID int,
+	work ...int,
+) (*wavefront.Wavefront, []pendingVMemLoadRetirement) {
+	wf := wavefront.NewWavefront(kernels.NewWavefront())
+	wf.SIMDID = simdID
+	wf.OutstandingVectorMemAccess = len(work)
+	wf.OutstandingScalarMemAccess = len(work)
+	wf.InFlightInsts = len(work)
+
+	retirements := make([]pendingVMemLoadRetirement, 0, len(work))
+	for _, remaining := range work {
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.FLAT
+		retirements = append(retirements, pendingVMemLoadRetirement{
+			wf:              wf,
+			inst:            inst,
+			remainingCycles: remaining,
+		})
+	}
+
+	return wf, retirements
+}
+
 var _ = DescribeTable(
 	"counts duplicate vector-memory return lane-dwords",
 	func(alias, width int) {
@@ -919,7 +943,7 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(wf.OutstandingScalarMemAccess).To(Equal(0))
 		})
 
-		It("shares one deterministic work-conserving FIFO across the CU", func() {
+		It("defaults to deterministic fair P1 CU-wide service", func() {
 			cu.vmemCUWideReturnUnitsPerCycle = 5
 			wf.SIMDID = 0
 			secondInst := wavefront.NewInst(insts.NewInst())
@@ -968,16 +992,132 @@ var _ = Describe("ComputeUnit", func() {
 
 			cu.advanceVMemLoadRetirements()
 
-			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
-			Expect(cu.pendingVMemRetirements[0].inst).To(BeIdenticalTo(otherInst))
-			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(4))
-			Expect(wf.OutstandingVectorMemAccess).To(Equal(0))
-			Expect(otherWf.OutstandingVectorMemAccess).To(Equal(1))
+			Expect(cu.pendingVMemRetirements).To(HaveLen(2))
+			Expect(cu.pendingVMemRetirements[0].inst).To(BeIdenticalTo(inst))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(2))
+			Expect(cu.pendingVMemRetirements[1].inst).To(BeIdenticalTo(secondInst))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(3))
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(2))
+			Expect(otherWf.OutstandingVectorMemAccess).To(Equal(0))
 
 			cu.advanceVMemLoadRetirements()
 
 			Expect(cu.pendingVMemRetirements).To(BeEmpty())
-			Expect(otherWf.OutstandingVectorMemAccess).To(Equal(0))
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(0))
+		})
+
+		It("makes the compatibility P0 setting exactly match explicit P1", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 2
+			_, first := makePendingVMemWave(0, 5)
+			_, second := makePendingVMemWave(0, 5)
+			original := []pendingVMemLoadRetirement{first[0], second[0]}
+
+			cu.pendingVMemRetirements = append(
+				[]pendingVMemLoadRetirement(nil), original...)
+			cu.advanceVMemLoadRetirements()
+			defaultRemaining := []int{
+				cu.pendingVMemRetirements[0].remainingCycles,
+				cu.pendingVMemRetirements[1].remainingCycles,
+			}
+			defaultNext := cu.vmemCUWideNextWave
+
+			cu.pendingVMemRetirements = append(
+				[]pendingVMemLoadRetirement(nil), original...)
+			cu.vmemCUWideWaveOrder = nil
+			cu.vmemCUWideNextWave = 0
+			cu.vmemCUWideReturnConcurrentWaves = 1
+			cu.advanceVMemLoadRetirements()
+
+			Expect([]int{
+				cu.pendingVMemRetirements[0].remainingCycles,
+				cu.pendingVMemRetirements[1].remainingCycles,
+			}).To(Equal(defaultRemaining))
+			Expect(cu.vmemCUWideNextWave).To(Equal(defaultNext))
+		})
+
+		It("serializes one wave under P2 and carries its same-tick remainder", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 4
+			cu.vmemCUWideReturnConcurrentWaves = 2
+			wf, retirements := makePendingVMemWave(0, 2, 5)
+			_, other := makePendingVMemWave(1, 8)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				retirements[0], other[0], retirements[1],
+			}
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect(cu.pendingVMemRetirements).To(HaveLen(2))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(4))
+			Expect(cu.pendingVMemRetirements[1].wf).To(BeIdenticalTo(wf))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(3))
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(1))
+		})
+
+		It("services two wave FIFOs concurrently under P2", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 2
+			cu.vmemCUWideReturnConcurrentWaves = 2
+			_, first := makePendingVMemWave(0, 5)
+			_, second := makePendingVMemWave(0, 5)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				first[0], second[0],
+			}
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(3))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(3))
+		})
+
+		It("round-robins a third wave fairly with two service slots", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 1
+			cu.vmemCUWideReturnConcurrentWaves = 2
+			_, first := makePendingVMemWave(0, 10)
+			_, second := makePendingVMemWave(0, 10)
+			_, third := makePendingVMemWave(0, 10)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				first[0], second[0], third[0],
+			}
+
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(9))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(9))
+			Expect(cu.pendingVMemRetirements[2].remainingCycles).To(Equal(10))
+
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(8))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(9))
+			Expect(cu.pendingVMemRetirements[2].remainingCycles).To(Equal(9))
+		})
+
+		It("does not transfer unused budget when P covers every queue", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 2
+			cu.vmemCUWideReturnConcurrentWaves = 4
+			firstWf, first := makePendingVMemWave(0, 1)
+			_, second := makePendingVMemWave(0, 5)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				first[0], second[0],
+			}
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect(firstWf.OutstandingVectorMemAccess).To(Equal(0))
+			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(3))
+		})
+
+		It("services waves on different SIMDs with independent budgets", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 2
+			cu.vmemCUWideReturnConcurrentWaves = 2
+			_, first := makePendingVMemWave(0, 4)
+			_, second := makePendingVMemWave(3, 4)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				first[0], second[0],
+			}
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(2))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(2))
 		})
 	})
 
@@ -1227,8 +1367,9 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(pendingWf.OutstandingVectorMemAccess).To(Equal(0))
 		})
 
-		It("preserves the CU-wide assembly and FIFO through flush and restart", func() {
+		It("preserves CU-wide wave queues and round-robin state through flush and restart", func() {
 			cu.vmemCUWideReturnUnitsPerCycle = 4
+			cu.vmemCUWideReturnConcurrentWaves = 1
 			assemblyInst := wavefront.NewInst(insts.NewInst())
 			assemblyInst.FormatType = insts.FLAT
 			assemblyWf := wavefront.NewWavefront(kernels.NewWavefront())
@@ -1272,6 +1413,8 @@ var _ = Describe("ComputeUnit", func() {
 				{wf: firstWf, inst: firstInst, remainingCycles: 6},
 				{wf: secondWf, inst: secondInst, remainingCycles: 3},
 			}
+			cu.vmemCUWideWaveOrder = []*wavefront.Wavefront{firstWf, secondWf}
+			cu.vmemCUWideNextWave = 1
 			cu.comp.State.HasFlushReq = true
 			cu.comp.State.FlushReqID = timing.GetIDGenerator().Generate()
 			cu.comp.State.FlushReqSrc = "CP"
@@ -1281,6 +1424,10 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(cu.pendingVMemRetirements).To(HaveLen(2))
 			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(6))
 			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(3))
+			Expect(cu.vmemCUWideWaveOrder).To(Equal(
+				[]*wavefront.Wavefront{firstWf, secondWf},
+			))
+			Expect(cu.vmemCUWideNextWave).To(Equal(1))
 			Expect(cu.vmemWideReturnAssemblies[assemblyInst.ID].laneDwords).
 				To(Equal(6))
 
@@ -1302,22 +1449,24 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(cu.comp.State.IsPaused).To(BeFalse())
 			Expect(cu.vmemWideReturnAssemblies[assemblyInst.ID].laneDwords).
 				To(Equal(6))
-
-			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
-			Expect(cu.pendingVMemRetirements[0].inst).To(BeIdenticalTo(firstInst))
-			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(2))
-			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(3))
+			Expect(cu.vmemCUWideNextWave).To(Equal(1))
 
 			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
 			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
-			Expect(cu.pendingVMemRetirements[0].inst).To(BeIdenticalTo(secondInst))
-			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(1))
-			Expect(firstWf.OutstandingVectorMemAccess).To(Equal(0))
-			Expect(secondWf.OutstandingVectorMemAccess).To(Equal(1))
+			Expect(cu.pendingVMemRetirements[0].inst).To(BeIdenticalTo(firstInst))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(6))
+			Expect(firstWf.OutstandingVectorMemAccess).To(Equal(1))
+			Expect(secondWf.OutstandingVectorMemAccess).To(Equal(0))
+
+			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
+			Expect(cu.pendingVMemRetirements[0].inst).To(BeIdenticalTo(firstInst))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(2))
+			Expect(firstWf.OutstandingVectorMemAccess).To(Equal(1))
 
 			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
 			Expect(cu.pendingVMemRetirements).To(BeEmpty())
-			Expect(secondWf.OutstandingVectorMemAccess).To(Equal(0))
+			Expect(firstWf.OutstandingVectorMemAccess).To(Equal(0))
 			Expect(cu.advanceVMemLoadRetirements()).To(BeFalse())
 		})
 

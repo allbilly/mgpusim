@@ -39,6 +39,7 @@ var _ = Describe("Builder", func() {
 		Expect(comp.Resources().Decoder).NotTo(BeNil())
 		Expect(comp.Resources().ALU).NotTo(BeNil())
 		Expect(comp.Spec().VMemCUWideReturnUnitsPerCycle).To(Equal(0))
+		Expect(comp.Spec().VMemCUWideReturnConcurrentWaves).To(Equal(0))
 
 		// All five ports must be declared so external code can assign them.
 		for _, portName := range []string{
@@ -235,7 +236,23 @@ var _ = Describe("Builder", func() {
 			Build("GPU.CU")
 
 		Expect(comp.Spec().VMemCUWideReturnUnitsPerCycle).To(Equal(13))
+		Expect(comp.Spec().VMemCUWideReturnConcurrentWaves).To(Equal(1))
 		Expect(MiddlewareOf(comp).vmemCUWideReturnUnitsPerCycle).To(Equal(13))
+		Expect(MiddlewareOf(comp).vmemCUWideReturnConcurrentWaves).To(Equal(1))
+	})
+
+	It("propagates explicit CU-wide concurrent waves", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		comp := MakeBuilder().
+			WithRegistrar(reg).
+			WithVMemCUWideReturnUnitsPerCycle(13).
+			WithVMemCUWideReturnConcurrentWaves(3).
+			Build("GPU.CU")
+
+		Expect(comp.Spec().VMemCUWideReturnConcurrentWaves).To(Equal(3))
+		Expect(MiddlewareOf(comp).vmemCUWideReturnConcurrentWaves).To(Equal(3))
 	})
 
 	It("rejects a negative CU-wide vector-memory return budget", func() {
@@ -249,6 +266,35 @@ var _ = Describe("Builder", func() {
 				Build("GPU.CU")
 		}).To(PanicWith(
 			"cu: VMemCUWideReturnUnitsPerCycle cannot be negative",
+		))
+	})
+
+	It("rejects negative CU-wide concurrent waves", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithVMemCUWideReturnUnitsPerCycle(13).
+				WithVMemCUWideReturnConcurrentWaves(-1).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: VMemCUWideReturnConcurrentWaves cannot be negative",
+		))
+	})
+
+	It("rejects CU-wide concurrent waves without the model", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithVMemCUWideReturnConcurrentWaves(2).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: VMemCUWideReturnConcurrentWaves requires the CU-wide return model",
 		))
 	})
 
