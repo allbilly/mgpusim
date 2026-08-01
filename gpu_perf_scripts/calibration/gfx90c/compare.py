@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Print sim vs HW table for gfx90c ISCA-10 calibration."""
+import json
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-# The checked-in matrix-multiplication hardware result predates the corrected
-# global-row indexing and regenerated HSACO. Keep it visible for provenance,
-# but do not include it in scored calibration aggregates.
-UNSCORED = {
-    "matrixmult": "stale HW target (predates corrected kernel)",
+PRODUCTION_TARGET_KEYS = {
+    "matrixmult": "matrixmult_n128",
 }
 
 
@@ -25,10 +23,21 @@ def load_pairs(path):
     return out
 
 
+def load_production_targets(path):
+    document = json.loads(path.read_text())
+    targets = document["targets"]
+    return {
+        benchmark: float(targets[key]["median"])
+        for benchmark, key in PRODUCTION_TARGET_KEYS.items()
+    }
+
+
 def main():
     hw_path = HERE / "hw_ground_truth.txt"
+    production_path = HERE / "hw_production_targets.json"
     sim_path = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "sim_ground_truth.txt"
     hw = load_pairs(hw_path)
+    hw.update(load_production_targets(production_path))
     sim = load_pairs(sim_path)
     names = list(hw.keys())
     print(
@@ -43,12 +52,9 @@ def main():
             continue
         r = hw[k] / sim[k]
         err = (r - 1.0) * 100
-        if k in UNSCORED:
-            status = f"not scored: {UNSCORED[k]}"
-        else:
-            ratios.append(r)
-            absolute_errors.append(abs(err))
-            status = "pass" if abs(err) < 10.0 else "FAIL"
+        ratios.append(r)
+        absolute_errors.append(abs(err))
+        status = "pass" if abs(err) < 10.0 else "FAIL"
         print(
             f"{k:<18} {sim[k]:10.1f} {hw[k]:10.1f} "
             f"{r:8.2f} {err:7.1f}%  {status}"

@@ -315,8 +315,9 @@ Run the matching full-line store-stride simulator probe directly:
 The comparison reports `HW/Sim`, signed error as `(HW/Sim - 1) × 100`, and
 mean absolute relative error. Positive error means the simulator is too fast;
 negative error means it is too slow. The corrected matrix-multiplication
-kernel is displayed but excluded from aggregates because its checked-in
-hardware target predates the source and HSACO correction.
+kernel is scored using the guarded N=128 median in
+`hw_production_targets.json`; the stale value in `hw_ground_truth.txt` is
+retained only as historical provenance.
 
 ## Model parameters
 

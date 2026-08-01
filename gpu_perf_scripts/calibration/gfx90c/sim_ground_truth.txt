@@ -1,11 +1,11 @@
-# Collected at 12d5269a; 17117fab restores the same timing settings.
-vectoradd 27.261
+# Candidate collected after a1d93631; artifacts: /tmp/gfx90c-final-candidate-a1d93631.
+vectoradd 27.058
 relu 14.572
-matrixmult 42.229
-matrixtranspose 129.067
+matrixmult 70.356
+matrixtranspose 129.587
 bitonicsort 745.124
 aes 15.476
-fir 11.316
-kmeans 40.439
-pagerank 126.412
+fir 11.528
+kmeans 43.271
+pagerank 127.575
 nw 134.211

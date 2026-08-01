@@ -1649,6 +1649,63 @@ us hardware (+22.71%), so this arithmetic calibration is necessary but does
 not close the remaining matrix-specific gap. The combined profile remains
 experimental and is not enabled by default.
 
+### Matrix size production gate and B128 LDS result
+
+Fresh guarded matrix acquisitions complete the supported square size sweep:
+
+| N | Work-groups | Hardware median (us) | CV | Bootstrap 95% median (us) |
+|--:|------------:|---------------------:|---:|--------------------------:|
+| 32 | 1 | 18.004 | 0.062% | 17.981--18.008 |
+| 64 | 4 | 33.561 | 0.223% | 33.441--33.626 |
+| 128 | 16 | 75.765 | 1.334% | 75.577--76.166 |
+
+Each point has nine accepted exact-HSACO batches. The N=32 and N=64 records
+are in `/tmp/gfx90c-prod-matrixmult-n32-7ccde58c` and
+`/tmp/gfx90c-prod-matrixmult-n64-1a7f12bc`; N=128 is recorded above. An N=96
+attempt was rejected before timing because the immutable hardware harness
+permits only 32, 64, or 128. It contributed no accepted sample.
+
+A private-MUBUF cap sweep was rejected by this size gate. Caps 20/32/40 give
+N=32 simulator times 19.866/20.835/21.426 us and N=128 times
+64.568/69.694/72.828 us. The larger caps close N=128 but make N=32 more than
+10% slow, proving that a fixed scratch transaction cost is not the missing
+scaling mechanism.
+
+The exact ISA instead exposes DS_READ/WRITE_B128 work that grows with both
+the number of outer tiles and work-groups. A width-specific 32-cycle service
+term fits one-wave LDS service. A separate 40-cycle turnaround applies only
+when another LDS instruction is already in flight on the same CU. Combined
+with scalar add/multiply interval 14, FMA interval 20, and B=1/Q=1/K=16 wide
+return service, the production size gate is:
+
+| N | Simulator (us) | Hardware (us) | HW/Sim error | Gate |
+|--:|---------------:|--------------:|-------------:|------|
+| 32 | 19.995 | 18.004 | -9.96% | Pass |
+| 64 | 31.206 | 33.561 | +7.55% | Pass |
+| 128 | 70.356 | 75.765 | +7.69% | Pass |
+
+The N=32 margin is narrow, so the full suite remains essential. The
+single-process verified run under
+`/tmp/gfx90c-final-candidate-a1d93631` reports:
+
+| Benchmark | Simulator (us) | Hardware (us) | HW/Sim error | Gate |
+|-----------|---------------:|--------------:|-------------:|------|
+| vectoradd | 27.058 | 29.364 | +8.52% | Pass |
+| relu | 14.572 | 13.123 | -9.94% | Pass |
+| matrixmult | 70.356 | 75.765 | +7.69% | Pass |
+| matrixtranspose | 129.587 | 140.773 | +8.63% | Pass |
+| bitonicsort | 745.124 | 811.360 | +8.89% | Pass |
+| aes | 15.476 | 16.962 | +9.60% | Pass |
+| fir | 11.528 | 12.003 | +4.12% | Pass |
+| kmeans | 43.271 | 39.220 | -9.36% | Pass |
+| pagerank | 127.575 | 130.638 | +2.40% | Pass |
+| nw | 134.211 | 123.052 | -8.31% | Pass |
+
+All ten strict errors are below 10%; geometric-mean HW/Sim is 1.02x and MARE
+is 7.7%. `compare.py` now replaces the stale legacy matrix number with the
+guarded N=128 median from `hw_production_targets.json`, so matrix is part of
+the scored gate rather than an unscored note.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
@@ -1659,8 +1716,9 @@ the transpose width curve demonstrates why that is not sufficient. Candidate
 mechanisms must also survive dependent-latency and independent-throughput
 controls plus geometric sweeps around regime boundaries.
 
-The corrected matrix kernel now has a guarded production pinned N=128 target.
-Its 75.765 us median turns the formerly directional gap into the principal
-quantitative blocker. The ReLU/AES narrow gate margins, a pinned-clock
-repetition of the full-line store-stride probe, and protocol-equivalent
-simulator warm-state handling remain high-priority follow-ups.
+The corrected matrix kernel now has guarded N=32/N=64/N=128 targets and all
+three pass the selected profile. ReLU, AES, matrix N=32, and k-means retain
+narrow gate margins; a pinned-clock repetition of the full-line store-stride
+probe, a dedicated B128 LDS width/contender microbenchmark, and
+protocol-equivalent simulator warm-state handling remain high-priority
+robustness follow-ups rather than blockers for the current strict gate.

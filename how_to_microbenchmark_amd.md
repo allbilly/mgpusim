@@ -982,3 +982,23 @@ hardware/simulator ratio
 
 This metadata is what makes a microbenchmark a calibration experiment rather
 than a one-off timing number.
+
+## 12. Use size sweeps to reject false fixes
+
+A default-size match is not enough. In the gfx90c matrix case, a fixed private
+scratch penalty improved N=128 but made N=32 more than 10% slow. Guarded
+hardware targets at N=32/64/128 exposed that overfit immediately. The accepted
+model separates one-wave DS_READ/WRITE_B128 service from extra turnaround only
+when another LDS instruction is already in flight on the CU; that mechanism
+passes all three sizes and the matrix-transpose cross-check.
+
+For a proposed resource penalty, choose sizes that independently change:
+
+- inner-loop repetitions;
+- work-group count and waves per CU;
+- number of contending instructions;
+- fixed launch overhead relative to kernel work.
+
+Record unsupported sizes as rejected attempts rather than silently changing
+the immutable harness. Score only completed, verified, provenance-preserving
+targets.

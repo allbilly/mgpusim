@@ -53,10 +53,16 @@ func MakeBuilder() r9nano.Builder {
 		WithDRAMBankPipelineDepth(9).
 		WithDRAMStageLatency(14).
 		WithRegisterScoreboard(true).
+		// Guarded four-chain FP32 probes separate scalar add/multiply from
+		// FMA throughput. Result latency remains independently configurable.
 		WithVALUTiming(cu.VALUTiming{
 			DefaultIssueInterval:         4,
 			DefaultResultLatency:         4,
-			FMAIssueInterval:             4,
+			FP32AddIssueInterval:         14,
+			FP32AddResultLatency:         4,
+			FP32MultiplyIssueInterval:    14,
+			FP32MultiplyResultLatency:    4,
+			FMAIssueInterval:             20,
 			FMAResultLatency:             4,
 			IntegerMultiplyIssueInterval: 4,
 			IntegerMultiplyResultLatency: 4,
@@ -68,6 +74,10 @@ func MakeBuilder() r9nano.Builder {
 		}).
 		WithLDSPipelineLatency(4).
 		WithLDSThroughput(1, 4).
+		// Matrix size sweeps require B128 service width plus extra turnaround
+		// only when another LDS instruction already occupies the CU path.
+		WithLDSB128ServiceExtraCycles(32).
+		WithLDSB128ContentionExtraCycles(40).
 		WithLDSBanking(32, 4, 1).
 		WithBarrierLatency(4).
 		WithMaxCoalescingPenalty(13).
@@ -86,6 +96,11 @@ func MakeBuilder() r9nano.Builder {
 		// The CU-to-cache issue path is shared and admits one coalesced
 		// transaction group per cycle.
 		WithVecMemTransPipelineWidth(1).
+		// Peak outstanding depth selects a second burst-wave grant cadence;
+		// K=16 is the directional minimax across independent2/4/8 controls.
+		WithVMemCUWideReturnUnitsPerCycle(1).
+		WithVMemCUWideReturnBurstConcurrentWaves(1).
+		WithVMemCUWideReturnBurstAssistDepthScale(16).
 		// Dispatch: 4 shader arrays; ~0.91 µs post-kernel tax per launch.
 		WithCPAlg("per-die").
 		WithCPNumDies(NumShaderArray).
