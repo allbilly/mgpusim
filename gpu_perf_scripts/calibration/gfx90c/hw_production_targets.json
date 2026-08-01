@@ -66,6 +66,103 @@
         "artifact_directory": "/tmp/gfx90c-prod-matrixmult-n128-5153c9cc-20260801",
         "created_utc": "2026-08-01T06:49:19.807291+00:00"
       }
+    },
+    "fp32fma_b16_t64_f1024": {
+      "benchmark": "fp32fma",
+      "benchmark_args": [
+        "--fma-blocks", "16", "--fma-threads", "64", "--fmas", "1024"
+      ],
+      "metric": "mean kernel time",
+      "unit": "us",
+      "median": 15.765,
+      "samples": [15.764, 15.767, 15.765, 15.742, 15.768, 15.764,
+        15.771, 15.765, 15.737],
+      "statistics": {
+        "count": 9,
+        "mean": 15.760333333333332,
+        "minimum": 15.737,
+        "maximum": 15.771,
+        "population_cv_percent": 0.07228276682233857,
+        "mad": 0.0019999999999988916,
+        "bootstrap95_median": [15.742, 15.768],
+        "bootstrap_resamples": 10000,
+        "bootstrap_seed": 0
+      },
+      "protocol": {
+        "hardware_clock_mhz": 1600,
+        "warmup_iterations": 20,
+        "timed_iterations": 8000,
+        "timed_window_ms_range": [125.92959, 126.200048],
+        "cooldown_seconds": 30,
+        "maximum_start_temperature_c": 50,
+        "maximum_temperature_c": 58,
+        "sample_interval_ms": 5,
+        "minimum_active_samples": 10,
+        "active_samples_range": [24, 26],
+        "accepted_batches": 9,
+        "requested_batches": 9,
+        "forbidden_process_matches": 0
+      },
+      "provenance": {
+        "git_commit": "380227360179b5c1aa113746ffafd89ee1c3b8ae",
+        "git_status_porcelain": "",
+        "container_image": "docker.io/rocm/dev-ubuntu-24.04:7.1.1",
+        "hsaco_sha256": "385a70a9740569f21c0874b8d5bf20121d652e76cf7e197753b78cec396d7e1d",
+        "harness_sha256": "a3bcd92578f5710038ea1a7b0cac1fc5424bcc5676d3b20678bedae6a6fe1bc1",
+        "source_sha256": "3ee59bd6c59fc5fb53a0de30d569be37b19035c04ef3fc9fed277c9121d9f400",
+        "artifact_directory": "/tmp/gfx90c-prod-fp32-b16-t64-f1024-38022736",
+        "created_utc": "2026-08-01T07:31:41.601402+00:00"
+      }
+    },
+    "fp32fma_b16_t64_f4096": {
+      "benchmark": "fp32fma",
+      "benchmark_args": [
+        "--fma-blocks", "16", "--fma-threads", "64", "--fmas", "4096"
+      ],
+      "metric": "mean kernel time",
+      "unit": "us",
+      "median": 59.031,
+      "samples": [59.047, 59.024, 59.029, 59.027, 59.061, 59.062,
+        59.031, 59.057, 59.025],
+      "statistics": {
+        "count": 9,
+        "mean": 59.040333333333336,
+        "minimum": 59.024,
+        "maximum": 59.062,
+        "population_cv_percent": 0.02595866990943425,
+        "mad": 0.006999999999997897,
+        "bootstrap95_median": [59.025, 59.061],
+        "bootstrap_resamples": 10000,
+        "bootstrap_seed": 0
+      },
+      "protocol": {
+        "hardware_clock_mhz": 1600,
+        "warmup_iterations": 20,
+        "timed_iterations": 2400,
+        "timed_window_ms_range": [141.688184, 141.779685],
+        "cooldown_seconds": 30,
+        "maximum_start_temperature_c": 50,
+        "maximum_temperature_c": 58,
+        "sample_interval_ms": 5,
+        "minimum_active_samples": 10,
+        "active_samples_range": [26, 29],
+        "accepted_batches": 9,
+        "requested_batches": 9,
+        "forbidden_process_matches": 0
+      },
+      "provenance": {
+        "git_commit": "380227360179b5c1aa113746ffafd89ee1c3b8ae",
+        "git_status_porcelain": "",
+        "container_image": "docker.io/rocm/dev-ubuntu-24.04:7.1.1",
+        "hsaco_sha256": "385a70a9740569f21c0874b8d5bf20121d652e76cf7e197753b78cec396d7e1d",
+        "harness_sha256": "a3bcd92578f5710038ea1a7b0cac1fc5424bcc5676d3b20678bedae6a6fe1bc1",
+        "source_sha256": "3ee59bd6c59fc5fb53a0de30d569be37b19035c04ef3fc9fed277c9121d9f400",
+        "artifact_directory": "/tmp/gfx90c-prod-fp32-b16-t64-f4096-38022736",
+        "created_utc": "2026-08-01T07:36:37.755351+00:00"
+      }
     }
+  },
+  "derived": {
+    "fp32fma_b16_t64_f1024_to_f4096_slope_ns_per_wave_fma": 0.8802490234375
   }
 }
