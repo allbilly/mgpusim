@@ -337,11 +337,49 @@ for concurrent_waves in 1 2 3 4; do
 done
 ```
 
-Repeat every P at G1/G7/G16/G28 for both modes. P is a topology probe, not a
-continuous fitting knob. Reject the whole static-P hypothesis if the P needed
-to keep serial flat removes the independent knee, or if the P that creates an
-independent knee also slows serial. That outcome calls for a burst-depth or
-outstanding-window probe, not interpolation between P values.
+Repeat every P at G1/G7/G16/G28 for all four modes. P is a topology probe, not
+a continuous fitting knob. Reject the whole static-P hypothesis if the P
+needed to keep serial flat removes the independent knee, or if the P that
+creates an independent knee also slows serial.
+
+If static P fails, test dynamic burst classification without using benchmark
+names or work-group thresholds:
+
+```bash
+for window in 2 4 8; do
+  for burst_slots in 1 2; do
+    /home/fedora/.local/go/bin/go run ./amd/samples/vmem_load_shape \
+      -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+      -vmem-cu-wide-return-units-per-cycle 1 \
+      -vmem-cu-wide-return-burst-concurrent-waves "$burst_slots" \
+      -width-dwords 4 -mode "independent${window}" -alias-lanes 8 \
+      -array-bytes 8192 -repeats 64 -workgroups 28
+  done
+done
+```
+
+The burst candidate counts only issued, unretired modeled-wide loads. A wave
+with one such load receives independent service; a wave with two or more
+competes for Q burst slots. Dword traffic is excluded. Q=1 and Q=2 must bracket
+the window2/4/8 occupancy surface before testing an intermittent second grant:
+
+```bash
+for assist_interval in 2 3 4 6; do
+  /home/fedora/.local/go/bin/go run ./amd/samples/vmem_load_shape \
+    -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+    -vmem-cu-wide-return-units-per-cycle 1 \
+    -vmem-cu-wide-return-burst-concurrent-waves 1 \
+    -vmem-cu-wide-return-burst-assist-interval "$assist_interval" \
+    -width-dwords 4 -mode independent4 -alias-lanes 8 \
+    -array-bytes 8192 -repeats 64 -workgroups 28
+done
+```
+
+The assist cadence advances only on ticks with at least two ready burst waves;
+interval 1 is exactly Q=2 and zero disables it. Reject this refinement if one
+interval cannot fit both occupancy points and the full window surface, or if
+serial, dword, G1, or G7 controls move. Do not select an interval from the
+independent4 curve alone.
 
 #### Zero-trip baseline and repeat slope
 

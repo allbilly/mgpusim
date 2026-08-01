@@ -1427,6 +1427,49 @@ selected value. Q=2 and guarded hardware window2/8 curves are required before
 considering a fractional assist rate or any enablement. Artifacts use the
 `qburst-w4-*` prefixes in the same temporary sweep directory.
 
+Q=2 is the required endpoint control. It leaves G1/G7 unchanged, but its
+independent2/4/8 G16 bodies are 9.178/7.118/7.451 us and its G28 bodies are
+9.975/8.273/9.161 us. For independent4 this is much too fast against hardware
+(9.782/11.149 us), so the required service rate lies between Q=1 and Q=2.
+
+Commit `0dde02ad` adds a default-off intermittent second grant. Interval I=1
+is exactly Q=2; larger I grants the assist once every I contended ticks. The
+window surface is:
+
+| Mode | WGs | Q=1 | I=2 | I=3 | I=4 | I=6 | Q=2 |
+|------|----:|----:|----:|----:|----:|----:|----:|
+| independent2 | 16 | 10.964 | 9.861 | 9.959 | 10.007 | 10.046 | 9.178 |
+| independent2 | 28 | 13.270 | 10.671 | 11.193 | 11.556 | 12.005 | 9.975 |
+| independent4 | 16 | 10.024 | 8.200 | 8.691 | 8.818 | 9.148 | 7.118 |
+| independent4 | 28 | 13.227 | 10.083 | 10.920 | 10.791 | 11.501 | 8.273 |
+| independent8 | 16 | 12.246 | 9.101 | 9.926 | 10.400 | 10.946 | 7.451 |
+| independent8 | 28 | 15.272 | 11.265 | 12.265 | 12.782 | 13.455 | 9.161 |
+
+All 36 points passed exact verification. I=6 is the best directional
+minimax setting against the two existing independent4 hardware bodies: 6.5%
+fast at G16 and 3.2% slow at G28. It is not selected, because no guarded
+independent2/8 hardware curve exists and the one-batch independent4 points are
+not production measurements.
+
+The I=6 application gate remains selective:
+
+| Application size | Default (us) | B1/Q1/I6 (us) |
+|------------------|-------------:|---------------:|
+| matrix N=32 | 14.444 | 16.258 |
+| matrix N=64 | 20.036 | 23.680 |
+| matrix N=128 | 42.229 | 51.430 |
+| K-means P=1,024 | 21.975 | 21.975 |
+| K-means P=4,096 | 40.439 | 40.439 |
+
+All five enabled runs passed verification. The exact K-means identity confirms
+the narrow-load bypass, but matrix N=128 is still 22.558/24.282 us below the
+two guarded diagnostic measurements. Burst arbitration therefore cannot be
+used to absorb the remaining matrix error. The immediate blocker is guarded
+window2/8 hardware acquisition; the required process guard currently sees a
+recurring external RTL simulation, so no new hardware values are reported.
+Assist artifacts use `assist-w4-*` and `app-assist-i6-*` in the same temporary
+sweep directory.
+
 The nine-batch serial-zero production attempt accepted one batch, then stopped
 at batch 2 when external `pytest` restarted. The run is rejected as a whole;
 its single batch is not promoted or combined. Its failure artifact is
