@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,17 @@ import run_vmem_dependency_sweep as sweep
 
 
 class PlanTests(unittest.TestCase):
+    def test_guard_matches_workload_tokens_but_not_inspection_arguments(self):
+        guard = re.compile(sweep.FORBIDDEN_PROCESS_REGEX)
+        self.assertIsNotNone(guard.search("/tmp/build/Vgfx9_compute_unit_tb --run"))
+        self.assertIsNotNone(guard.search("python3 -m pytest tests"))
+        self.assertIsNone(
+            guard.search(
+                "rg -n 'Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4' /tmp"
+            )
+        )
+        self.assertIsNone(guard.search("rg -n result /tmp/pytest-artifact"))
+
     def test_points_keep_matched_zero_and_body_adjacent(self):
         self.assertEqual(
             [(p.mode, p.workgroups, p.repeats) for p in sweep.sweep_points()],

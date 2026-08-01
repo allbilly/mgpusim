@@ -22,7 +22,7 @@ import acquire_pinned as acquire
 HERE = Path(__file__).resolve().parent
 ACQUIRE = HERE / "acquire_pinned.py"
 FORBIDDEN_PROCESS_REGEX = (
-    r"Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4"
+    r"(?:^|[ /])(?:Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4)(?:\s|$)"
 )
 INTER_POINT_COOLDOWN_SECONDS = 30.0
 STABLE_GUARD_CLEAR_SECONDS = 120.0

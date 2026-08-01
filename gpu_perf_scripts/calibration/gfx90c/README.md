@@ -68,7 +68,7 @@ For example, collect a steady-state matrix-multiplication batch with:
 ```bash
 python3 acquire_pinned.py \
   --forbid-process-regex \
-  'Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4' \
+  '(?:^|[ /])(?:Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4)(?:\s|$)' \
   --iters 1000 matrixmult
 ```
 
@@ -80,9 +80,11 @@ failed, its container is stopped, and the exact matching pattern, PID, and
 command are recorded in the batch metadata and summary. Only matching command
 lines are retained; unrelated process snapshots are not written to artifacts.
 The example guard prevents the known Verilator/MIAOW/pytest CPU workload from
-sharing package power with the integrated GPU. It intentionally rejects any
-pytest process because the process command line need not include its working
-directory; no repository-specific process is forbidden by default.
+sharing package power with the integrated GPU. Its token boundaries also keep
+an inspection command that merely mentions one of those names from tripping the
+guard. It intentionally rejects any pytest process because the process command
+line need not include its working directory; no repository-specific process is
+forbidden by default.
 
 K-means can additionally report its swap and compute kernels separately:
 
