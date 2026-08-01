@@ -14,6 +14,10 @@ import (
 type VALUTiming struct {
 	DefaultIssueInterval         int `json:"default_issue_interval"`
 	DefaultResultLatency         int `json:"default_result_latency"`
+	FP32AddIssueInterval         int `json:"fp32_add_issue_interval"`
+	FP32AddResultLatency         int `json:"fp32_add_result_latency"`
+	FP32MultiplyIssueInterval    int `json:"fp32_multiply_issue_interval"`
+	FP32MultiplyResultLatency    int `json:"fp32_multiply_result_latency"`
 	FMAIssueInterval             int `json:"fma_issue_interval"`
 	FMAResultLatency             int `json:"fma_result_latency"`
 	IntegerMultiplyIssueInterval int `json:"integer_multiply_issue_interval"`
@@ -174,6 +178,10 @@ type Spec struct {
 	// separating issue throughput from dependent-result latency.
 	VALUDefaultIssueInterval         int `json:"valu_default_issue_interval"`
 	VALUDefaultResultLatency         int `json:"valu_default_result_latency"`
+	VALUFP32AddIssueInterval         int `json:"valu_fp32_add_issue_interval"`
+	VALUFP32AddResultLatency         int `json:"valu_fp32_add_result_latency"`
+	VALUFP32MultiplyIssueInterval    int `json:"valu_fp32_multiply_issue_interval"`
+	VALUFP32MultiplyResultLatency    int `json:"valu_fp32_multiply_result_latency"`
 	VALUFMAIssueInterval             int `json:"valu_fma_issue_interval"`
 	VALUFMAResultLatency             int `json:"valu_fma_result_latency"`
 	VALUIntegerMultiplyIssueInterval int `json:"valu_integer_multiply_issue_interval"`
@@ -265,6 +273,10 @@ type Resources struct {
 func (s *Spec) SetVALUTiming(t VALUTiming) {
 	s.VALUDefaultIssueInterval = t.DefaultIssueInterval
 	s.VALUDefaultResultLatency = t.DefaultResultLatency
+	s.VALUFP32AddIssueInterval = t.FP32AddIssueInterval
+	s.VALUFP32AddResultLatency = t.FP32AddResultLatency
+	s.VALUFP32MultiplyIssueInterval = t.FP32MultiplyIssueInterval
+	s.VALUFP32MultiplyResultLatency = t.FP32MultiplyResultLatency
 	s.VALUFMAIssueInterval = t.FMAIssueInterval
 	s.VALUFMAResultLatency = t.FMAResultLatency
 	s.VALUIntegerMultiplyIssueInterval = t.IntegerMultiplyIssueInterval
@@ -281,6 +293,10 @@ func (s Spec) VALUTimingSpec() VALUTiming {
 	return VALUTiming{
 		DefaultIssueInterval:         s.VALUDefaultIssueInterval,
 		DefaultResultLatency:         s.VALUDefaultResultLatency,
+		FP32AddIssueInterval:         s.VALUFP32AddIssueInterval,
+		FP32AddResultLatency:         s.VALUFP32AddResultLatency,
+		FP32MultiplyIssueInterval:    s.VALUFP32MultiplyIssueInterval,
+		FP32MultiplyResultLatency:    s.VALUFP32MultiplyResultLatency,
 		FMAIssueInterval:             s.VALUFMAIssueInterval,
 		FMAResultLatency:             s.VALUFMAResultLatency,
 		IntegerMultiplyIssueInterval: s.VALUIntegerMultiplyIssueInterval,
