@@ -1457,8 +1457,18 @@ encodes the remaining independent2/8 G16/G28 R0/R64 acquisition exactly. It
 uses the strict process, clock, thermal, sampling, warm-up, iteration, and
 cooldown controls described in the protocol; keeps matched zero/body points
 adjacent; creates one collector artifact directory per point; and stops on the
-first rejection. Hardware execution remains an explicit operator action, so
+first rejection. R0 uses 10,000 timed iterations and R64 uses 6,500, targeting
+the required 75--150 ms window from the prior guarded measurements. Hardware
+execution remains an explicit operator action, so
 adding the driver does not manufacture or promote new measurements.
+
+Commit `6e581d6c` decouples the 5 ms telemetry monitor from the slower process
+guard scan. Prior guarded traces had only one sample every 230--248 ms because
+each `/proc` snapshot serialized the two operations. The control thread still
+scans continuously before, during, and after the batch, while the telemetry
+thread independently aborts on policy, temperature, read, or write failure.
+This removes the sample-density/protocol conflict without relaxing either
+guard.
 
 The I=6 application gate remains selective:
 

@@ -53,6 +53,10 @@ def build_acquire_command(
     acquire_script: Path = ACQUIRE,
 ) -> list[str]:
     """Build one collector invocation without shell interpolation."""
+    # Prior guarded pilots put the zero-trip launches near 81--89 ms at
+    # 10,000 iterations.  The R64 points are longer, so 6,500 iterations
+    # keeps their predicted timed windows near 118--145 ms.
+    iterations = 10_000 if point.repeats == 0 else 6_500
     return [
         python,
         str(acquire_script),
@@ -61,7 +65,7 @@ def build_acquire_command(
         "--warmup",
         "20",
         "--iters",
-        "10000",
+        str(iterations),
         "--cooldown-seconds",
         "30",
         "--max-start-temp-c",

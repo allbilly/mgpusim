@@ -384,12 +384,15 @@ independent4 curve alone.
 #### Guarded dependency-window hardware sweep
 
 Use the checked-in driver for the missing independent2/8 G16/G28 controls. It
-runs matched zero-trip and R64 points serially with warm-up 20, 10,000 timed
-iterations, 5 ms telemetry, at least 10 active samples, a 50 C start limit,
+runs matched zero-trip and R64 points serially with warm-up 20. It uses 10,000
+timed iterations for R0 and 6,500 for R64 so the prior guarded timings predict
+75--150 ms windows, plus 5 ms telemetry, at least 10 active samples, a 50 C start limit,
 a 58 C abort limit, and at least 30 seconds between batches. It also rejects
 any concurrent `Vgfx9_compute_unit_tb`, `verilator_bin`, `pytest`, or
-`miaow_gcn4` command. The default is a one-batch directional plan and does not
-touch hardware or create directories:
+`miaow_gcn4` command. Telemetry sampling is independently paced, so a slow
+`/proc` guard scan cannot reduce the requested sample density; policy, thermal,
+and telemetry failures still abort the container directly. The default is a
+one-batch directional plan and does not touch hardware or create directories:
 
 ```bash
 python3 gpu_perf_scripts/calibration/gfx90c/run_vmem_dependency_sweep.py

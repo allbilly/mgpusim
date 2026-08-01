@@ -39,7 +39,7 @@ class PlanTests(unittest.TestCase):
         expected_pairs = {
             "--batches": "9",
             "--warmup": "20",
-            "--iters": "10000",
+            "--iters": "6500",
             "--cooldown-seconds": "30",
             "--max-start-temp-c": "50",
             "--max-temp-c": "58",
@@ -55,6 +55,15 @@ class PlanTests(unittest.TestCase):
         for option, value in expected_pairs.items():
             self.assertEqual(command[command.index(option) + 1], value)
         self.assertIn("vmemloadshape", command)
+
+    def test_zero_and_body_iterations_target_the_timed_window(self):
+        for repeats, expected in ((0, "10000"), (64, "6500")):
+            command = sweep.build_acquire_command(
+                sweep.SweepPoint("independent2", 16, repeats),
+                Path("/tmp/explicit-point"),
+                batches=1,
+            )
+            self.assertEqual(command[command.index("--iters") + 1], expected)
 
     def test_default_is_one_batch_dry_run_and_production_is_nine(self):
         pilot = sweep.parse_args([])
