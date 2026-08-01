@@ -14,10 +14,12 @@ import (
 
 const (
 	ModeSerial       = "serial"
+	ModeIndependent2 = "independent2"
 	ModeIndependent4 = "independent4"
+	ModeIndependent8 = "independent8"
 )
 
-// KernelArgs matches all six gfx90c load-shape kernel symbols.
+// KernelArgs matches all twelve gfx90c load-shape kernel symbols.
 type KernelArgs struct {
 	Input           driver.Ptr
 	Output          driver.Ptr
@@ -69,6 +71,21 @@ func isPowerOfTwo(value int) bool {
 	return value > 0 && value&(value-1) == 0
 }
 
+func dependencyWindow(mode string) (int, bool) {
+	switch mode {
+	case ModeSerial:
+		return 1, true
+	case ModeIndependent2:
+		return 2, true
+	case ModeIndependent4:
+		return 4, true
+	case ModeIndependent8:
+		return 8, true
+	default:
+		return 0, false
+	}
+}
+
 func (b *Benchmark) setDefaultsAndValidate() {
 	if b.WidthDwords == 0 {
 		b.WidthDwords = 4
@@ -91,7 +108,8 @@ func (b *Benchmark) setDefaultsAndValidate() {
 	if b.WidthDwords != 1 && b.WidthDwords != 2 && b.WidthDwords != 4 {
 		log.Panic("VMEM width must be 1, 2, or 4 dwords")
 	}
-	if b.Mode != ModeSerial && b.Mode != ModeIndependent4 {
+	window, validMode := dependencyWindow(b.Mode)
+	if !validMode {
 		log.Panicf("unknown VMEM dependency mode %q", b.Mode)
 	}
 	if b.AliasLanes != 1 && b.AliasLanes != 2 &&
@@ -104,8 +122,11 @@ func (b *Benchmark) setDefaultsAndValidate() {
 	if !isPowerOfTwo(b.ArrayBytes / (b.WidthDwords * 4)) {
 		log.Panic("VMEM array must contain a power-of-two number of vectors")
 	}
-	if b.Repeats < 0 || (b.Mode == ModeIndependent4 && b.Repeats%4 != 0) {
-		log.Panic("VMEM repeats must be nonnegative and independent4 requires a multiple of 4")
+	if b.Repeats < 0 || b.Repeats%window != 0 {
+		log.Panicf(
+			"VMEM repeats must be nonnegative and %s requires a multiple of %d",
+			b.Mode, window,
+		)
 	}
 	if b.Workgroups <= 0 || uint64(b.Workgroups) > uint64(^uint32(0))/64 {
 		log.Panic("invalid VMEM work-group count")

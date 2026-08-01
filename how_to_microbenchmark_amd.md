@@ -201,13 +201,14 @@ width from raw cache latency.
 
 ### Exact-HSACO load width, fanout, and wait sweep
 
-The checked-in gfx90c VMEM probe turns that design into six stable kernel
-symbols. It crosses 4-, 8-, and 16-byte global loads with two dependency
-endpoints:
+The checked-in gfx90c VMEM probe turns that design into twelve stable kernel
+symbols. It crosses 4-, 8-, and 16-byte global loads with four dependency
+modes:
 
 - `serial`: each load drains through `vmcnt(0)` before its value is consumed;
-- `independent4`: four source-level independent loads precede the drain and
-  bound the benefit available from memory-level parallelism.
+- `independent2`, `independent4`, and `independent8`: exactly 2, 4, or 8
+  source-level independent loads precede one drain, exposing the overlap
+  curve rather than only one independent endpoint.
 
 This design follows the transferable parts of *Dissecting the NVIDIA
 Blackwell Architecture with Microbenchmarks*
@@ -273,7 +274,7 @@ for lane_dwords_per_cycle in 0 4 8 16 32 64; do
 done
 ```
 
-Repeat the candidate sweep for widths 1, 2, and 4, both dependency modes, and
+Repeat the candidate sweep for widths 1, 2, and 4, all four dependency modes, and
 the production matrix and K-means size sweeps. A useful value must improve the
 wide, sparse, wait-heavy matrix path without materially moving the narrow,
 high-occupancy K-means path. Do not enable a value in `gfx90c.MakeBuilder`
@@ -318,7 +319,7 @@ This third default-off candidate assigns a returned wide load
 `ceil(2*A*(w-1)/w)` work units, where `A` is the active-lane count and `w` is
 the uniform dword width. A full wave therefore contributes 0/64/86/96 units
 for dword/x2/x3/x4. It is a phenomenological calibration hypothesis, not an
-AMD architectural claim. Run it at G1/G7/G16/G28 in both dependency modes:
+AMD architectural claim. Run it at G1/G7/G16/G28 in all four dependency modes:
 a useful queue topology must preserve the G1 width fit, leave dword traffic
 bit-identical, create the independent-load occupancy knee, and avoid creating
 a serial-load knee. Never combine it with either older return-model flag.
@@ -418,11 +419,12 @@ repeats_per_lap = vector_elements / address_groups
 ```
 
 Use the same lap count at every width/fanout point, rounding repeats upward to
-a multiple of four for `independent4`. The minimal discriminating matrix is:
+a multiple of the selected independent window. The minimal discriminating
+matrix is:
 
 - widths 1, 2, 4 dwords at fanout 8;
 - fanouts 1 and 8 at dwordx4;
-- both dependency modes;
+- all four dependency modes;
 - both 8 KiB and 64 KiB footprints;
 - one work-group for the cache comparison.
 
@@ -430,14 +432,16 @@ Then hold dwordx4, fanout 8, footprint, and repeat count fixed while sweeping
 `1, 7, 16, 28` work-groups. This separates a per-wave load-return discrepancy
 from sparse-grid/CU-fill behavior. Report raw launch time, the provided
 `ns_per_wave_load` normalization, cache transactions, hit rates, and CPI stack.
-Here `repeats` counts load instructions per lane: each `independent4` loop trip
-contains four repeats/loads, and the normalization uses that total load count.
-Do not interpret the normalization as latency once multiple waves overlap.
+Here `repeats` counts load instructions per lane: each independent loop trip
+contains 2, 4, or 8 repeats/loads, and the normalization uses that total load
+count. Do not interpret the normalization as latency once multiple waves
+overlap.
 
 The independent endpoint is deliberately a bound, not a transcription of the
 production loop. The authoritative matrix HSACO serializes its A loads and
-mixes serialized B loads with an initial two-load window. If only the two
-endpoints diverge, add a fixed `window2` symbol before fitting a model term.
+mixes serialized B loads with an initial two-load window. Use `independent2`
+to anchor that window and the 4/8 points to test whether additional overlap
+saturates before fitting a model term.
 Always rerun `verify_hsaco.sh`: it checks width-specific opcodes, static load
 counts, load-before-drain ordering, wave64 metadata, and absence of spills.
 

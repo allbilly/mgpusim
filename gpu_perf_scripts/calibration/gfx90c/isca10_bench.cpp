@@ -480,8 +480,19 @@ static void bench_vmemloadshape(int iters) {
     fprintf(stderr, "VMEM width must be 1, 2, or 4 dwords\n");
     std::exit(2);
   }
-  if (vmem_mode != "serial" && vmem_mode != "independent4") {
-    fprintf(stderr, "VMEM mode must be serial or independent4\n");
+  int dependency_window = 0;
+  if (vmem_mode == "serial")
+    dependency_window = 1;
+  else if (vmem_mode == "independent2")
+    dependency_window = 2;
+  else if (vmem_mode == "independent4")
+    dependency_window = 4;
+  else if (vmem_mode == "independent8")
+    dependency_window = 8;
+  else {
+    fprintf(stderr,
+            "VMEM mode must be serial, independent2, independent4, or "
+            "independent8\n");
     std::exit(2);
   }
   if (vmem_alias_lanes != 1 && vmem_alias_lanes != 2 &&
@@ -496,8 +507,7 @@ static void bench_vmemloadshape(int iters) {
             "VMEM array must contain a power-of-two number of vectors\n");
     std::exit(2);
   }
-  if (vmem_repeats < 0 ||
-      (vmem_mode == "independent4" && vmem_repeats % 4 != 0) ||
+  if (vmem_repeats < 0 || vmem_repeats % dependency_window != 0 ||
       vmem_workgroups <= 0 || vmem_workgroups > INT32_MAX / 64) {
     fprintf(stderr, "invalid VMEM repeats or work-group count\n");
     std::exit(2);

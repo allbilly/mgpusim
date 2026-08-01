@@ -129,17 +129,17 @@ while read -r name expected _source destination symbols; do
       podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
         /opt/rocm/llvm/bin/llvm-readelf --notes "$object"
     )"
-    if [[ "$(grep -Fc '.wavefront_size: 64' <<<"$notes")" != 6 ||
-          "$(grep -Fc '.private_segment_fixed_size: 0' <<<"$notes")" != 6 ||
-          "$(grep -Fc '.vgpr_spill_count: 0' <<<"$notes")" != 6 ||
-          "$(grep -Fc '.kernarg_segment_size: 32' <<<"$notes")" != 6 ]]; then
-      echo "vmemloadshape: metadata does not describe six spill-free wave64 kernels" >&2
+    if [[ "$(grep -Fc '.wavefront_size: 64' <<<"$notes")" != 12 ||
+          "$(grep -Fc '.private_segment_fixed_size: 0' <<<"$notes")" != 12 ||
+          "$(grep -Fc '.vgpr_spill_count: 0' <<<"$notes")" != 12 ||
+          "$(grep -Fc '.kernarg_segment_size: 32' <<<"$notes")" != 12 ]]; then
+      echo "vmemloadshape: metadata does not describe twelve spill-free wave64 kernels" >&2
       failed=1
     fi
 
     for width in dword dwordx2 dwordx4; do
       opcode="global_load_$width"
-      for mode in serial independent4; do
+      for mode in serial independent2 independent4 independent8; do
         symbol="vmem_load_${width}_${mode}"
         disasm="$(
           podman run --rm -v "$ROOT:$ROOT:ro,z" "$IMAGE" \
@@ -147,7 +147,11 @@ while read -r name expected _source destination symbols; do
             --disassemble-symbols="$symbol" "$object"
         )"
         expected_loads=1
-        [[ "$mode" == "independent4" ]] && expected_loads=4
+        case "$mode" in
+        independent2) expected_loads=2 ;;
+        independent4) expected_loads=4 ;;
+        independent8) expected_loads=8 ;;
+        esac
         load_count="$(
           grep -Ec "^[[:space:]]*$opcode[[:space:]]" <<<"$disasm" || true
         )"
@@ -173,11 +177,13 @@ while read -r name expected _source destination symbols; do
         first_load_line="$(grep -n -m1 "^[[:space:]]*$opcode[[:space:]]" <<<"$disasm" | cut -d: -f1 || true)"
         last_load_line="$(grep -n "^[[:space:]]*$opcode[[:space:]]" <<<"$disasm" | tail -1 | cut -d: -f1 || true)"
         first_drain_line="$(grep -n -m1 '^[[:space:]]*s_waitcnt vmcnt(0)' <<<"$disasm" | cut -d: -f1 || true)"
+        drain_count="$(grep -Ec '^[[:space:]]*s_waitcnt vmcnt\(0\)' <<<"$disasm" || true)"
         if [[ -z "$first_load_line" || -z "$last_load_line" ||
               -z "$first_drain_line" ||
               "$first_load_line" -ge "$first_drain_line" ||
-              "$last_load_line" -ge "$first_drain_line" ]]; then
-          echo "vmemloadshape: $symbol does not issue its load set before vmcnt(0)" >&2
+              "$last_load_line" -ge "$first_drain_line" ||
+              "$drain_count" != 1 ]]; then
+          echo "vmemloadshape: $symbol does not issue its load set before exactly one vmcnt(0) (found $drain_count drains)" >&2
           failed=1
         fi
 

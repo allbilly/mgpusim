@@ -9,13 +9,13 @@ import (
 
 var width = flag.Int("width-dwords", 4, "Load width in dwords: 1, 2, or 4.")
 var mode = flag.String("mode", vmemloadshape.ModeSerial,
-	"Dependency mode: serial or independent4.")
+	"Dependency mode: serial, independent2, independent4, or independent8.")
 var aliasLanes = flag.Int("alias-lanes", 8,
 	"Number of interleaved lanes sharing one address: 1, 2, 4, or 8.")
 var arrayBytes = flag.Int("array-bytes", 8*1024,
 	"Power-of-two vector footprint in bytes (8 KiB for L1, 64 KiB for L2).")
 var repeats = flag.Int("repeats", 1024,
-	"Loads per lane; independent4 requires a multiple of four.")
+	"Loads per lane; independent modes require a multiple of their window.")
 var workgroups = flag.Int("workgroups", 16, "Number of 64-lane work-groups.")
 
 func main() {

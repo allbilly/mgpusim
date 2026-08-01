@@ -180,9 +180,10 @@ result latency at or below four issue intervals. Do not tune result latency
 from it; that requires a separate one-accumulator dependent-chain HSACO.
 
 The VMEM load-shape probe is explicit-only and is not part of the scored ten.
-Its six exact-HSACO symbols cross load widths `dword`, `dwordx2`, and
-`dwordx4` with a serialized load/`vmcnt(0)` chain and a four-load independent
-endpoint. `--vmem-alias-lanes 8` reproduces the matrix kernel's interleaved
+Its twelve exact-HSACO symbols cross load widths `dword`, `dwordx2`, and
+`dwordx4` with a serialized load/`vmcnt(0)` chain and exact independent
+windows of 2, 4, and 8 loads. `--vmem-alias-lanes 8` reproduces the matrix
+kernel's interleaved
 fanout: lanes `x, x+8, ..., x+56` share an address. Sweep alias counts
 `1, 2, 4, 8`; 1 is no aliasing. Use 8 KiB as the L1-reuse point and 64 KiB as
 the L1-capacity/L2 point. Both host-to-device copies remain within the model's
@@ -207,16 +208,16 @@ repeats = (array_bytes / (4 * width_dwords)) /
           (64 / alias_lanes)
 ```
 
-Round upward to a multiple of four for `independent4`. Start capacity/latency
+Round upward to a multiple of the selected independent window. Start capacity/latency
 points at one work-group, then sweep `1, 7, 16, 28` work-groups only for the
 matrix-like dwordx4/alias-8 point. The harness verifies every thread's checksum
 after timing and reports `vmemloadshape_ns_per_wave_load`; concurrent waves
 make that normalization a throughput diagnostic, not instruction latency.
-`repeats` is the number of load instructions per lane, so one
-`independent4` loop trip contributes four repeats to that denominator.
-The independent endpoint bounds available overlap; it is not the exact
-production schedule, whose authoritative HSACO mixes serialized loads with a
-two-load window.
+`repeats` is the number of load instructions per lane, so one independent
+loop trip contributes 2, 4, or 8 repeats to that denominator. The window
+sweep brackets available overlap; `independent2` also matches the initial
+two-load window in the authoritative matrix HSACO, whose remaining loads mix
+serialized and windowed issue.
 
 Run the identical simulator points with, for example:
 
