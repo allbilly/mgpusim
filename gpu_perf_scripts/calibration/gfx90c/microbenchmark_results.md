@@ -1375,13 +1375,29 @@ Because the occupancy control already rejects that topology, its larger
 matrix movement is not evidence for enabling it or absorbing the residual
 application error into VMEM return bandwidth.
 
-The next discriminating hypothesis keeps one FIFO per wave and permits a
-small, swept number P of wave queues to receive B units in parallel per CU.
-P=1 must reproduce this rejected control; P=2 and P=3 test whether limited
-cross-wave concurrency removes the false serial knee while retaining moderate
-independent burst contention. No P value may be enabled without the full
-width, dependency, work-group, application-size, and guarded hardware gates.
-Simulator artifacts are under `/tmp/mgpusim-cu-wide-sweep.786e3947`.
+Commit `8bb529b4` refines the experiment to one FIFO per wave and permits a
+swept number P of wave queues to receive B=1 units concurrently per CU. The
+exact bodies are:
+
+| Mode | WGs | Hardware | P=1 | P=2 | P=3 | P=4 |
+|------|----:|---------:|----:|----:|----:|----:|
+| serial | 1 | 12.015 | 11.450 | 11.450 | 11.450 | 11.450 |
+| serial | 7 | 11.928 | 11.346 | 11.346 | 11.346 | 11.346 |
+| serial | 16 | 11.390 | 18.043 | 12.916 | 11.331 | 11.331 |
+| serial | 28 | 11.146 | 22.172 | 14.817 | 12.368 | 11.213 |
+| independent4 | 1 | 7.782 | 7.057 | 7.057 | 7.057 | 7.057 |
+| independent4 | 7 | 7.899 | 6.948 | 6.948 | 6.948 | 6.948 |
+| independent4 | 16 | 9.782 | 12.303 | 7.598 | 6.409 | 6.409 |
+| independent4 | 28 | 11.149 | 16.352 | 9.254 | 7.176 | 6.317 |
+
+All 32 runs passed exact verification. P=3/4 removes most or all of the false
+serial knee, but also removes the required independent knee. P=2 retains some
+independent pressure, yet makes serial G28 3.671 us too slow while independent
+remains 1.895 us too fast. Thus no static cross-wave concurrency count fits
+both dependency modes. The next mechanism must respond to same-wave burst
+depth or outstanding-load windows rather than only active-wave count. No P
+value is enabled. Simulator artifacts are under
+`/tmp/mgpusim-cu-wide-sweep.786e3947`.
 
 The nine-batch serial-zero production attempt accepted one batch, then stopped
 at batch 2 when external `pytest` restarted. The run is rejected as a whole;

@@ -323,6 +323,25 @@ a useful queue topology must preserve the G1 width fit, leave dword traffic
 bit-identical, create the independent-load occupancy knee, and avoid creating
 a serial-load knee. Never combine it with either older return-model flag.
 
+Sweep cross-wave concurrency independently from the work budget:
+
+```bash
+for concurrent_waves in 1 2 3 4; do
+  /home/fedora/.local/go/bin/go run ./amd/samples/vmem_load_shape \
+    -timing -arch gcn5 -gpu gfx90c -disable-rtm -verify \
+    -vmem-cu-wide-return-units-per-cycle 1 \
+    -vmem-cu-wide-return-concurrent-waves "$concurrent_waves" \
+    -width-dwords 4 -mode independent4 -alias-lanes 8 \
+    -array-bytes 8192 -repeats 64 -workgroups 28
+done
+```
+
+Repeat every P at G1/G7/G16/G28 for both modes. P is a topology probe, not a
+continuous fitting knob. Reject the whole static-P hypothesis if the P needed
+to keep serial flat removes the independent knee, or if the P that creates an
+independent knee also slows serial. That outcome calls for a burst-depth or
+outstanding-window probe, not interpolation between P values.
+
 #### Zero-trip baseline and repeat slope
 
 An explicit repeat count of zero is a matched launch control. It uses the same
