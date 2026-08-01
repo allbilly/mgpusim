@@ -1399,6 +1399,34 @@ depth or outstanding-load windows rather than only active-wave count. No P
 value is enabled. Simulator artifacts are under
 `/tmp/mgpusim-cu-wide-sweep.786e3947`.
 
+### Burst-sensitive dependency-window candidate
+
+Commits `a8aba134` and `025fb5c7` add exact independent2/4/8 probe symbols
+and regenerate the verified 12-symbol HSACO. Commit `1375b56b` adds the
+separate Q scheduler: each wave keeps its packed FIFO; waves with one modeled
+wide load outstanding receive independent service, while waves with two or
+more compete for Q fair CU slots. Narrow loads and stores are not tracked.
+
+At B=1/Q=1, the matched R64 bodies are:
+
+| Mode | G1 | G7 | G16 | G28 |
+|------|---:|---:|----:|----:|
+| serial | 11.450 | 11.346 | 11.331 | 11.213 |
+| independent2 | 8.855 | 8.751 | 10.964 | 13.270 |
+| independent4 | 7.057 | 6.948 | 10.024 | 13.227 |
+| independent8 | 6.455 | 6.347 | 12.246 | 15.272 |
+
+All 32 R0/R64 runs passed exact verification. Serial is flat and matches the
+per-wave endpoint, proving that singleton bypass removes the false serial
+knee. Every independent window stays flat through G7 and rises after multiple
+burst waves share a CU; the G28 penalty increases from window2 to window8.
+For the existing directional independent4 hardware bodies, Q=1 is 2.5% slow
+at G16 (10.024 versus 9.782 us) but 18.6% slow at G28 (13.227 versus
+11.149 us). The shape is substantially better than static P, but Q=1 is not a
+selected value. Q=2 and guarded hardware window2/8 curves are required before
+considering a fractional assist rate or any enablement. Artifacts use the
+`qburst-w4-*` prefixes in the same temporary sweep directory.
+
 The nine-batch serial-zero production attempt accepted one batch, then stopped
 at batch 2 when external `pytest` restarted. The run is rejected as a whole;
 its single batch is not promoted or combined. Its failure artifact is
