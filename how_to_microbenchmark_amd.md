@@ -433,6 +433,18 @@ for 30 continuous seconds before every point. A process that restarts during
 that interval resets the timer; the collector independently rechecks the guard
 throughout the actual batch.
 
+If a full directional sweep stops late, recollect the affected matched pair in
+a new output root; do not append to the failed run. For example:
+
+```bash
+python3 gpu_perf_scripts/calibration/gfx90c/run_vmem_dependency_sweep.py \
+  --execute --mode independent8 --workgroups 28 \
+  --output-root /tmp/gfx90c-vmem-window-i8-g28-<unique-id>
+```
+
+`--mode` and `--workgroups` are repeatable. They always retain adjacent R0/R64
+points for each selected geometry.
+
 #### Zero-trip baseline and repeat slope
 
 An explicit repeat count of zero is a matched launch control. It uses the same

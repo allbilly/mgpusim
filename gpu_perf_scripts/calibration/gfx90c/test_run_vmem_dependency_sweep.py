@@ -27,6 +27,15 @@ class PlanTests(unittest.TestCase):
             ],
         )
 
+    def test_point_filters_keep_a_focused_pair(self):
+        self.assertEqual(
+            sweep.sweep_points(("independent8",), (28,)),
+            (
+                sweep.SweepPoint("independent8", 28, 0),
+                sweep.SweepPoint("independent8", 28, 64),
+            ),
+        )
+
     def test_command_has_strict_controls_and_exact_geometry(self):
         point = sweep.SweepPoint("independent8", 28, 64)
         command = sweep.build_acquire_command(
@@ -72,6 +81,11 @@ class PlanTests(unittest.TestCase):
         self.assertFalse(pilot.production)
         self.assertTrue(production.execute)
         self.assertTrue(production.production)
+        focused = sweep.parse_args(
+            ["--mode", "independent8", "--workgroups", "28"]
+        )
+        self.assertEqual(focused.mode, ["independent8"])
+        self.assertEqual(focused.workgroups, [28])
 
 
 class ExecutionTests(unittest.TestCase):

@@ -41,12 +41,15 @@ class SweepPoint:
         return f"{self.mode}-g{self.workgroups}-r{self.repeats}"
 
 
-def sweep_points() -> tuple[SweepPoint, ...]:
+def sweep_points(
+    modes: Sequence[str] = ("independent2", "independent8"),
+    workgroup_counts: Sequence[int] = (16, 28),
+) -> tuple[SweepPoint, ...]:
     """Return matched zero/body points, with each pair kept adjacent."""
     return tuple(
         SweepPoint(mode, workgroups, repeats)
-        for mode in ("independent2", "independent8")
-        for workgroups in (16, 28)
+        for mode in modes
+        for workgroups in workgroup_counts
         for repeats in (0, 64)
     )
 
@@ -155,10 +158,13 @@ def run_sweep(
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     sleeper: Callable[[float], None] = time.sleep,
     guard_waiter: Callable[[], None] | None = None,
+    points: Sequence[SweepPoint] | None = None,
     python: str = sys.executable,
     acquire_script: Path = ACQUIRE,
 ) -> int:
-    points = sweep_points()
+    points = tuple(sweep_points() if points is None else points)
+    if not points:
+        raise ValueError("sweep must contain at least one point")
     commands = [
         build_acquire_command(
             point,
@@ -269,6 +275,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="new run root (must not already exist)",
     )
+    parser.add_argument(
+        "--mode",
+        action="append",
+        choices=("independent2", "independent8"),
+        help="dependency mode to collect (repeatable; default: both)",
+    )
+    parser.add_argument(
+        "--workgroups",
+        action="append",
+        type=int,
+        choices=(16, 28),
+        help="work-group count to collect (repeatable; default: both)",
+    )
     return parser.parse_args(argv)
 
 
@@ -284,6 +303,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_root=output_root,
             batches=9 if args.production else 1,
             execute=args.execute,
+            points=sweep_points(
+                modes=(
+                    ("independent2", "independent8")
+                    if args.mode is None
+                    else tuple(dict.fromkeys(args.mode))
+                ),
+                workgroup_counts=(
+                    (16, 28)
+                    if args.workgroups is None
+                    else tuple(dict.fromkeys(args.workgroups))
+                ),
+            ),
         )
     except FileExistsError:
         print(f"output root already exists: {output_root}", file=sys.stderr)
