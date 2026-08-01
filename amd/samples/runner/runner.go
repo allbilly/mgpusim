@@ -30,18 +30,19 @@ type Runner struct {
 	gpuDriver  *driver.Driver
 	reporter   *reporter
 
-	Timing                               bool
-	Verify                               bool
-	Parallel                             bool
-	UseUnifiedMemory                     bool
-	ArchType                             arch.Type
-	GPUType                              string
-	VMemLoadReturnLaneDwordsPerCycle     int
-	VMemWideLoadReturnLaneDwordsPerCycle int
-	VMemCUWideReturnUnitsPerCycle        int
-	VMemCUWideReturnConcurrentWaves      int
-	VMemCUWideReturnBurstConcurrentWaves int
-	VMemCUWideReturnBurstAssistInterval  int
+	Timing                                bool
+	Verify                                bool
+	Parallel                              bool
+	UseUnifiedMemory                      bool
+	ArchType                              arch.Type
+	GPUType                               string
+	VMemLoadReturnLaneDwordsPerCycle      int
+	VMemWideLoadReturnLaneDwordsPerCycle  int
+	VMemCUWideReturnUnitsPerCycle         int
+	VMemCUWideReturnConcurrentWaves       int
+	VMemCUWideReturnBurstConcurrentWaves  int
+	VMemCUWideReturnBurstAssistInterval   int
+	VMemCUWideReturnBurstAssistDepthScale int
 
 	GPUIDs     []int
 	benchmarks []benchmarks.Benchmark
@@ -130,6 +131,9 @@ func (r *Runner) buildTimingPlatform() {
 		).
 		WithVMemCUWideReturnBurstAssistInterval(
 			r.VMemCUWideReturnBurstAssistInterval,
+		).
+		WithVMemCUWideReturnBurstAssistDepthScale(
+			r.VMemCUWideReturnBurstAssistDepthScale,
 		)
 
 	if *magicMemoryCopy {

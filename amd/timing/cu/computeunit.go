@@ -48,14 +48,15 @@ type ComputeUnit struct {
 	shadowInFlightScalarMemAccess []*ScalarMemAccessInfo
 	shadowInFlightVectorMemAccess []VectorMemAccessInfo
 
-	vmemReturnFanoutLaneDwordsPerCycle   int
-	vmemLoadReturnLaneDwordsPerCycle     int
-	vmemWideLoadReturnLaneDwordsPerCycle int
-	vmemCUWideReturnUnitsPerCycle        int
-	vmemCUWideReturnConcurrentWaves      int
-	vmemCUWideReturnBurstConcurrentWaves int
-	vmemCUWideReturnBurstAssistInterval  int
-	vmemCUWideReturnBurstAssistCountdown int
+	vmemReturnFanoutLaneDwordsPerCycle    int
+	vmemLoadReturnLaneDwordsPerCycle      int
+	vmemWideLoadReturnLaneDwordsPerCycle  int
+	vmemCUWideReturnUnitsPerCycle         int
+	vmemCUWideReturnConcurrentWaves       int
+	vmemCUWideReturnBurstConcurrentWaves  int
+	vmemCUWideReturnBurstAssistInterval   int
+	vmemCUWideReturnBurstAssistDepthScale int
+	vmemCUWideReturnBurstAssistCountdown  int
 
 	// Return assemblies accumulate the selected lane-dword accounting mode
 	// across all cache-line response siblings of one dynamic vector load. The
@@ -1133,12 +1134,15 @@ func (cu *ComputeUnit) advanceBurstCUWideVMemLoadRetirements() bool {
 	if selectedBurstCount > len(burstWaves) {
 		selectedBurstCount = len(burstWaves)
 	}
-	if cu.vmemCUWideReturnBurstAssistInterval > 0 &&
-		len(burstWaves) >= 2 {
+	assistInterval := cu.cuWideBurstAssistInterval(burstWaves)
+	if assistInterval > 0 {
+		if cu.vmemCUWideReturnBurstAssistCountdown >= assistInterval {
+			cu.vmemCUWideReturnBurstAssistCountdown = assistInterval - 1
+		}
 		if cu.vmemCUWideReturnBurstAssistCountdown == 0 {
 			selectedBurstCount = 2
 			cu.vmemCUWideReturnBurstAssistCountdown =
-				cu.vmemCUWideReturnBurstAssistInterval - 1
+				assistInterval - 1
 		} else {
 			cu.vmemCUWideReturnBurstAssistCountdown--
 		}
@@ -1159,6 +1163,44 @@ func (cu *ComputeUnit) advanceBurstCUWideVMemLoadRetirements() bool {
 
 	cu.pruneCUWideWaveOrder()
 	return true
+}
+
+func (cu *ComputeUnit) cuWideBurstAssistInterval(
+	burstWaves []*wavefront.Wavefront,
+) int {
+	if len(burstWaves) < 2 {
+		return 0
+	}
+	if cu.vmemCUWideReturnBurstAssistInterval > 0 {
+		return cu.vmemCUWideReturnBurstAssistInterval
+	}
+
+	depthScale := cu.vmemCUWideReturnBurstAssistDepthScale
+	if depthScale <= 0 {
+		return 0
+	}
+
+	totalDepth := 0
+	for _, wf := range burstWaves {
+		totalDepth += cu.vmemCUWideOutstanding[wf]
+	}
+	if totalDepth <= 0 {
+		return 0
+	}
+
+	interval := (depthScale*len(burstWaves) + totalDepth - 1) / totalDepth
+	maxInterval := (depthScale + 1) / 2
+	if maxInterval < 2 {
+		maxInterval = 2
+	}
+	if interval < 2 {
+		interval = 2
+	}
+	if interval > maxInterval {
+		interval = maxInterval
+	}
+
+	return interval
 }
 
 func (cu *ComputeUnit) burstCUWideWavesInFairOrder(

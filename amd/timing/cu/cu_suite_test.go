@@ -164,6 +164,8 @@ func newTestComputeUnitWithSpec(
 		spec.VMemCUWideReturnBurstConcurrentWaves
 	cuMW.vmemCUWideReturnBurstAssistInterval =
 		spec.VMemCUWideReturnBurstAssistInterval
+	cuMW.vmemCUWideReturnBurstAssistDepthScale =
+		spec.VMemCUWideReturnBurstAssistDepthScale
 
 	return cuMW
 }

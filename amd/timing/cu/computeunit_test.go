@@ -117,6 +117,7 @@ func runBurstReturnTrace(
 	cu.vmemCUWideReturnUnitsPerCycle = 1
 	cu.vmemCUWideReturnBurstConcurrentWaves = burstWaves
 	cu.vmemCUWideReturnBurstAssistInterval = assistInterval
+	cu.vmemCUWideReturnBurstAssistDepthScale = 0
 	cu.vmemCUWideReturnBurstAssistCountdown = 0
 	cu.vmemCUWideOutstanding = nil
 	cu.vmemCUWideTrackedInstIDs = nil
@@ -1254,6 +1255,83 @@ var _ = Describe("ComputeUnit", func() {
 				{19, 19, 19},
 				{18, 19, 19},
 			}))
+		})
+
+		It("maps K16 outstanding depth to the expected dynamic interval", func() {
+			cu.vmemCUWideReturnBurstAssistDepthScale = 16
+			firstWf, _ := makePendingVMemWave(0, 1)
+			secondWf, _ := makePendingVMemWave(1, 1)
+			burstWaves := []*wavefront.Wavefront{firstWf, secondWf}
+
+			for _, test := range []struct {
+				depth    int
+				interval int
+			}{
+				{depth: 2, interval: 8},
+				{depth: 4, interval: 4},
+				{depth: 8, interval: 2},
+				{depth: 32, interval: 2},
+			} {
+				cu.vmemCUWideOutstanding = map[*wavefront.Wavefront]int{
+					firstWf:  test.depth,
+					secondWf: test.depth,
+				}
+				Expect(cu.cuWideBurstAssistInterval(burstWaves)).
+					To(Equal(test.interval))
+			}
+		})
+
+		It("shrinks a live dynamic countdown when outstanding depth grows", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 1
+			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			cu.vmemCUWideReturnBurstAssistDepthScale = 16
+			firstWf, first := makePendingVMemWave(0, 20, 20)
+			secondWf, second := makePendingVMemWave(1, 20, 20)
+			trackPendingVMemRetirements(cu, firstWf, first)
+			trackPendingVMemRetirements(cu, secondWf, second)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				first[0], second[0],
+			}
+
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(7))
+
+			cu.vmemCUWideOutstanding[firstWf] = 8
+			cu.vmemCUWideOutstanding[secondWf] = 8
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(0))
+
+			before := cu.pendingVMemRetirements[1].remainingCycles
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).
+				To(Equal(before - 1))
+		})
+
+		It("recomputes the dynamic interval after a tracked load retires", func() {
+			cu.vmemCUWideReturnBurstAssistDepthScale = 16
+			firstWf, first := makePendingVMemWave(0, 1, 1, 1, 1)
+			secondWf, second := makePendingVMemWave(1, 1, 1, 1, 1)
+			trackPendingVMemRetirements(cu, firstWf, first)
+			trackPendingVMemRetirements(cu, secondWf, second)
+			burstWaves := []*wavefront.Wavefront{firstWf, secondWf}
+
+			Expect(cu.cuWideBurstAssistInterval(burstWaves)).To(Equal(4))
+			cu.retireTrackedCUWideReturn(first[0].inst)
+			Expect(cu.cuWideBurstAssistInterval(burstWaves)).To(Equal(5))
+		})
+
+		It("preserves disabled and fixed assist interval selection", func() {
+			firstWf, _ := makePendingVMemWave(0, 1)
+			secondWf, _ := makePendingVMemWave(1, 1)
+			burstWaves := []*wavefront.Wavefront{firstWf, secondWf}
+			cu.vmemCUWideOutstanding = map[*wavefront.Wavefront]int{
+				firstWf:  8,
+				secondWf: 8,
+			}
+
+			Expect(cu.cuWideBurstAssistInterval(burstWaves)).To(Equal(0))
+			cu.vmemCUWideReturnBurstAssistInterval = 3
+			Expect(cu.cuWideBurstAssistInterval(burstWaves)).To(Equal(3))
 		})
 
 		It("matches the exact Q2 trace with assist interval one", func() {

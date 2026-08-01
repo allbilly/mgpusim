@@ -155,6 +155,12 @@ type Spec struct {
 	// wave when burst concurrency is exactly one. Zero disables the assist.
 	VMemCUWideReturnBurstAssistInterval int `json:"vmem_cu_wide_return_burst_assist_interval"`
 
+	// VMemCUWideReturnBurstAssistDepthScale dynamically derives the second-wave
+	// assist interval as ceil(K*N/S), clamped to [2, ceil(K/2)], where N is the
+	// number of contending burst waves and S is their total outstanding depth.
+	// Zero disables depth scaling.
+	VMemCUWideReturnBurstAssistDepthScale int `json:"vmem_cu_wide_return_burst_assist_depth_scale"`
+
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`

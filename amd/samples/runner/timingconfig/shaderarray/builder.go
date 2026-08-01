@@ -95,6 +95,7 @@ type Builder struct {
 	vmemCUWideReturnConcurrentWaves       int
 	vmemCUWideReturnBurstConcurrentWaves  int
 	vmemCUWideReturnBurstAssistInterval   int
+	vmemCUWideReturnBurstAssistDepthScale int
 	registerScoreboard                    bool
 	scoreboardVALULatency                 int
 	valuTiming                            cu.VALUTiming
@@ -319,6 +320,13 @@ func (b Builder) WithVMemCUWideReturnBurstConcurrentWaves(n int) Builder {
 // servicing a second burst wave. Zero disables the assist.
 func (b Builder) WithVMemCUWideReturnBurstAssistInterval(n int) Builder {
 	b.vmemCUWideReturnBurstAssistInterval = n
+	return b
+}
+
+// WithVMemCUWideReturnBurstAssistDepthScale configures a dynamic second-wave
+// assist cadence from current contending-wave depth. Zero disables it.
+func (b Builder) WithVMemCUWideReturnBurstAssistDepthScale(n int) Builder {
+	b.vmemCUWideReturnBurstAssistDepthScale = n
 	return b
 }
 
@@ -659,6 +667,8 @@ func (b *Builder) cuSpec() cu.Spec {
 		b.vmemCUWideReturnBurstConcurrentWaves
 	spec.VMemCUWideReturnBurstAssistInterval =
 		b.vmemCUWideReturnBurstAssistInterval
+	spec.VMemCUWideReturnBurstAssistDepthScale =
+		b.vmemCUWideReturnBurstAssistDepthScale
 
 	spec.RegisterScoreboard = b.registerScoreboard
 

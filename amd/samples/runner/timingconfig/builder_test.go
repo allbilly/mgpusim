@@ -291,6 +291,34 @@ func TestBuildGfx90cPlatformWithVMemCUWideBurstConcurrentWaves(t *testing.T) {
 	}
 }
 
+func TestBuildGfx90cPlatformWithVMemCUWideBurstAssistDepthScale(t *testing.T) {
+	s := simulation.MakeBuilder().
+		WithoutMonitoring().
+		WithOutputFileName(t.TempDir() + "/sim").
+		Build()
+	defer s.Terminate()
+
+	MakeBuilder().
+		WithSimulation(s).
+		WithGPUType("gfx90c").
+		WithVMemCUWideReturnUnitsPerCycle(13).
+		WithVMemCUWideReturnBurstConcurrentWaves(1).
+		WithVMemCUWideReturnBurstAssistDepthScale(16).
+		Build()
+
+	component := s.GetComponentByName("GPU[1].SA[0].CU[0]")
+	computeUnit, ok := component.(*cu.Comp)
+	if !ok {
+		t.Fatalf("expected gfx90c compute unit, got %T", component)
+	}
+	if computeUnit.Spec().VMemCUWideReturnBurstAssistDepthScale != 16 {
+		t.Fatalf(
+			"expected CU-wide burst assist depth scale 16, got %d",
+			computeUnit.Spec().VMemCUWideReturnBurstAssistDepthScale,
+		)
+	}
+}
+
 func TestRejectInvalidVMemCUWideConcurrentWaves(t *testing.T) {
 	tests := []struct {
 		name  string

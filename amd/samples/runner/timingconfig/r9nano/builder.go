@@ -116,6 +116,7 @@ type Builder struct {
 	vmemCUWideReturnConcurrentWaves       int
 	vmemCUWideReturnBurstConcurrentWaves  int
 	vmemCUWideReturnBurstAssistInterval   int
+	vmemCUWideReturnBurstAssistDepthScale int
 	vecMemTransPipelineWidth              int
 	numSinglePrecisionUnits               int
 	dmaThroughL2                          bool
@@ -490,6 +491,13 @@ func (b Builder) WithVMemCUWideReturnBurstConcurrentWaves(n int) Builder {
 // servicing a second burst wave. Zero disables the assist.
 func (b Builder) WithVMemCUWideReturnBurstAssistInterval(n int) Builder {
 	b.vmemCUWideReturnBurstAssistInterval = n
+	return b
+}
+
+// WithVMemCUWideReturnBurstAssistDepthScale configures a dynamic second-wave
+// assist cadence from current contending-wave depth. Zero disables it.
+func (b Builder) WithVMemCUWideReturnBurstAssistDepthScale(n int) Builder {
+	b.vmemCUWideReturnBurstAssistDepthScale = n
 	return b
 }
 
@@ -1024,6 +1032,9 @@ func (b *Builder) buildSAs() {
 	)
 	saBuilder = saBuilder.WithVMemCUWideReturnBurstAssistInterval(
 		b.vmemCUWideReturnBurstAssistInterval,
+	)
+	saBuilder = saBuilder.WithVMemCUWideReturnBurstAssistDepthScale(
+		b.vmemCUWideReturnBurstAssistDepthScale,
 	)
 	if b.vecMemTransPipelineWidth > 0 {
 		saBuilder = saBuilder.WithVecMemTransPipelineWidth(

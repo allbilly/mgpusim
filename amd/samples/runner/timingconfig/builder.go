@@ -34,23 +34,24 @@ const (
 type Builder struct {
 	simulation *simulation.Simulation
 
-	numGPUs                              int
-	numCUPerSA                           int
-	numSAPerGPU                          int
-	cpuMemSize                           uint64
-	gpuMemSize                           uint64
-	log2PageSize                         uint64
-	useMagicMemoryCopy                   bool
-	gpuType                              string
-	switchLatency                        int // PCIe/interconnect switch latency in cycles
-	d2hCycles                            int
-	h2dCycles                            int
-	vmemLoadReturnLaneDwordsPerCycle     int
-	vmemWideLoadReturnLaneDwordsPerCycle int
-	vmemCUWideReturnUnitsPerCycle        int
-	vmemCUWideReturnConcurrentWaves      int
-	vmemCUWideReturnBurstConcurrentWaves int
-	vmemCUWideReturnBurstAssistInterval  int
+	numGPUs                               int
+	numCUPerSA                            int
+	numSAPerGPU                           int
+	cpuMemSize                            uint64
+	gpuMemSize                            uint64
+	log2PageSize                          uint64
+	useMagicMemoryCopy                    bool
+	gpuType                               string
+	switchLatency                         int // PCIe/interconnect switch latency in cycles
+	d2hCycles                             int
+	h2dCycles                             int
+	vmemLoadReturnLaneDwordsPerCycle      int
+	vmemWideLoadReturnLaneDwordsPerCycle  int
+	vmemCUWideReturnUnitsPerCycle         int
+	vmemCUWideReturnConcurrentWaves       int
+	vmemCUWideReturnBurstConcurrentWaves  int
+	vmemCUWideReturnBurstAssistInterval   int
+	vmemCUWideReturnBurstAssistDepthScale int
 
 	globalStorage     *mem.Storage
 	rdmaAddressMapper *mem.BankedAddressPortMapper
@@ -144,6 +145,13 @@ func (b Builder) WithVMemCUWideReturnBurstAssistInterval(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnBurstAssistDepthScale configures a dynamic burst-assist
+// cadence based on current contending-wave depth. Zero disables depth scaling.
+func (b Builder) WithVMemCUWideReturnBurstAssistDepthScale(n int) Builder {
+	b.vmemCUWideReturnBurstAssistDepthScale = n
+	return b
+}
+
 // Build builds the hardware platform and returns the driver. The driver, the
 // GPUs, and all the connections register themselves with the simulation.
 func (b Builder) Build() *driver.Driver {
@@ -165,6 +173,13 @@ func (b Builder) Build() *driver.Driver {
 	if b.vmemCUWideReturnBurstAssistInterval < 0 {
 		panic("timingconfig: CU-wide vector-memory burst assist interval cannot be negative")
 	}
+	if b.vmemCUWideReturnBurstAssistDepthScale < 0 {
+		panic("timingconfig: CU-wide vector-memory burst assist depth scale cannot be negative")
+	}
+	if b.vmemCUWideReturnBurstAssistInterval > 0 &&
+		b.vmemCUWideReturnBurstAssistDepthScale > 0 {
+		panic("timingconfig: fixed and depth-scaled CU-wide vector-memory burst assists are mutually exclusive")
+	}
 	if b.vmemCUWideReturnBurstAssistInterval > 0 &&
 		b.vmemCUWideReturnUnitsPerCycle == 0 {
 		panic("timingconfig: CU-wide vector-memory burst assist interval requires the CU-wide return model")
@@ -176,6 +191,18 @@ func (b Builder) Build() *driver.Driver {
 	if b.vmemCUWideReturnBurstAssistInterval > 0 &&
 		b.vmemCUWideReturnConcurrentWaves > 0 {
 		panic("timingconfig: CU-wide vector-memory burst assist interval requires static concurrency zero")
+	}
+	if b.vmemCUWideReturnBurstAssistDepthScale > 0 &&
+		b.vmemCUWideReturnUnitsPerCycle == 0 {
+		panic("timingconfig: CU-wide vector-memory burst assist depth scale requires the CU-wide return model")
+	}
+	if b.vmemCUWideReturnBurstAssistDepthScale > 0 &&
+		b.vmemCUWideReturnBurstConcurrentWaves != 1 {
+		panic("timingconfig: CU-wide vector-memory burst assist depth scale requires burst concurrency one")
+	}
+	if b.vmemCUWideReturnBurstAssistDepthScale > 0 &&
+		b.vmemCUWideReturnConcurrentWaves > 0 {
+		panic("timingconfig: CU-wide vector-memory burst assist depth scale requires static concurrency zero")
 	}
 	if b.vmemCUWideReturnBurstConcurrentWaves > 0 &&
 		b.vmemCUWideReturnUnitsPerCycle == 0 {
@@ -393,6 +420,9 @@ func (b *Builder) createGPUBuilder(
 			).
 			WithVMemCUWideReturnBurstAssistInterval(
 				b.vmemCUWideReturnBurstAssistInterval,
+			).
+			WithVMemCUWideReturnBurstAssistDepthScale(
+				b.vmemCUWideReturnBurstAssistDepthScale,
 			).
 			WithDriverPort(driverPort)
 	default:

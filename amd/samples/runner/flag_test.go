@@ -24,6 +24,7 @@ func setVMemReturnFlags(
 	oldCUWideWaves := *vmemCUWideReturnConcurrentWavesFlag
 	oldCUWideBurstWaves := *vmemCUWideReturnBurstConcurrentWavesFlag
 	oldCUWideBurstAssist := *vmemCUWideReturnBurstAssistIntervalFlag
+	oldCUWideBurstAssistDepthScale := *vmemCUWideReturnBurstAssistDepthScaleFlag
 	t.Cleanup(func() {
 		*timingFlag = oldTiming
 		*archFlag = oldArch
@@ -34,6 +35,7 @@ func setVMemReturnFlags(
 		*vmemCUWideReturnConcurrentWavesFlag = oldCUWideWaves
 		*vmemCUWideReturnBurstConcurrentWavesFlag = oldCUWideBurstWaves
 		*vmemCUWideReturnBurstAssistIntervalFlag = oldCUWideBurstAssist
+		*vmemCUWideReturnBurstAssistDepthScaleFlag = oldCUWideBurstAssistDepthScale
 	})
 
 	*timingFlag = timing
@@ -45,6 +47,7 @@ func setVMemReturnFlags(
 	*vmemCUWideReturnConcurrentWavesFlag = cuWideWaves
 	*vmemCUWideReturnBurstConcurrentWavesFlag = cuWideBurstWaves
 	*vmemCUWideReturnBurstAssistIntervalFlag = cuWideBurstAssist
+	*vmemCUWideReturnBurstAssistDepthScaleFlag = 0
 }
 
 func requireParseSimulationFlagsPanic(t *testing.T, want string) {
@@ -75,6 +78,9 @@ func TestVMemCUWideReturnFlagIsRegistered(t *testing.T) {
 	}
 	if flag.Lookup("vmem-cu-wide-return-burst-assist-interval") == nil {
 		t.Fatal("expected CU-wide vector-memory burst assist flag to be registered")
+	}
+	if flag.Lookup("vmem-cu-wide-return-burst-assist-depth-scale") == nil {
+		t.Fatal("expected CU-wide vector-memory burst assist depth-scale flag to be registered")
 	}
 }
 
@@ -142,6 +148,21 @@ func TestParseVMemCUWideBurstAssistInterval(t *testing.T) {
 		t.Fatalf(
 			"expected burst assist interval 3, got %d",
 			runner.VMemCUWideReturnBurstAssistInterval,
+		)
+	}
+}
+
+func TestParseVMemCUWideBurstAssistDepthScale(t *testing.T) {
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0, 1, 0)
+	*vmemCUWideReturnBurstAssistDepthScaleFlag = 16
+
+	runner := new(Runner)
+	runner.parseSimulationFlags()
+
+	if runner.VMemCUWideReturnBurstAssistDepthScale != 16 {
+		t.Fatalf(
+			"expected burst assist depth scale 16, got %d",
+			runner.VMemCUWideReturnBurstAssistDepthScale,
 		)
 	}
 }

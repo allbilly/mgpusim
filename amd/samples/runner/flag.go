@@ -48,6 +48,11 @@ var vmemCUWideReturnBurstAssistIntervalFlag = flag.Int(
 	0,
 	"Contended-tick interval for intermittently servicing a second gfx90c burst wave; zero disables the assist.",
 )
+var vmemCUWideReturnBurstAssistDepthScaleFlag = flag.Int(
+	"vmem-cu-wide-return-burst-assist-depth-scale",
+	0,
+	"Depth scale for dynamically deriving the gfx90c burst-assist interval; zero disables depth scaling.",
+)
 
 var verifyFlag = flag.Bool("verify", false, "Verify the emulation result.")
 var memTracing = flag.Bool("trace-mem", false, "Generate memory trace")
@@ -163,6 +168,8 @@ func (r *Runner) parseSimulationFlags() {
 		*vmemCUWideReturnBurstConcurrentWavesFlag
 	r.VMemCUWideReturnBurstAssistInterval =
 		*vmemCUWideReturnBurstAssistIntervalFlag
+	r.VMemCUWideReturnBurstAssistDepthScale =
+		*vmemCUWideReturnBurstAssistDepthScaleFlag
 	if r.VMemLoadReturnLaneDwordsPerCycle < 0 {
 		panic("vector-memory load return bandwidth cannot be negative")
 	}
@@ -181,6 +188,13 @@ func (r *Runner) parseSimulationFlags() {
 	if r.VMemCUWideReturnBurstAssistInterval < 0 {
 		panic("CU-wide vector-memory burst assist interval cannot be negative")
 	}
+	if r.VMemCUWideReturnBurstAssistDepthScale < 0 {
+		panic("CU-wide vector-memory burst assist depth scale cannot be negative")
+	}
+	if r.VMemCUWideReturnBurstAssistInterval > 0 &&
+		r.VMemCUWideReturnBurstAssistDepthScale > 0 {
+		panic("fixed and depth-scaled CU-wide vector-memory burst assists are mutually exclusive")
+	}
 	if r.VMemCUWideReturnBurstAssistInterval > 0 &&
 		r.VMemCUWideReturnUnitsPerCycle == 0 {
 		panic("CU-wide vector-memory burst assist interval requires the CU-wide return model")
@@ -192,6 +206,18 @@ func (r *Runner) parseSimulationFlags() {
 	if r.VMemCUWideReturnBurstAssistInterval > 0 &&
 		r.VMemCUWideReturnConcurrentWaves > 0 {
 		panic("CU-wide vector-memory burst assist interval requires static concurrency zero")
+	}
+	if r.VMemCUWideReturnBurstAssistDepthScale > 0 &&
+		r.VMemCUWideReturnUnitsPerCycle == 0 {
+		panic("CU-wide vector-memory burst assist depth scale requires the CU-wide return model")
+	}
+	if r.VMemCUWideReturnBurstAssistDepthScale > 0 &&
+		r.VMemCUWideReturnBurstConcurrentWaves != 1 {
+		panic("CU-wide vector-memory burst assist depth scale requires burst concurrency one")
+	}
+	if r.VMemCUWideReturnBurstAssistDepthScale > 0 &&
+		r.VMemCUWideReturnConcurrentWaves > 0 {
+		panic("CU-wide vector-memory burst assist depth scale requires static concurrency zero")
 	}
 	if r.VMemCUWideReturnBurstConcurrentWaves > 0 &&
 		r.VMemCUWideReturnUnitsPerCycle == 0 {

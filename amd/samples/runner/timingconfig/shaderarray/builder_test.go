@@ -78,3 +78,18 @@ func TestVMemCUWideBurstConcurrentWavesPropagation(t *testing.T) {
 		)
 	}
 }
+
+func TestVMemCUWideBurstAssistDepthScalePropagation(t *testing.T) {
+	builder := MakeBuilder().
+		WithVMemCUWideReturnUnitsPerCycle(13).
+		WithVMemCUWideReturnBurstConcurrentWaves(1).
+		WithVMemCUWideReturnBurstAssistDepthScale(16)
+
+	spec := builder.cuSpec()
+	if spec.VMemCUWideReturnBurstAssistDepthScale != 16 {
+		t.Fatalf(
+			"expected CU-wide burst assist depth scale 16, got %d",
+			spec.VMemCUWideReturnBurstAssistDepthScale,
+		)
+	}
+}

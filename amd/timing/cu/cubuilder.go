@@ -43,6 +43,7 @@ var defaultSpec = Spec{
 	VMemCUWideReturnConcurrentWaves:       0,
 	VMemCUWideReturnBurstConcurrentWaves:  0,
 	VMemCUWideReturnBurstAssistInterval:   0,
+	VMemCUWideReturnBurstAssistDepthScale: 0,
 	RegisterScoreboard:                    false,
 	LDSPipelineLatency:                    14,
 	LDSIssueInterval:                      0,
@@ -148,6 +149,14 @@ func (b Builder) WithVMemCUWideReturnBurstAssistInterval(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnBurstAssistDepthScale sets the numerator used to derive
+// the burst-assist cadence from current contending-wave depth. Zero disables
+// dynamic depth scaling.
+func (b Builder) WithVMemCUWideReturnBurstAssistDepthScale(n int) Builder {
+	b.spec.VMemCUWideReturnBurstAssistDepthScale = n
+	return b
+}
+
 // WithResources sets the shared references of the compute unit. Decoder and
 // ALU default to insts.NewDisassembler() and gcn3.NewALU(nil) when left nil.
 func (b Builder) WithResources(resources Resources) Builder {
@@ -196,6 +205,8 @@ func (b Builder) Build(name string) *Comp {
 		b.spec.VMemCUWideReturnBurstConcurrentWaves
 	cuMW.vmemCUWideReturnBurstAssistInterval =
 		b.spec.VMemCUWideReturnBurstAssistInterval
+	cuMW.vmemCUWideReturnBurstAssistDepthScale =
+		b.spec.VMemCUWideReturnBurstAssistDepthScale
 
 	wfDispatcher := NewWfDispatcher(cuMW)
 	wfDispatcher.scoreboardEnabled = b.spec.RegisterScoreboard
@@ -290,6 +301,13 @@ func (b *Builder) mustHaveValidSpec() {
 	if b.spec.VMemCUWideReturnBurstAssistInterval < 0 {
 		panic("cu: VMemCUWideReturnBurstAssistInterval cannot be negative")
 	}
+	if b.spec.VMemCUWideReturnBurstAssistDepthScale < 0 {
+		panic("cu: VMemCUWideReturnBurstAssistDepthScale cannot be negative")
+	}
+	if b.spec.VMemCUWideReturnBurstAssistInterval > 0 &&
+		b.spec.VMemCUWideReturnBurstAssistDepthScale > 0 {
+		panic("cu: fixed and depth-scaled burst assists are mutually exclusive")
+	}
 	if b.spec.VMemCUWideReturnBurstAssistInterval > 0 &&
 		b.spec.VMemCUWideReturnUnitsPerCycle == 0 {
 		panic("cu: VMemCUWideReturnBurstAssistInterval requires the CU-wide return model")
@@ -301,6 +319,18 @@ func (b *Builder) mustHaveValidSpec() {
 	if b.spec.VMemCUWideReturnBurstAssistInterval > 0 &&
 		b.spec.VMemCUWideReturnConcurrentWaves > 0 {
 		panic("cu: VMemCUWideReturnBurstAssistInterval requires static concurrency zero")
+	}
+	if b.spec.VMemCUWideReturnBurstAssistDepthScale > 0 &&
+		b.spec.VMemCUWideReturnUnitsPerCycle == 0 {
+		panic("cu: VMemCUWideReturnBurstAssistDepthScale requires the CU-wide return model")
+	}
+	if b.spec.VMemCUWideReturnBurstAssistDepthScale > 0 &&
+		b.spec.VMemCUWideReturnBurstConcurrentWaves != 1 {
+		panic("cu: VMemCUWideReturnBurstAssistDepthScale requires burst concurrency one")
+	}
+	if b.spec.VMemCUWideReturnBurstAssistDepthScale > 0 &&
+		b.spec.VMemCUWideReturnConcurrentWaves > 0 {
+		panic("cu: VMemCUWideReturnBurstAssistDepthScale requires static concurrency zero")
 	}
 	if b.spec.VMemCUWideReturnBurstConcurrentWaves > 0 &&
 		b.spec.VMemCUWideReturnUnitsPerCycle == 0 {

@@ -42,6 +42,7 @@ var _ = Describe("Builder", func() {
 		Expect(comp.Spec().VMemCUWideReturnConcurrentWaves).To(Equal(0))
 		Expect(comp.Spec().VMemCUWideReturnBurstConcurrentWaves).To(Equal(0))
 		Expect(comp.Spec().VMemCUWideReturnBurstAssistInterval).To(Equal(0))
+		Expect(comp.Spec().VMemCUWideReturnBurstAssistDepthScale).To(Equal(0))
 
 		// All five ports must be declared so external code can assign them.
 		for _, portName := range []string{
@@ -289,6 +290,22 @@ var _ = Describe("Builder", func() {
 			To(Equal(3))
 	})
 
+	It("propagates the burst assist depth scale", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		comp := MakeBuilder().
+			WithRegistrar(reg).
+			WithVMemCUWideReturnUnitsPerCycle(13).
+			WithVMemCUWideReturnBurstConcurrentWaves(1).
+			WithVMemCUWideReturnBurstAssistDepthScale(16).
+			Build("GPU.CU")
+
+		Expect(comp.Spec().VMemCUWideReturnBurstAssistDepthScale).To(Equal(16))
+		Expect(MiddlewareOf(comp).vmemCUWideReturnBurstAssistDepthScale).
+			To(Equal(16))
+	})
+
 	It("rejects invalid burst assist controls", func() {
 		engine := timing.NewSerialEngine()
 		reg := modeling.NewStandaloneRegistrar(engine)
@@ -310,6 +327,23 @@ var _ = Describe("Builder", func() {
 					WithVMemCUWideReturnConcurrentWaves(1).
 					WithVMemCUWideReturnBurstConcurrentWaves(1).
 					WithVMemCUWideReturnBurstAssistInterval(2)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemCUWideReturnBurstAssistDepthScale(-1)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemCUWideReturnBurstAssistDepthScale(16)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemCUWideReturnUnitsPerCycle(13).
+					WithVMemCUWideReturnBurstConcurrentWaves(2).
+					WithVMemCUWideReturnBurstAssistDepthScale(16)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemCUWideReturnUnitsPerCycle(13).
+					WithVMemCUWideReturnBurstConcurrentWaves(1).
+					WithVMemCUWideReturnBurstAssistInterval(2).
+					WithVMemCUWideReturnBurstAssistDepthScale(16)
 			},
 		} {
 			Expect(func() {
