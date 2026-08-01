@@ -49,6 +49,7 @@ type Builder struct {
 	vmemWideLoadReturnLaneDwordsPerCycle int
 	vmemCUWideReturnUnitsPerCycle        int
 	vmemCUWideReturnConcurrentWaves      int
+	vmemCUWideReturnBurstConcurrentWaves int
 
 	globalStorage     *mem.Storage
 	rdmaAddressMapper *mem.BankedAddressPortMapper
@@ -128,6 +129,13 @@ func (b Builder) WithVMemCUWideReturnConcurrentWaves(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnBurstConcurrentWaves enables burst-sensitive CU-wide
+// service and sets the number of burst wave queues selected per cycle.
+func (b Builder) WithVMemCUWideReturnBurstConcurrentWaves(n int) Builder {
+	b.vmemCUWideReturnBurstConcurrentWaves = n
+	return b
+}
+
 // Build builds the hardware platform and returns the driver. The driver, the
 // GPUs, and all the connections register themselves with the simulation.
 func (b Builder) Build() *driver.Driver {
@@ -143,12 +151,24 @@ func (b Builder) Build() *driver.Driver {
 	if b.vmemCUWideReturnConcurrentWaves < 0 {
 		panic("timingconfig: CU-wide vector-memory concurrent waves cannot be negative")
 	}
+	if b.vmemCUWideReturnBurstConcurrentWaves < 0 {
+		panic("timingconfig: CU-wide vector-memory burst concurrent waves cannot be negative")
+	}
+	if b.vmemCUWideReturnBurstConcurrentWaves > 0 &&
+		b.vmemCUWideReturnUnitsPerCycle == 0 {
+		panic("timingconfig: CU-wide vector-memory burst concurrent waves requires the CU-wide return model")
+	}
+	if b.vmemCUWideReturnBurstConcurrentWaves > 0 &&
+		b.vmemCUWideReturnConcurrentWaves > 0 {
+		panic("timingconfig: static and burst CU-wide concurrent-wave controls are mutually exclusive")
+	}
 	if b.vmemCUWideReturnUnitsPerCycle == 0 &&
 		b.vmemCUWideReturnConcurrentWaves > 0 {
 		panic("timingconfig: CU-wide vector-memory concurrent waves requires the CU-wide return model")
 	}
 	if b.vmemCUWideReturnUnitsPerCycle > 0 &&
-		b.vmemCUWideReturnConcurrentWaves == 0 {
+		b.vmemCUWideReturnConcurrentWaves == 0 &&
+		b.vmemCUWideReturnBurstConcurrentWaves == 0 {
 		b.vmemCUWideReturnConcurrentWaves = 1
 	}
 	configuredReturnModels := 0
@@ -344,6 +364,9 @@ func (b *Builder) createGPUBuilder(
 			).
 			WithVMemCUWideReturnConcurrentWaves(
 				b.vmemCUWideReturnConcurrentWaves,
+			).
+			WithVMemCUWideReturnBurstConcurrentWaves(
+				b.vmemCUWideReturnBurstConcurrentWaves,
 			).
 			WithDriverPort(driverPort)
 	default:

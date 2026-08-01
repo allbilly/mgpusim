@@ -41,6 +41,7 @@ var defaultSpec = Spec{
 	VMemWideLoadReturnLaneDwordsPerCycle:  0,
 	VMemCUWideReturnUnitsPerCycle:         0,
 	VMemCUWideReturnConcurrentWaves:       0,
+	VMemCUWideReturnBurstConcurrentWaves:  0,
 	RegisterScoreboard:                    false,
 	LDSPipelineLatency:                    14,
 	LDSIssueInterval:                      0,
@@ -131,6 +132,14 @@ func (b Builder) WithVMemCUWideReturnConcurrentWaves(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnBurstConcurrentWaves enables burst-sensitive service
+// and sets the number of burst wave queues selected per cycle. Zero preserves
+// static concurrent-wave scheduling.
+func (b Builder) WithVMemCUWideReturnBurstConcurrentWaves(n int) Builder {
+	b.spec.VMemCUWideReturnBurstConcurrentWaves = n
+	return b
+}
+
 // WithResources sets the shared references of the compute unit. Decoder and
 // ALU default to insts.NewDisassembler() and gcn3.NewALU(nil) when left nil.
 func (b Builder) WithResources(resources Resources) Builder {
@@ -175,6 +184,8 @@ func (b Builder) Build(name string) *Comp {
 		b.spec.VMemCUWideReturnUnitsPerCycle
 	cuMW.vmemCUWideReturnConcurrentWaves =
 		b.spec.VMemCUWideReturnConcurrentWaves
+	cuMW.vmemCUWideReturnBurstConcurrentWaves =
+		b.spec.VMemCUWideReturnBurstConcurrentWaves
 
 	wfDispatcher := NewWfDispatcher(cuMW)
 	wfDispatcher.scoreboardEnabled = b.spec.RegisterScoreboard
@@ -263,12 +274,24 @@ func (b *Builder) mustHaveValidSpec() {
 	if b.spec.VMemCUWideReturnConcurrentWaves < 0 {
 		panic("cu: VMemCUWideReturnConcurrentWaves cannot be negative")
 	}
+	if b.spec.VMemCUWideReturnBurstConcurrentWaves < 0 {
+		panic("cu: VMemCUWideReturnBurstConcurrentWaves cannot be negative")
+	}
+	if b.spec.VMemCUWideReturnBurstConcurrentWaves > 0 &&
+		b.spec.VMemCUWideReturnUnitsPerCycle == 0 {
+		panic("cu: VMemCUWideReturnBurstConcurrentWaves requires the CU-wide return model")
+	}
+	if b.spec.VMemCUWideReturnBurstConcurrentWaves > 0 &&
+		b.spec.VMemCUWideReturnConcurrentWaves > 0 {
+		panic("cu: static and burst CU-wide concurrent-wave controls are mutually exclusive")
+	}
 	if b.spec.VMemCUWideReturnUnitsPerCycle == 0 &&
 		b.spec.VMemCUWideReturnConcurrentWaves > 0 {
 		panic("cu: VMemCUWideReturnConcurrentWaves requires the CU-wide return model")
 	}
 	if b.spec.VMemCUWideReturnUnitsPerCycle > 0 &&
-		b.spec.VMemCUWideReturnConcurrentWaves == 0 {
+		b.spec.VMemCUWideReturnConcurrentWaves == 0 &&
+		b.spec.VMemCUWideReturnBurstConcurrentWaves == 0 {
 		b.spec.VMemCUWideReturnConcurrentWaves = 1
 	}
 	configuredReturnModels := 0

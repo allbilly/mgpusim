@@ -391,6 +391,7 @@ func (u *VectorMemoryUnit) executeFlatLoad(
 		t.Read.PID = wave.PID()
 		u.transactionsWaiting = append(u.transactionsWaiting, t)
 	}
+	u.cu.trackCUWideReturnIssue(wave, wave.DynamicInst(), transactions)
 
 	return true
 }

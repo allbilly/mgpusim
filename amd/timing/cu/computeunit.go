@@ -53,6 +53,7 @@ type ComputeUnit struct {
 	vmemWideLoadReturnLaneDwordsPerCycle int
 	vmemCUWideReturnUnitsPerCycle        int
 	vmemCUWideReturnConcurrentWaves      int
+	vmemCUWideReturnBurstConcurrentWaves int
 
 	// Return assemblies accumulate the selected lane-dword accounting mode
 	// across all cache-line response siblings of one dynamic vector load. The
@@ -64,6 +65,9 @@ type ComputeUnit struct {
 	pendingVMemRetirements   []pendingVMemLoadRetirement
 	vmemCUWideWaveOrder      []*wavefront.Wavefront
 	vmemCUWideNextWave       int
+	vmemCUWideBurstNextWave  *wavefront.Wavefront
+	vmemCUWideOutstanding    map[*wavefront.Wavefront]int
+	vmemCUWideTrackedInstIDs map[uint64]*wavefront.Wavefront
 
 	Scheduler        Scheduler
 	BranchUnit       SubComponent
@@ -918,6 +922,62 @@ func countCUWideReturnWork(assembly *vmemWideReturnAssembly) int {
 	return (numerator + width - 1) / width
 }
 
+func countCUWideReturnTransactionWork(
+	transactions []VectorMemAccessInfo,
+) int {
+	assembly := &vmemWideReturnAssembly{
+		activeLanes: make(map[int]struct{}),
+	}
+	for _, transaction := range transactions {
+		for _, lane := range transaction.laneInfo {
+			assembly.laneDwords += lane.regCount
+			assembly.activeLanes[lane.laneID] = struct{}{}
+		}
+	}
+	return countCUWideReturnWork(assembly)
+}
+
+func (cu *ComputeUnit) trackCUWideReturnIssue(
+	wf *wavefront.Wavefront,
+	inst *wavefront.Inst,
+	transactions []VectorMemAccessInfo,
+) {
+	if cu.vmemCUWideReturnBurstConcurrentWaves <= 0 ||
+		cu.vmemCUWideReturnUnitsPerCycle <= 0 ||
+		inst == nil || inst.Dst == nil || inst.Dst.RegCount <= 1 ||
+		len(transactions) == 0 ||
+		countCUWideReturnTransactionWork(transactions) <= 0 {
+		return
+	}
+	if cu.vmemCUWideTrackedInstIDs == nil {
+		cu.vmemCUWideTrackedInstIDs = make(map[uint64]*wavefront.Wavefront)
+	}
+	if _, tracked := cu.vmemCUWideTrackedInstIDs[inst.ID]; tracked {
+		return
+	}
+	if cu.vmemCUWideOutstanding == nil {
+		cu.vmemCUWideOutstanding = make(map[*wavefront.Wavefront]int)
+	}
+	cu.vmemCUWideTrackedInstIDs[inst.ID] = wf
+	cu.vmemCUWideOutstanding[wf]++
+}
+
+func (cu *ComputeUnit) retireTrackedCUWideReturn(inst *wavefront.Inst) {
+	if inst == nil || cu.vmemCUWideTrackedInstIDs == nil {
+		return
+	}
+	wf, tracked := cu.vmemCUWideTrackedInstIDs[inst.ID]
+	if !tracked {
+		return
+	}
+	delete(cu.vmemCUWideTrackedInstIDs, inst.ID)
+	if cu.vmemCUWideOutstanding[wf] <= 1 {
+		delete(cu.vmemCUWideOutstanding, wf)
+	} else {
+		cu.vmemCUWideOutstanding[wf]--
+	}
+}
+
 func (cu *ComputeUnit) accumulateWideVMemReturn(
 	instID uint64,
 	lanes []vectorMemAccessLaneInfo,
@@ -1024,6 +1084,13 @@ func (cu *ComputeUnit) advanceVMemLoadRetirements() bool {
 }
 
 func (cu *ComputeUnit) advanceCUWideVMemLoadRetirements() bool {
+	if cu.vmemCUWideReturnBurstConcurrentWaves > 0 {
+		return cu.advanceBurstCUWideVMemLoadRetirements()
+	}
+	return cu.advanceStaticCUWideVMemLoadRetirements()
+}
+
+func (cu *ComputeUnit) advanceStaticCUWideVMemLoadRetirements() bool {
 	cu.syncCUWideWaveOrder()
 	if len(cu.vmemCUWideWaveOrder) == 0 {
 		return false
@@ -1049,6 +1116,100 @@ func (cu *ComputeUnit) advanceCUWideVMemLoadRetirements() bool {
 
 	cu.advanceCUWideRoundRobin(selected[len(selected)-1])
 	return true
+}
+
+func (cu *ComputeUnit) advanceBurstCUWideVMemLoadRetirements() bool {
+	cu.syncCUWideWaveOrder()
+	if len(cu.vmemCUWideWaveOrder) == 0 {
+		return false
+	}
+
+	readyWaves := append(
+		[]*wavefront.Wavefront(nil), cu.vmemCUWideWaveOrder...)
+	burstWaves := cu.burstCUWideWavesInFairOrder(readyWaves)
+	selectedBurstCount := cu.vmemCUWideReturnBurstConcurrentWaves
+	if selectedBurstCount > len(burstWaves) {
+		selectedBurstCount = len(burstWaves)
+	}
+
+	for _, wf := range readyWaves {
+		if cu.vmemCUWideOutstanding[wf] <= 1 {
+			cu.advanceOneCUWideWaveHead(wf)
+		}
+	}
+	for i := 0; i < selectedBurstCount; i++ {
+		cu.advanceOneCUWideWaveHead(burstWaves[i])
+	}
+	if len(burstWaves) > 0 {
+		cu.vmemCUWideBurstNextWave =
+			burstWaves[selectedBurstCount%len(burstWaves)]
+	}
+
+	cu.pruneCUWideWaveOrder()
+	return true
+}
+
+func (cu *ComputeUnit) burstCUWideWavesInFairOrder(
+	readyWaves []*wavefront.Wavefront,
+) []*wavefront.Wavefront {
+	start := 0
+	if cu.vmemCUWideBurstNextWave != nil {
+		for i, wf := range readyWaves {
+			if wf == cu.vmemCUWideBurstNextWave {
+				start = i
+				break
+			}
+		}
+	}
+
+	burstWaves := make([]*wavefront.Wavefront, 0, len(readyWaves))
+	for offset := 0; offset < len(readyWaves); offset++ {
+		wf := readyWaves[(start+offset)%len(readyWaves)]
+		if cu.vmemCUWideOutstanding[wf] > 1 {
+			burstWaves = append(burstWaves, wf)
+		}
+	}
+	return burstWaves
+}
+
+func (cu *ComputeUnit) advanceOneCUWideWaveHead(wf *wavefront.Wavefront) {
+	for i := range cu.pendingVMemRetirements {
+		retirement := &cu.pendingVMemRetirements[i]
+		if retirement.wf != wf {
+			continue
+		}
+
+		consumed := retirement.remainingCycles
+		if consumed > cu.vmemCUWideReturnUnitsPerCycle {
+			consumed = cu.vmemCUWideReturnUnitsPerCycle
+		}
+		retirement.remainingCycles -= consumed
+		if retirement.remainingCycles > 0 {
+			return
+		}
+
+		completed := *retirement
+		copy(
+			cu.pendingVMemRetirements[i:],
+			cu.pendingVMemRetirements[i+1:],
+		)
+		last := len(cu.pendingVMemRetirements) - 1
+		cu.pendingVMemRetirements[last] = pendingVMemLoadRetirement{}
+		cu.pendingVMemRetirements = cu.pendingVMemRetirements[:last]
+		cu.retireVectorMemLoad(completed.wf, completed.inst)
+		return
+	}
+}
+
+func (cu *ComputeUnit) pruneCUWideWaveOrder() {
+	active := cu.vmemCUWideWaveOrder[:0]
+	for _, wf := range cu.vmemCUWideWaveOrder {
+		if cu.hasPendingCUWideWave(wf) {
+			active = append(active, wf)
+		}
+	}
+	clear(cu.vmemCUWideWaveOrder[len(active):])
+	cu.vmemCUWideWaveOrder = active
 }
 
 func (cu *ComputeUnit) addCUWideWaveQueue(wf *wavefront.Wavefront) {
@@ -1176,6 +1337,7 @@ func (cu *ComputeUnit) retireVectorMemLoad(
 	wf *wavefront.Wavefront,
 	inst *wavefront.Inst,
 ) {
+	cu.retireTrackedCUWideReturn(inst)
 	wf.MarkMemoryLoadDestination(inst.Inst)
 	wf.OutstandingVectorMemAccess--
 	if inst.FormatType == insts.FLAT || inst.FormatType == insts.MUBUF {

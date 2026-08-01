@@ -93,6 +93,7 @@ type Builder struct {
 	vmemWideLoadReturnLaneDwordsPerCycle  int
 	vmemCUWideReturnUnitsPerCycle         int
 	vmemCUWideReturnConcurrentWaves       int
+	vmemCUWideReturnBurstConcurrentWaves  int
 	registerScoreboard                    bool
 	scoreboardVALULatency                 int
 	valuTiming                            cu.VALUTiming
@@ -303,6 +304,13 @@ func (b Builder) WithVMemCUWideReturnUnitsPerCycle(n int) Builder {
 // return FIFOs serviced per cycle by the CU-wide return model.
 func (b Builder) WithVMemCUWideReturnConcurrentWaves(n int) Builder {
 	b.vmemCUWideReturnConcurrentWaves = n
+	return b
+}
+
+// WithVMemCUWideReturnBurstConcurrentWaves enables burst-sensitive CU-wide
+// return service and sets the number of burst wave queues selected per cycle.
+func (b Builder) WithVMemCUWideReturnBurstConcurrentWaves(n int) Builder {
+	b.vmemCUWideReturnBurstConcurrentWaves = n
 	return b
 }
 
@@ -639,6 +647,8 @@ func (b *Builder) cuSpec() cu.Spec {
 		b.vmemCUWideReturnUnitsPerCycle
 	spec.VMemCUWideReturnConcurrentWaves =
 		b.vmemCUWideReturnConcurrentWaves
+	spec.VMemCUWideReturnBurstConcurrentWaves =
+		b.vmemCUWideReturnBurstConcurrentWaves
 
 	spec.RegisterScoreboard = b.registerScoreboard
 

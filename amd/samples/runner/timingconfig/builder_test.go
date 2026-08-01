@@ -251,6 +251,39 @@ func TestDefaultVMemCUWideConcurrentWavesToOne(t *testing.T) {
 	}
 }
 
+func TestBuildGfx90cPlatformWithVMemCUWideBurstConcurrentWaves(t *testing.T) {
+	s := simulation.MakeBuilder().
+		WithoutMonitoring().
+		WithOutputFileName(t.TempDir() + "/sim").
+		Build()
+	defer s.Terminate()
+
+	MakeBuilder().
+		WithSimulation(s).
+		WithGPUType("gfx90c").
+		WithVMemCUWideReturnUnitsPerCycle(13).
+		WithVMemCUWideReturnBurstConcurrentWaves(2).
+		Build()
+
+	component := s.GetComponentByName("GPU[1].SA[0].CU[0]")
+	computeUnit, ok := component.(*cu.Comp)
+	if !ok {
+		t.Fatalf("expected gfx90c compute unit, got %T", component)
+	}
+	if computeUnit.Spec().VMemCUWideReturnConcurrentWaves != 0 {
+		t.Fatalf(
+			"burst mode must not normalize static waves, got %d",
+			computeUnit.Spec().VMemCUWideReturnConcurrentWaves,
+		)
+	}
+	if computeUnit.Spec().VMemCUWideReturnBurstConcurrentWaves != 2 {
+		t.Fatalf(
+			"expected CU-wide burst concurrent waves 2, got %d",
+			computeUnit.Spec().VMemCUWideReturnBurstConcurrentWaves,
+		)
+	}
+}
+
 func TestRejectInvalidVMemCUWideConcurrentWaves(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -273,6 +306,36 @@ func TestRejectInvalidVMemCUWideConcurrentWaves(t *testing.T) {
 				WithGPUType("gfx90c").
 				WithVMemCUWideReturnUnitsPerCycle(test.units).
 				WithVMemCUWideReturnConcurrentWaves(test.waves).
+				Build()
+		})
+	}
+}
+
+func TestRejectInvalidVMemCUWideBurstConcurrentWaves(t *testing.T) {
+	tests := []struct {
+		name   string
+		units  int
+		static int
+		burst  int
+	}{
+		{name: "negative", units: 13, burst: -1},
+		{name: "without CU-wide model", burst: 2},
+		{name: "with static control", units: 13, static: 2, burst: 2},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected invalid burst configuration to panic")
+				}
+			}()
+
+			MakeBuilder().
+				WithGPUType("gfx90c").
+				WithVMemCUWideReturnUnitsPerCycle(test.units).
+				WithVMemCUWideReturnConcurrentWaves(test.static).
+				WithVMemCUWideReturnBurstConcurrentWaves(test.burst).
 				Build()
 		})
 	}

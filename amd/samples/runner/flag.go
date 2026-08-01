@@ -38,6 +38,11 @@ var vmemCUWideReturnConcurrentWavesFlag = flag.Int(
 	0,
 	"Concurrent wave FIFOs for the gfx90c CU-wide return model; zero selects one.",
 )
+var vmemCUWideReturnBurstConcurrentWavesFlag = flag.Int(
+	"vmem-cu-wide-return-burst-concurrent-waves",
+	0,
+	"Burst wave FIFOs serviced by the gfx90c CU-wide return model; zero preserves static service.",
+)
 
 var verifyFlag = flag.Bool("verify", false, "Verify the emulation result.")
 var memTracing = flag.Bool("trace-mem", false, "Generate memory trace")
@@ -149,6 +154,8 @@ func (r *Runner) parseSimulationFlags() {
 		*vmemCUWideReturnUnitsPerCycleFlag
 	r.VMemCUWideReturnConcurrentWaves =
 		*vmemCUWideReturnConcurrentWavesFlag
+	r.VMemCUWideReturnBurstConcurrentWaves =
+		*vmemCUWideReturnBurstConcurrentWavesFlag
 	if r.VMemLoadReturnLaneDwordsPerCycle < 0 {
 		panic("vector-memory load return bandwidth cannot be negative")
 	}
@@ -161,12 +168,24 @@ func (r *Runner) parseSimulationFlags() {
 	if r.VMemCUWideReturnConcurrentWaves < 0 {
 		panic("CU-wide vector-memory concurrent waves cannot be negative")
 	}
+	if r.VMemCUWideReturnBurstConcurrentWaves < 0 {
+		panic("CU-wide vector-memory burst concurrent waves cannot be negative")
+	}
+	if r.VMemCUWideReturnBurstConcurrentWaves > 0 &&
+		r.VMemCUWideReturnUnitsPerCycle == 0 {
+		panic("CU-wide vector-memory burst concurrent waves requires the CU-wide return model")
+	}
+	if r.VMemCUWideReturnBurstConcurrentWaves > 0 &&
+		r.VMemCUWideReturnConcurrentWaves > 0 {
+		panic("static and burst CU-wide concurrent-wave controls are mutually exclusive")
+	}
 	if r.VMemCUWideReturnUnitsPerCycle == 0 &&
 		r.VMemCUWideReturnConcurrentWaves > 0 {
 		panic("CU-wide vector-memory concurrent waves requires the CU-wide return model")
 	}
 	if r.VMemCUWideReturnUnitsPerCycle > 0 &&
-		r.VMemCUWideReturnConcurrentWaves == 0 {
+		r.VMemCUWideReturnConcurrentWaves == 0 &&
+		r.VMemCUWideReturnBurstConcurrentWaves == 0 {
 		r.VMemCUWideReturnConcurrentWaves = 1
 	}
 	configuredReturnModels := 0

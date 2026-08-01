@@ -10,7 +10,7 @@ func setVMemReturnFlags(
 	t *testing.T,
 	timing bool,
 	gpuType string,
-	loadReturn, wideLoadReturn, cuWideReturn, cuWideWaves int,
+	loadReturn, wideLoadReturn, cuWideReturn, cuWideWaves, cuWideBurstWaves int,
 ) {
 	t.Helper()
 
@@ -21,6 +21,7 @@ func setVMemReturnFlags(
 	oldWideLoadReturn := *vmemWideLoadReturnLaneDwordsPerCycleFlag
 	oldCUWideReturn := *vmemCUWideReturnUnitsPerCycleFlag
 	oldCUWideWaves := *vmemCUWideReturnConcurrentWavesFlag
+	oldCUWideBurstWaves := *vmemCUWideReturnBurstConcurrentWavesFlag
 	t.Cleanup(func() {
 		*timingFlag = oldTiming
 		*archFlag = oldArch
@@ -29,6 +30,7 @@ func setVMemReturnFlags(
 		*vmemWideLoadReturnLaneDwordsPerCycleFlag = oldWideLoadReturn
 		*vmemCUWideReturnUnitsPerCycleFlag = oldCUWideReturn
 		*vmemCUWideReturnConcurrentWavesFlag = oldCUWideWaves
+		*vmemCUWideReturnBurstConcurrentWavesFlag = oldCUWideBurstWaves
 	})
 
 	*timingFlag = timing
@@ -38,6 +40,7 @@ func setVMemReturnFlags(
 	*vmemWideLoadReturnLaneDwordsPerCycleFlag = wideLoadReturn
 	*vmemCUWideReturnUnitsPerCycleFlag = cuWideReturn
 	*vmemCUWideReturnConcurrentWavesFlag = cuWideWaves
+	*vmemCUWideReturnBurstConcurrentWavesFlag = cuWideBurstWaves
 }
 
 func requireParseSimulationFlagsPanic(t *testing.T, want string) {
@@ -63,10 +66,13 @@ func TestVMemCUWideReturnFlagIsRegistered(t *testing.T) {
 	if flag.Lookup("vmem-cu-wide-return-concurrent-waves") == nil {
 		t.Fatal("expected CU-wide vector-memory concurrent-wave flag to be registered")
 	}
+	if flag.Lookup("vmem-cu-wide-return-burst-concurrent-waves") == nil {
+		t.Fatal("expected CU-wide vector-memory burst flag to be registered")
+	}
 }
 
 func TestParseVMemCUWideReturnBudget(t *testing.T) {
-	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 3)
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 3, 0)
 
 	runner := new(Runner)
 	runner.parseSimulationFlags()
@@ -86,7 +92,7 @@ func TestParseVMemCUWideReturnBudget(t *testing.T) {
 }
 
 func TestDefaultVMemCUWideReturnConcurrentWavesToOne(t *testing.T) {
-	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0)
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0, 0)
 
 	runner := new(Runner)
 	runner.parseSimulationFlags()
@@ -95,6 +101,26 @@ func TestDefaultVMemCUWideReturnConcurrentWavesToOne(t *testing.T) {
 		t.Fatalf(
 			"expected CU-wide concurrent waves to default to 1, got %d",
 			runner.VMemCUWideReturnConcurrentWaves,
+		)
+	}
+}
+
+func TestParseVMemCUWideBurstConcurrentWaves(t *testing.T) {
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0, 2)
+
+	runner := new(Runner)
+	runner.parseSimulationFlags()
+
+	if runner.VMemCUWideReturnConcurrentWaves != 0 {
+		t.Fatalf(
+			"burst mode must not normalize static waves, got %d",
+			runner.VMemCUWideReturnConcurrentWaves,
+		)
+	}
+	if runner.VMemCUWideReturnBurstConcurrentWaves != 2 {
+		t.Fatalf(
+			"expected burst concurrent waves 2, got %d",
+			runner.VMemCUWideReturnBurstConcurrentWaves,
 		)
 	}
 }
@@ -108,6 +134,7 @@ func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 		wideReturn  int
 		cuWide      int
 		cuWideWaves int
+		burstWaves  int
 		want        string
 	}{
 		{
@@ -131,6 +158,30 @@ func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 			gpuType:     "gfx90c",
 			cuWideWaves: 2,
 			want:        "CU-wide vector-memory concurrent waves requires the CU-wide return model",
+		},
+		{
+			name:       "negative burst waves",
+			timing:     true,
+			gpuType:    "gfx90c",
+			cuWide:     13,
+			burstWaves: -1,
+			want:       "CU-wide vector-memory burst concurrent waves cannot be negative",
+		},
+		{
+			name:       "burst waves without model",
+			timing:     true,
+			gpuType:    "gfx90c",
+			burstWaves: 2,
+			want:       "CU-wide vector-memory burst concurrent waves requires the CU-wide return model",
+		},
+		{
+			name:        "burst and static waves",
+			timing:      true,
+			gpuType:     "gfx90c",
+			cuWide:      13,
+			cuWideWaves: 2,
+			burstWaves:  2,
+			want:        "static and burst CU-wide concurrent-wave controls are mutually exclusive",
 		},
 		{
 			name:    "without timing",
@@ -173,6 +224,7 @@ func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 				test.wideReturn,
 				test.cuWide,
 				test.cuWideWaves,
+				test.burstWaves,
 			)
 			requireParseSimulationFlagsPanic(t, test.want)
 		})

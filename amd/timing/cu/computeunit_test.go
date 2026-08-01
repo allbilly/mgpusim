@@ -93,6 +93,23 @@ func makePendingVMemWave(
 	return wf, retirements
 }
 
+func trackPendingVMemRetirements(
+	cu *ComputeUnit,
+	wf *wavefront.Wavefront,
+	retirements []pendingVMemLoadRetirement,
+) {
+	if cu.vmemCUWideOutstanding == nil {
+		cu.vmemCUWideOutstanding = make(map[*wavefront.Wavefront]int)
+	}
+	if cu.vmemCUWideTrackedInstIDs == nil {
+		cu.vmemCUWideTrackedInstIDs = make(map[uint64]*wavefront.Wavefront)
+	}
+	cu.vmemCUWideOutstanding[wf] += len(retirements)
+	for _, retirement := range retirements {
+		cu.vmemCUWideTrackedInstIDs[retirement.inst.ID] = wf
+	}
+}
+
 var _ = DescribeTable(
 	"counts duplicate vector-memory return lane-dwords",
 	func(alias, width int) {
@@ -1119,6 +1136,123 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(2))
 			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(2))
 		})
+
+		It("services singleton waves independently alongside one selected burst", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 1
+			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			singleWf, singleton := makePendingVMemWave(0, 3)
+			firstBurstWf, firstBurst := makePendingVMemWave(1, 3, 3)
+			secondBurstWf, secondBurst := makePendingVMemWave(2, 3, 3)
+			trackPendingVMemRetirements(cu, singleWf, singleton)
+			trackPendingVMemRetirements(cu, firstBurstWf, firstBurst)
+			trackPendingVMemRetirements(cu, secondBurstWf, secondBurst)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				singleton[0], firstBurst[0], secondBurst[0],
+				firstBurst[1], secondBurst[1],
+			}
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(2))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(2))
+			Expect(cu.pendingVMemRetirements[2].remainingCycles).To(Equal(3))
+		})
+
+		It("classifies window-two, window-four, and window-eight as K minus one after retirement", func() {
+			for _, window := range []int{2, 4, 8} {
+				cu.vmemCUWideReturnUnitsPerCycle = 8
+				cu.vmemCUWideReturnBurstConcurrentWaves = 1
+				wf, retirements := makePendingVMemWave(0, make([]int, window)...)
+				for i := range retirements {
+					retirements[i].remainingCycles = 1
+				}
+				cu.vmemCUWideOutstanding = nil
+				cu.vmemCUWideTrackedInstIDs = nil
+				cu.vmemCUWideWaveOrder = nil
+				cu.vmemCUWideBurstNextWave = nil
+				trackPendingVMemRetirements(cu, wf, retirements)
+				cu.pendingVMemRetirements = retirements
+
+				cu.advanceVMemLoadRetirements()
+
+				Expect(cu.vmemCUWideOutstanding[wf]).To(Equal(window - 1))
+				Expect(cu.pendingVMemRetirements).To(HaveLen(window - 1))
+			}
+		})
+
+		It("round-robins burst waves fairly with Q1 and Q2", func() {
+			run := func(q int) []int {
+				cu.vmemCUWideReturnUnitsPerCycle = 1
+				cu.vmemCUWideReturnBurstConcurrentWaves = q
+				cu.vmemCUWideOutstanding = nil
+				cu.vmemCUWideTrackedInstIDs = nil
+				cu.vmemCUWideWaveOrder = nil
+				cu.vmemCUWideBurstNextWave = nil
+				cu.pendingVMemRetirements = nil
+				for simd := 0; simd < 3; simd++ {
+					wf, retirements := makePendingVMemWave(simd, 3, 3)
+					trackPendingVMemRetirements(cu, wf, retirements)
+					cu.pendingVMemRetirements = append(
+						cu.pendingVMemRetirements, retirements[0])
+				}
+				cu.advanceVMemLoadRetirements()
+				remaining := make([]int, len(cu.pendingVMemRetirements))
+				for i := range cu.pendingVMemRetirements {
+					remaining[i] = cu.pendingVMemRetirements[i].remainingCycles
+				}
+				return remaining
+			}
+
+			Expect(run(1)).To(Equal([]int{2, 3, 3}))
+			Expect(run(2)).To(Equal([]int{2, 2, 3}))
+
+			cu.advanceVMemLoadRetirements()
+			Expect([]int{
+				cu.pendingVMemRetirements[0].remainingCycles,
+				cu.pendingVMemRetirements[1].remainingCycles,
+				cu.pendingVMemRetirements[2].remainingCycles,
+			}).To(Equal([]int{1, 2, 2}))
+		})
+
+		It("does not carry a burst grant into the newly exposed head", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 3
+			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			wf, retirements := makePendingVMemWave(0, 1, 5)
+			trackPendingVMemRetirements(cu, wf, retirements)
+			cu.pendingVMemRetirements = retirements
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect(cu.vmemCUWideOutstanding[wf]).To(Equal(1))
+			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(5))
+		})
+
+		It("deletes tracked IDs exactly once without negative or leaked counts", func() {
+			wf, retirements := makePendingVMemWave(0, 1)
+			trackPendingVMemRetirements(cu, wf, retirements)
+
+			cu.retireTrackedCUWideReturn(retirements[0].inst)
+			cu.retireTrackedCUWideReturn(retirements[0].inst)
+
+			Expect(cu.vmemCUWideOutstanding).To(BeEmpty())
+			Expect(cu.vmemCUWideTrackedInstIDs).To(BeEmpty())
+		})
+
+		It("retires the final modeled-wide load without leaking burst state", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 2
+			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			wf, retirements := makePendingVMemWave(0, 1)
+			trackPendingVMemRetirements(cu, wf, retirements)
+			cu.pendingVMemRetirements = retirements
+
+			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+
+			Expect(cu.pendingVMemRetirements).To(BeEmpty())
+			Expect(cu.vmemCUWideOutstanding).To(BeEmpty())
+			Expect(cu.vmemCUWideTrackedInstIDs).To(BeEmpty())
+			Expect(wf.OutstandingVectorMemAccess).To(Equal(0))
+		})
 	})
 
 	Context("handle write done respond from ToVectorMem port", func() {
@@ -1468,6 +1602,51 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(cu.pendingVMemRetirements).To(BeEmpty())
 			Expect(firstWf.OutstandingVectorMemAccess).To(Equal(0))
 			Expect(cu.advanceVMemLoadRetirements()).To(BeFalse())
+		})
+
+		It("preserves burst counts, tracked IDs, FIFO, and cursor through pause and restart", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 1
+			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			wf, retirements := makePendingVMemWave(2, 2, 2)
+			trackPendingVMemRetirements(cu, wf, retirements)
+			cu.pendingVMemRetirements = retirements
+			cu.vmemCUWideWaveOrder = []*wavefront.Wavefront{wf}
+			cu.vmemCUWideBurstNextWave = wf
+			cu.comp.State.HasFlushReq = true
+			cu.comp.State.FlushReqID = timing.GetIDGenerator().Generate()
+			cu.comp.State.FlushReqSrc = "CP"
+
+			Expect(cu.flushPipeline()).To(BeTrue())
+			Expect(cu.comp.State.IsPaused).To(BeTrue())
+			Expect(cu.pendingVMemRetirements).To(HaveLen(2))
+			Expect(cu.vmemCUWideOutstanding[wf]).To(Equal(2))
+			Expect(cu.vmemCUWideTrackedInstIDs).To(HaveLen(2))
+			Expect(cu.vmemCUWideBurstNextWave).To(BeIdenticalTo(wf))
+			Expect(cu.runPipeline()).To(BeFalse())
+
+			Expect(cu.sendToCP()).To(BeTrue())
+			restartReq := protocol.CUPipelineRestartReq{
+				MsgMeta: messaging.MsgMeta{
+					ID:  timing.GetIDGenerator().Generate(),
+					Src: "CP",
+					Dst: cu.ToCP.AsRemote(),
+				},
+			}
+			toCP.incoming = append(toCP.incoming, restartReq)
+			Expect(cu.processInputFromCP()).To(BeTrue())
+			Expect(cu.checkShadowBuffers()).To(BeTrue())
+			Expect(cu.comp.State.IsPaused).To(BeFalse())
+
+			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(1))
+			Expect(cu.vmemCUWideOutstanding[wf]).To(Equal(2))
+			Expect(cu.vmemCUWideTrackedInstIDs).To(HaveLen(2))
+
+			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
+			Expect(cu.pendingVMemRetirements).To(HaveLen(1))
+			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(2))
+			Expect(cu.vmemCUWideOutstanding[wf]).To(Equal(1))
+			Expect(cu.vmemCUWideTrackedInstIDs).To(HaveLen(1))
 		})
 
 		It("should handle a restart request", func() {

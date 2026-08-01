@@ -407,6 +407,143 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.numInstInFlight).To(Equal(uint64(0)))
 	})
 
+	It("tracks each admitted modeled-wide load exactly once across flush and resend", func() {
+		cu.vmemCUWideReturnUnitsPerCycle = 1
+		cu.vmemCUWideReturnBurstConcurrentWaves = 1
+		wave := wavefront.NewWavefront(kernels.NewWavefront())
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.Format = insts.FormatTable[insts.FLAT]
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 21
+		inst.Dst = insts.NewVRegOperand(0, 0, 2)
+		wave.SetDynamicInst(inst)
+		read := &memprotocol.ReadReq{
+			MsgMeta: messaging.MsgMeta{ID: timing.GetIDGenerator().Generate()},
+			Address: 0x100,
+		}
+		transactions := []VectorMemAccessInfo{{
+			Read: read, Wavefront: wave, Inst: inst,
+			laneInfo: []vectorMemAccessLaneInfo{{
+				laneID: 0, regCount: 2,
+			}},
+		}}
+		coalescer.toReturn = transactions
+
+		Expect(vecMemUnit.executeFlatLoad(wave)).To(BeTrue())
+		Expect(cu.vmemCUWideOutstanding[wave]).To(Equal(1))
+		Expect(cu.vmemCUWideTrackedInstIDs).To(HaveKey(inst.ID))
+
+		cu.trackCUWideReturnIssue(wave, inst, transactions)
+		Expect(cu.vmemCUWideOutstanding[wave]).To(Equal(1))
+
+		vecMemUnit.Flush()
+		Expect(cu.vmemCUWideOutstanding[wave]).To(Equal(1))
+		Expect(cu.vmemCUWideTrackedInstIDs).To(HaveKey(inst.ID))
+
+		cu.InFlightVectorMemAccess = nil
+		cu.shadowInFlightVectorMemAccess = []VectorMemAccessInfo{transactions[0]}
+		Expect(cu.sendVectorShadowBufferAccesses()).To(BeTrue())
+		Expect(cu.vmemCUWideOutstanding[wave]).To(Equal(1))
+	})
+
+	It("preserves static-P control without burst accounting when Q is zero", func() {
+		cu.vmemCUWideReturnUnitsPerCycle = 1
+		cu.vmemCUWideReturnConcurrentWaves = 1
+		wave := wavefront.NewWavefront(kernels.NewWavefront())
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.Format = insts.FormatTable[insts.FLAT]
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 21
+		inst.Dst = insts.NewVRegOperand(0, 0, 2)
+		wave.SetDynamicInst(inst)
+		coalescer.toReturn = []VectorMemAccessInfo{{
+			Read: &memprotocol.ReadReq{Address: 0x100},
+			laneInfo: []vectorMemAccessLaneInfo{{
+				laneID: 0, regCount: 2,
+			}},
+		}}
+
+		Expect(vecMemUnit.executeFlatLoad(wave)).To(BeTrue())
+		Expect(cu.vmemCUWideOutstanding).To(BeNil())
+		Expect(cu.vmemCUWideTrackedInstIDs).To(BeNil())
+	})
+
+	It("does not track a wide load until its transactions are admitted", func() {
+		cu.vmemCUWideReturnUnitsPerCycle = 1
+		cu.vmemCUWideReturnBurstConcurrentWaves = 1
+		cu.InFlightVectorMemAccessLimit = 0
+		wave := wavefront.NewWavefront(kernels.NewWavefront())
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.Format = insts.FormatTable[insts.FLAT]
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 21
+		inst.Dst = insts.NewVRegOperand(0, 0, 2)
+		wave.SetDynamicInst(inst)
+		coalescer.toReturn = []VectorMemAccessInfo{{
+			Read: &memprotocol.ReadReq{Address: 0x100},
+			laneInfo: []vectorMemAccessLaneInfo{{
+				laneID: 0, regCount: 2,
+			}},
+		}}
+
+		Expect(vecMemUnit.executeFlatLoad(wave)).To(BeFalse())
+		Expect(cu.vmemCUWideOutstanding).To(BeNil())
+		Expect(cu.vmemCUWideTrackedInstIDs).To(BeNil())
+	})
+
+	It("does not track narrow, zero-work, empty, or store transactions", func() {
+		cu.vmemCUWideReturnUnitsPerCycle = 1
+		cu.vmemCUWideReturnBurstConcurrentWaves = 1
+		wave := wavefront.NewWavefront(kernels.NewWavefront())
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.Format = insts.FormatTable[insts.FLAT]
+		inst.FormatType = insts.FLAT
+		inst.Opcode = 20
+		inst.Dst = insts.NewVRegOperand(0, 0, 1)
+		wave.SetDynamicInst(inst)
+		coalescer.toReturn = []VectorMemAccessInfo{{
+			Read: &memprotocol.ReadReq{Address: 0x100},
+			laneInfo: []vectorMemAccessLaneInfo{{
+				laneID: 0, regCount: 1,
+			}},
+		}}
+		Expect(vecMemUnit.executeFlatLoad(wave)).To(BeTrue())
+		for _, opcode := range []insts.Opcode{16, 18, 20} {
+			narrow := wavefront.NewInst(insts.NewInst())
+			narrow.Opcode = opcode
+			narrow.Dst = insts.NewVRegOperand(0, 0, 1)
+			cu.trackCUWideReturnIssue(wave, narrow, []VectorMemAccessInfo{{
+				laneInfo: []vectorMemAccessLaneInfo{{
+					laneID: 0, regCount: 2,
+				}},
+			}})
+		}
+
+		wideZeroWork := wavefront.NewInst(insts.NewInst())
+		wideZeroWork.Dst = insts.NewVRegOperand(0, 0, 2)
+		cu.trackCUWideReturnIssue(wave, wideZeroWork, []VectorMemAccessInfo{{
+			laneInfo: []vectorMemAccessLaneInfo{{laneID: 0, regCount: 1}},
+		}})
+		cu.trackCUWideReturnIssue(wave, wideZeroWork, nil)
+
+		store := wavefront.NewInst(insts.NewInst())
+		store.Format = insts.FormatTable[insts.FLAT]
+		store.FormatType = insts.FLAT
+		store.Opcode = 29
+		store.Dst = insts.NewVRegOperand(0, 0, 2)
+		wave.SetDynamicInst(store)
+		coalescer.toReturn = []VectorMemAccessInfo{{
+			Write: &memprotocol.WriteReq{Address: 0x200},
+			laneInfo: []vectorMemAccessLaneInfo{{
+				laneID: 0, regCount: 2,
+			}},
+		}}
+		Expect(vecMemUnit.executeFlatStore(wave)).To(BeTrue())
+
+		Expect(cu.vmemCUWideOutstanding).To(BeNil())
+		Expect(cu.vmemCUWideTrackedInstIDs).To(BeNil())
+	})
+
 	It("should run flat_store_dword", func() {
 		kernelWave := kernels.NewWavefront()
 		wave := wavefront.NewWavefront(kernelWave)

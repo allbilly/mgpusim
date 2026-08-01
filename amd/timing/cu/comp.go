@@ -145,6 +145,12 @@ type Spec struct {
 	// wave for backward compatibility when the CU-wide model is enabled.
 	VMemCUWideReturnConcurrentWaves int `json:"vmem_cu_wide_return_concurrent_waves"`
 
+	// VMemCUWideReturnBurstConcurrentWaves enables burst-sensitive scheduling.
+	// Singleton waves are always serviced, while at most this many waves with
+	// multiple modeled-wide loads outstanding are serviced each cycle. Zero
+	// preserves the static concurrent-wave scheduler.
+	VMemCUWideReturnBurstConcurrentWaves int `json:"vmem_cu_wide_return_burst_concurrent_waves"`
+
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`
