@@ -381,6 +381,44 @@ interval cannot fit both occupancy points and the full window surface, or if
 serial, dword, G1, or G7 controls move. Do not select an interval from the
 independent4 curve alone.
 
+#### Guarded dependency-window hardware sweep
+
+Use the checked-in driver for the missing independent2/8 G16/G28 controls. It
+runs matched zero-trip and R64 points serially with warm-up 20, 10,000 timed
+iterations, 5 ms telemetry, at least 10 active samples, a 50 C start limit,
+a 58 C abort limit, and at least 30 seconds between batches. It also rejects
+any concurrent `Vgfx9_compute_unit_tb`, `verilator_bin`, `pytest`, or
+`miaow_gcn4` command. The default is a one-batch directional plan and does not
+touch hardware or create directories:
+
+```bash
+python3 gpu_perf_scripts/calibration/gfx90c/run_vmem_dependency_sweep.py
+```
+
+Review the eight printed commands, ensure the required `high` policy and
+1600 MHz DPM selection are already in force, then opt in explicitly:
+
+```bash
+python3 gpu_perf_scripts/calibration/gfx90c/run_vmem_dependency_sweep.py \
+  --execute --output-root /tmp/gfx90c-vmem-window-pilot-<unique-id>
+```
+
+Only after the directional surface is coherent, collect nine batches per
+point with a different, nonexistent output root:
+
+```bash
+python3 gpu_perf_scripts/calibration/gfx90c/run_vmem_dependency_sweep.py \
+  --execute --production \
+  --output-root /tmp/gfx90c-vmem-window-production-<unique-id>
+```
+
+The driver stops on the first rejected collector invocation. It never kills a
+conflicting process. Every point retains the collector's `manifest.json`, raw
+stdout/stderr, telemetry, and summary in its own directory; the parent
+`sweep_manifest.json` records progress and the first failed point. Never merge
+a partial run with a later run, and never promote the one-batch pilot as a
+production measurement.
+
 #### Zero-trip baseline and repeat slope
 
 An explicit repeat count of zero is a matched launch control. It uses the same

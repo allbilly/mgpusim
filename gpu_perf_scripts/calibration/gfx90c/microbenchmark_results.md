@@ -1451,6 +1451,15 @@ fast at G16 and 3.2% slow at G28. It is not selected, because no guarded
 independent2/8 hardware curve exists and the one-batch independent4 points are
 not production measurements.
 
+The dry-run-first
+`gpu_perf_scripts/calibration/gfx90c/run_vmem_dependency_sweep.py` driver now
+encodes the remaining independent2/8 G16/G28 R0/R64 acquisition exactly. It
+uses the strict process, clock, thermal, sampling, warm-up, iteration, and
+cooldown controls described in the protocol; keeps matched zero/body points
+adjacent; creates one collector artifact directory per point; and stops on the
+first rejection. Hardware execution remains an explicit operator action, so
+adding the driver does not manufacture or promote new measurements.
+
 The I=6 application gate remains selective:
 
 | Application size | Default (us) | B1/Q1/I6 (us) |

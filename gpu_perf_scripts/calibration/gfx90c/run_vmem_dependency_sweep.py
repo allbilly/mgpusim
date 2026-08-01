@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Plan or execute the guarded gfx90c VMEM dependency-window sweep."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shlex
+import subprocess
+import sys
+import tempfile
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, Sequence
+
+
+HERE = Path(__file__).resolve().parent
+ACQUIRE = HERE / "acquire_pinned.py"
+FORBIDDEN_PROCESS_REGEX = (
+    r"Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4"
+)
+
+
+@dataclass(frozen=True)
+class SweepPoint:
+    mode: str
+    workgroups: int
+    repeats: int
+
+    @property
+    def name(self) -> str:
+        return f"{self.mode}-g{self.workgroups}-r{self.repeats}"
+
+
+def sweep_points() -> tuple[SweepPoint, ...]:
+    """Return matched zero/body points, with each pair kept adjacent."""
+    return tuple(
+        SweepPoint(mode, workgroups, repeats)
+        for mode in ("independent2", "independent8")
+        for workgroups in (16, 28)
+        for repeats in (0, 64)
+    )
+
+
+def build_acquire_command(
+    point: SweepPoint,
+    output_dir: Path,
+    *,
+    batches: int,
+    python: str = sys.executable,
+    acquire_script: Path = ACQUIRE,
+) -> list[str]:
+    """Build one collector invocation without shell interpolation."""
+    return [
+        python,
+        str(acquire_script),
+        "--batches",
+        str(batches),
+        "--warmup",
+        "20",
+        "--iters",
+        "10000",
+        "--cooldown-seconds",
+        "30",
+        "--max-start-temp-c",
+        "50",
+        "--max-temp-c",
+        "58",
+        "--sample-interval-seconds",
+        "0.005",
+        "--min-active-samples",
+        "10",
+        "--forbid-process-regex",
+        FORBIDDEN_PROCESS_REGEX,
+        "--output-dir",
+        str(output_dir),
+        "vmemloadshape",
+        "--",
+        "--vmem-width-dwords",
+        "4",
+        "--vmem-mode",
+        point.mode,
+        "--vmem-alias-lanes",
+        "8",
+        "--vmem-array-bytes",
+        "8192",
+        "--vmem-repeats",
+        str(point.repeats),
+        "--vmem-workgroups",
+        str(point.workgroups),
+    ]
+
+
+def default_output_root() -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    token = uuid.uuid4().hex[:8]
+    return Path(tempfile.gettempdir()) / f"gfx90c-vmem-window-{timestamp}-{token}"
+
+
+def write_manifest(path: Path, manifest: dict[str, object]) -> None:
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
+def run_sweep(
+    *,
+    output_root: Path,
+    batches: int,
+    execute: bool,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    python: str = sys.executable,
+    acquire_script: Path = ACQUIRE,
+) -> int:
+    points = sweep_points()
+    commands = [
+        build_acquire_command(
+            point,
+            output_root / point.name,
+            batches=batches,
+            python=python,
+            acquire_script=acquire_script,
+        )
+        for point in points
+    ]
+
+    if not execute:
+        print(f"dry run; output root would be {output_root}")
+        for command in commands:
+            print(shlex.join(command))
+        return 0
+
+    # The exact run root must be new. Each child is intentionally left absent:
+    # acquire_pinned.py creates it exclusively and owns every artifact within.
+    output_root.mkdir(parents=True, exist_ok=False)
+    manifest_path = output_root / "sweep_manifest.json"
+    manifest: dict[str, object] = {
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "running",
+        "batches_per_point": batches,
+        "forbidden_process_regex": FORBIDDEN_PROCESS_REGEX,
+        "points": [asdict(point) for point in points],
+        "completed": [],
+        "failed_point": None,
+    }
+    write_manifest(manifest_path, manifest)
+
+    completed = manifest["completed"]
+    assert isinstance(completed, list)
+    for point, command in zip(points, commands):
+        print(f"running {point.name}: {shlex.join(command)}", flush=True)
+        result = runner(command, check=False)
+        point_record = {
+            "name": point.name,
+            "returncode": result.returncode,
+            "artifact_directory": str(output_root / point.name),
+            "collector_manifest": str(
+                output_root / point.name / "manifest.json"
+            ),
+        }
+        completed.append(point_record)
+        if result.returncode != 0:
+            manifest["status"] = "failed"
+            manifest["failed_point"] = point.name
+            write_manifest(manifest_path, manifest)
+            print(
+                f"stopped after {point.name} failed with rc={result.returncode}; "
+                f"artifacts remain under {output_root}",
+                file=sys.stderr,
+            )
+            return result.returncode
+        write_manifest(manifest_path, manifest)
+
+    manifest["status"] = "complete"
+    write_manifest(manifest_path, manifest)
+    print(f"completed sweep; artifacts are under {output_root}")
+    return 0
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="run the collector; without this flag only commands are printed",
+    )
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help="collect nine batches per point instead of a one-batch pilot",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        help="new run root (must not already exist)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    output_root = (
+        default_output_root()
+        if args.output_root is None
+        else args.output_root.resolve()
+    )
+    try:
+        return run_sweep(
+            output_root=output_root,
+            batches=9 if args.production else 1,
+            execute=args.execute,
+        )
+    except FileExistsError:
+        print(f"output root already exists: {output_root}", file=sys.stderr)
+        return 2
+    except OSError as error:
+        print(f"sweep setup failed: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
