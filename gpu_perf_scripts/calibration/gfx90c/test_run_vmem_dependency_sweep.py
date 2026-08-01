@@ -120,6 +120,7 @@ class ExecutionTests(unittest.TestCase):
                     execute=True,
                     runner=fake_runner,
                     sleeper=lambda _: None,
+                    guard_waiter=lambda: None,
                 )
             self.assertEqual(rc, 7)
             self.assertEqual(len(calls), 2)
@@ -148,6 +149,7 @@ class ExecutionTests(unittest.TestCase):
                     execute=True,
                     runner=fake_runner,
                     sleeper=sleeps.append,
+                    guard_waiter=lambda: None,
                 )
 
         self.assertEqual(rc, 0)
@@ -155,6 +157,49 @@ class ExecutionTests(unittest.TestCase):
             sleeps,
             [sweep.INTER_POINT_COOLDOWN_SECONDS] * 7,
         )
+
+    def test_execute_requires_stable_guard_before_every_point(self):
+        waits = []
+
+        def fake_runner(command, *, check):
+            output_dir = Path(command[command.index("--output-dir") + 1])
+            output_dir.mkdir()
+            (output_dir / "manifest.json").write_text("{}\n")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = sweep.run_sweep(
+                    output_root=Path(temporary) / "new-run",
+                    batches=1,
+                    execute=True,
+                    runner=fake_runner,
+                    sleeper=lambda _: None,
+                    guard_waiter=lambda: waits.append("clear"),
+                )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(waits, ["clear"] * 8)
+
+    def test_stable_guard_resets_after_a_match(self):
+        class FakeGuard:
+            def __init__(self):
+                self.matches = iter((None, object(), None, None, None))
+
+            def check(self):
+                return next(self.matches)
+
+        times = iter((0.0, 0.0, 1.0, 2.0, 3.0, 4.0))
+        sleeps = []
+        sweep.wait_for_stable_guard_clear(
+            FakeGuard(),
+            stable_seconds=2.0,
+            timeout_seconds=10.0,
+            poll_seconds=1.0,
+            monotonic=lambda: next(times),
+            sleeper=sleeps.append,
+        )
+        self.assertEqual(sleeps, [1.0, 1.0, 1.0, 1.0])
 
     def test_execute_requires_a_new_run_root(self):
         with tempfile.TemporaryDirectory() as temporary:

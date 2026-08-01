@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Sequence
 
+import acquire_pinned as acquire
+
 
 HERE = Path(__file__).resolve().parent
 ACQUIRE = HERE / "acquire_pinned.py"
@@ -23,6 +25,9 @@ FORBIDDEN_PROCESS_REGEX = (
     r"Vgfx9_compute_unit_tb|verilator_bin|pytest|miaow_gcn4"
 )
 INTER_POINT_COOLDOWN_SECONDS = 30.0
+STABLE_GUARD_CLEAR_SECONDS = 30.0
+GUARD_READY_TIMEOUT_SECONDS = 900.0
+GUARD_POLL_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,39 @@ def write_manifest(path: Path, manifest: dict[str, object]) -> None:
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
+def wait_for_stable_guard_clear(
+    guard: acquire.ForbiddenProcessGuard,
+    *,
+    stable_seconds: float = STABLE_GUARD_CLEAR_SECONDS,
+    timeout_seconds: float = GUARD_READY_TIMEOUT_SECONDS,
+    poll_seconds: float = GUARD_POLL_SECONDS,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> None:
+    """Wait until the process guard has stayed clear for a full interval."""
+    deadline = monotonic() + timeout_seconds
+    clear_since: float | None = None
+    while True:
+        now = monotonic()
+        match = guard.check()
+        if match is None:
+            if clear_since is None:
+                clear_since = now
+            if now - clear_since >= stable_seconds:
+                return
+        else:
+            clear_since = None
+        if now >= deadline:
+            if match is None:
+                detail = "guard did not remain continuously clear"
+            else:
+                detail = acquire.format_forbidden_process_match(match)
+            raise TimeoutError(
+                f"timed out waiting for a stable process guard: {detail}"
+            )
+        sleeper(min(poll_seconds, max(0.0, deadline - now)))
+
+
 def run_sweep(
     *,
     output_root: Path,
@@ -116,6 +154,7 @@ def run_sweep(
     execute: bool,
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     sleeper: Callable[[float], None] = time.sleep,
+    guard_waiter: Callable[[], None] | None = None,
     python: str = sys.executable,
     acquire_script: Path = ACQUIRE,
 ) -> int:
@@ -140,12 +179,19 @@ def run_sweep(
     # The exact run root must be new. Each child is intentionally left absent:
     # acquire_pinned.py creates it exclusively and owns every artifact within.
     output_root.mkdir(parents=True, exist_ok=False)
+    if guard_waiter is None:
+        process_guard = acquire.ForbiddenProcessGuard(
+            [FORBIDDEN_PROCESS_REGEX]
+        )
+        guard_waiter = lambda: wait_for_stable_guard_clear(process_guard)
     manifest_path = output_root / "sweep_manifest.json"
     manifest: dict[str, object] = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "status": "running",
         "batches_per_point": batches,
         "inter_point_cooldown_seconds": INTER_POINT_COOLDOWN_SECONDS,
+        "stable_guard_clear_seconds": STABLE_GUARD_CLEAR_SECONDS,
+        "guard_ready_timeout_seconds": GUARD_READY_TIMEOUT_SECONDS,
         "forbidden_process_regex": FORBIDDEN_PROCESS_REGEX,
         "points": [asdict(point) for point in points],
         "completed": [],
@@ -156,6 +202,20 @@ def run_sweep(
     completed = manifest["completed"]
     assert isinstance(completed, list)
     for index, (point, command) in enumerate(zip(points, commands)):
+        print(
+            f"waiting for {STABLE_GUARD_CLEAR_SECONDS:.0f} seconds of stable "
+            f"guard clearance before {point.name}",
+            flush=True,
+        )
+        try:
+            guard_waiter()
+        except (OSError, RuntimeError, TimeoutError, ValueError) as error:
+            manifest["status"] = "failed"
+            manifest["failed_point"] = point.name
+            manifest["guard_wait_failure"] = str(error)
+            write_manifest(manifest_path, manifest)
+            print(f"guard readiness failed: {error}", file=sys.stderr)
+            return 1
         print(f"running {point.name}: {shlex.join(command)}", flush=True)
         result = runner(command, check=False)
         point_record = {
