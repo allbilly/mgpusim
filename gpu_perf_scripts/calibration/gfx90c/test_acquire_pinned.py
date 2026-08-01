@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import io
 import sys
+import threading
 import unittest
 from pathlib import Path
 
@@ -209,6 +210,112 @@ class ProcessGuardTests(unittest.TestCase):
                 process_guard=guard,
             )
         self.assertEqual(caught.exception.match, match)
+
+
+class TelemetryMonitorTests(unittest.TestCase):
+    class FakeClock:
+        def __init__(self):
+            self.now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+    class FakeEvent:
+        def __init__(self, clock):
+            self.clock = clock
+            self.waits = []
+            self.stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def set(self):
+            self.stopped = True
+
+        def wait(self, timeout):
+            self.waits.append(timeout)
+            self.clock.now += timeout
+            return self.stopped
+
+    def test_sampling_uses_requested_cadence(self):
+        clock = self.FakeClock()
+        stop_event = self.FakeEvent(clock)
+        samples = []
+        complete = threading.Event()
+
+        def collect(trace_sample):
+            samples.append(trace_sample)
+            if len(samples) == 3:
+                stop_event.set()
+                complete.set()
+
+        monitor = acquire.TelemetryMonitor(
+            sample_reader=sample,
+            sample_sink=collect,
+            should_continue=lambda: True,
+            interval_seconds=0.005,
+            maximum_temperature_millidegrees=58_000,
+            abort_callback=lambda: self.fail("healthy samples must not abort"),
+            monotonic=clock.monotonic,
+            stop_event=stop_event,
+        )
+        monitor.start()
+        self.assertTrue(complete.wait(timeout=1))
+        monitor.stop_and_join()
+
+        self.assertEqual(len(samples), 3)
+        self.assertEqual(stop_event.waits, [0.0, 0.005, 0.005])
+        self.assertFalse(monitor.is_alive)
+
+    def test_policy_violation_aborts_immediately(self):
+        aborted = threading.Event()
+        monitor = acquire.TelemetryMonitor(
+            sample_reader=lambda: sample(policy="auto"),
+            sample_sink=lambda _: None,
+            should_continue=lambda: True,
+            interval_seconds=60.0,
+            maximum_temperature_millidegrees=58_000,
+            abort_callback=aborted.set,
+        )
+        monitor.start()
+        self.assertTrue(aborted.wait(timeout=1))
+        monitor.stop_and_join()
+
+        self.assertEqual(monitor.sampling_error, "performance policy left high")
+        self.assertFalse(monitor.thermal_abort)
+
+    def test_thermal_limit_aborts_immediately(self):
+        aborted = threading.Event()
+        monitor = acquire.TelemetryMonitor(
+            sample_reader=lambda: sample(temperature=58_000),
+            sample_sink=lambda _: None,
+            should_continue=lambda: True,
+            interval_seconds=60.0,
+            maximum_temperature_millidegrees=58_000,
+            abort_callback=aborted.set,
+        )
+        monitor.start()
+        self.assertTrue(aborted.wait(timeout=1))
+        monitor.stop_and_join()
+
+        self.assertTrue(monitor.thermal_abort)
+        self.assertIsNone(monitor.sampling_error)
+
+    def test_stop_wakes_sampler_and_joins_thread(self):
+        sampled = threading.Event()
+        monitor = acquire.TelemetryMonitor(
+            sample_reader=sample,
+            sample_sink=lambda _: sampled.set(),
+            should_continue=lambda: True,
+            interval_seconds=60.0,
+            maximum_temperature_millidegrees=58_000,
+            abort_callback=lambda: None,
+        )
+        monitor.start()
+        self.assertTrue(sampled.wait(timeout=1))
+        monitor.stop_and_join()
+
+        self.assertFalse(monitor.is_alive)
 
 
 class CommandTests(unittest.TestCase):

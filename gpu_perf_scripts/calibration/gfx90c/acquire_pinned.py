@@ -16,6 +16,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -541,6 +542,100 @@ def read_trace_sample(
     )
 
 
+class TelemetryMonitor:
+    """Sample GPU state on cadence independently of slower control checks."""
+
+    def __init__(
+        self,
+        *,
+        sample_reader: Callable[[], TraceSample],
+        sample_sink: Callable[[TraceSample], None],
+        should_continue: Callable[[], bool],
+        interval_seconds: float,
+        maximum_temperature_millidegrees: int,
+        abort_callback: Callable[[], None],
+        monotonic: Callable[[], float] = time.monotonic,
+        stop_event: threading.Event | None = None,
+    ) -> None:
+        self._sample_reader = sample_reader
+        self._sample_sink = sample_sink
+        self._should_continue = should_continue
+        self._interval_seconds = interval_seconds
+        self._maximum_temperature_millidegrees = (
+            maximum_temperature_millidegrees
+        )
+        self._abort_callback = abort_callback
+        self._monotonic = monotonic
+        self._stop_event = stop_event or threading.Event()
+        self._thread: threading.Thread | None = None
+        self.sampling_error: str | None = None
+        self.thermal_abort = False
+
+    @property
+    def is_alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self) -> None:
+        if self._thread is not None:
+            raise RuntimeError("telemetry monitor can only be started once")
+        self._thread = threading.Thread(
+            target=self._run,
+            name="gfx90c-telemetry",
+            daemon=False,
+        )
+        self._thread.start()
+
+    def stop_and_join(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join()
+
+    def _abort(self) -> None:
+        try:
+            self._abort_callback()
+        except Exception as error:
+            # This runs on a worker thread, so retain every abort failure in
+            # the batch assessment instead of losing it to a thread traceback.
+            suffix = f"container abort failed: {error}"
+            self.sampling_error = (
+                suffix
+                if self.sampling_error is None
+                else f"{self.sampling_error}; {suffix}"
+            )
+
+    def _run(self) -> None:
+        next_sample_time = self._monotonic()
+        while not self._stop_event.is_set() and self._should_continue():
+            delay = max(0.0, next_sample_time - self._monotonic())
+            if self._stop_event.wait(delay):
+                return
+            if not self._should_continue():
+                return
+            try:
+                sample = self._sample_reader()
+                self._sample_sink(sample)
+            except Exception as error:
+                # Sampling and trace-writing failures must reject the batch.
+                self.sampling_error = f"{type(error).__name__}: {error}"
+                self._abort()
+                return
+            if sample.policy != REQUIRED_POLICY:
+                self.sampling_error = "performance policy left high"
+                self._abort()
+                return
+            if (
+                sample.temperature_millidegrees
+                >= self._maximum_temperature_millidegrees
+            ):
+                self.thermal_abort = True
+                self._abort()
+                return
+            next_sample_time += self._interval_seconds
+            now = self._monotonic()
+            if next_sample_time < now:
+                next_sample_time = now
+
+
 def stop_container(podman: str, container_name: str, process: subprocess.Popen) -> None:
     subprocess.run(
         [podman, "stop", "--time", "1", container_name],
@@ -910,62 +1005,83 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
             )
             trace_file.flush()
             process: subprocess.Popen | None = None
+            telemetry_monitor: TelemetryMonitor | None = None
             try:
                 process = subprocess.Popen(
                     command, stdout=stdout_file, stderr=stderr_file
                 )
                 if process is not None:
-                    while process.poll() is None:
-                        try:
-                            if match := process_guard.check():
-                                forbidden_process_match = match
+                    stop_lock = threading.Lock()
+                    container_stopped = False
+
+                    def stop_container_once() -> None:
+                        nonlocal container_stopped
+                        with stop_lock:
+                            if not container_stopped and process.poll() is None:
+                                container_stopped = True
                                 stop_container(
                                     args.podman, container_name, process
                                 )
-                                break
-                            sample = read_trace_sample(
-                                policy_file, clock_file, temperature_file
-                            )
-                            trace.append(sample)
-                            trace_writer.writerow(
-                                [
-                                    sample.epoch_ns,
-                                    f"{sample.monotonic_seconds:.9f}",
-                                    sample.policy,
-                                    (
-                                        ""
-                                        if sample.selected_clock_mhz is None
-                                        else sample.selected_clock_mhz
-                                    ),
-                                    sample.temperature_millidegrees,
-                                    sample.raw_sclk,
-                                ]
-                            )
-                            trace_file.flush()
-                            if sample.policy != REQUIRED_POLICY:
-                                sampling_error = "performance policy left high"
-                                stop_container(
-                                    args.podman, container_name, process
-                                )
-                                break
-                            if sample.temperature_millidegrees >= thermal_limit:
-                                thermal_abort = True
-                                stop_container(
-                                    args.podman, container_name, process
-                                )
-                                break
-                        except (OSError, ValueError) as error:
-                            sampling_error = str(error)
-                            stop_container(args.podman, container_name, process)
-                            break
-                        time.sleep(args.sample_interval_seconds)
+
+                    def record_sample(sample: TraceSample) -> None:
+                        trace.append(sample)
+                        trace_writer.writerow(
+                            [
+                                sample.epoch_ns,
+                                f"{sample.monotonic_seconds:.9f}",
+                                sample.policy,
+                                (
+                                    ""
+                                    if sample.selected_clock_mhz is None
+                                    else sample.selected_clock_mhz
+                                ),
+                                sample.temperature_millidegrees,
+                                sample.raw_sclk,
+                            ]
+                        )
+                        trace_file.flush()
+
+                    telemetry_monitor = TelemetryMonitor(
+                        sample_reader=lambda: read_trace_sample(
+                            policy_file, clock_file, temperature_file
+                        ),
+                        sample_sink=record_sample,
+                        should_continue=lambda: process.poll() is None,
+                        interval_seconds=args.sample_interval_seconds,
+                        maximum_temperature_millidegrees=thermal_limit,
+                        abort_callback=stop_container_once,
+                    )
+                    telemetry_monitor.start()
+                    try:
+                        if process_guard.patterns:
+                            while process.poll() is None:
+                                if match := process_guard.check():
+                                    forbidden_process_match = match
+                                    stop_container_once()
+                                    break
+                        else:
+                            # Avoid a CPU-intensive poll loop when the optional
+                            # guard is disabled; telemetry remains independent.
+                            process.wait()
+                    finally:
+                        telemetry_monitor.stop_and_join()
+                    sampling_error = telemetry_monitor.sampling_error
+                    thermal_abort = telemetry_monitor.thermal_abort
                     returncode = process.wait()
+                    # A final scan closes the interval after the last in-run
+                    # scan, including short runs that finish during that scan.
+                    if match := process_guard.check():
+                        forbidden_process_match = (
+                            forbidden_process_match or match
+                        )
             except OSError as error:
                 returncode = 127
                 sampling_error = f"container launch failed: {error}"
             except KeyboardInterrupt:
                 operator_interrupted = True
                 sampling_error = "operator interrupted the container run"
+                if telemetry_monitor is not None:
+                    telemetry_monitor.stop_and_join()
                 if process is not None and process.poll() is None:
                     stop_container(args.podman, container_name, process)
                 returncode = (
