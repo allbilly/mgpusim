@@ -1542,6 +1542,23 @@ its single batch is not promoted or combined. Its failure artifact is
 `/tmp/gfx90c-prod-vmem-zero-w4-s-a8-b8-g1-94c2e8cd`. Accepted pilot artifacts
 use `/tmp/gfx90c-pilot-vmem-{zero,r64}-w{1,2,4}-{s,i}-a8-b8-g*-94c2e8cd*`.
 
+### Corrected matrix N=128 production target
+
+After the competing RTL launcher was stopped, the exact-HSACO matrix N=128
+acquisition completed all nine fresh-process batches. The per-batch values are
+75.765, 76.166, 75.577, 75.808, 75.727, 77.821, 73.587, 75.801, and
+75.605 us, giving a 75.765 us median, 1.334% population CV, 0.160 us MAD,
+and a 75.577--76.166 us bootstrap 95% median interval. All batches passed
+verification and the clock, thermal, process, and telemetry gates. Their
+marker-bounded windows were 80.976--85.636 ms with 15--17 active samples.
+
+The checked-in enabled simulator value is 42.229 us, 44.3% faster than this
+target (hardware/simulator ratio 1.794). B=1/Q=1/I=6 reaches 51.430 us but is
+still 32.1% faster (ratio 1.473), so fixed burst arbitration cannot close the
+application gap. The immutable measurement and provenance are recorded in
+`hw_production_targets.json`; the full collector artifact is
+`/tmp/gfx90c-prod-matrixmult-n128-5153c9cc-20260801`.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
@@ -1552,11 +1569,8 @@ the transpose width curve demonstrates why that is not sufficient. Candidate
 mechanisms must also survive dependent-latency and independent-throughput
 controls plus geometric sweeps around regime boundaries.
 
-The corrected matrix kernel still needs a guarded production pinned N=128
-measurement. Two fully verified pinned diagnostic batches near 74--76 us
-establish the direction, but they do not meet the nine-batch production
-protocol. Until a contamination-free window is available, its diagnostic
-curves can validate scaling shape but not a final absolute target.
-The ReLU/AES narrow gate margins, a pinned-clock repetition of the full-line
-store-stride probe, and a pinned corrected matrix-multiplication target are the
-highest-priority follow-up measurements.
+The corrected matrix kernel now has a guarded production pinned N=128 target.
+Its 75.765 us median turns the formerly directional gap into the principal
+quantitative blocker. The ReLU/AES narrow gate margins, a pinned-clock
+repetition of the full-line store-stride probe, and protocol-equivalent
+simulator warm-state handling remain high-priority follow-ups.
