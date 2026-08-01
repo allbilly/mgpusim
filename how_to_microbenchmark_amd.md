@@ -429,7 +429,7 @@ production measurement. The driver also waits 30 seconds after each successful
 point; this is required because each point uses a fresh collector process, so
 the collector's own per-batch cooldown cannot span point boundaries. After the
 cooldown, it additionally requires the forbidden-process guard to remain clear
-for 30 continuous seconds before every point. A process that restarts during
+for 120 continuous seconds before every point. A process that restarts during
 that interval resets the timer; the collector independently rechecks the guard
 throughout the actual batch.
 
