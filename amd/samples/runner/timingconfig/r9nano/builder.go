@@ -98,6 +98,7 @@ type Builder struct {
 	ldsBankConflictPenalty                int
 	barrierLatency                        int
 	maxCoalescingPenalty                  int
+	maxPrivateSegmentCoalescingPenalty    int
 	splitLineLoadPenalty                  int
 	splitLineLoadMaxDwords                int
 	dependentLoadIssuePenalty             int
@@ -440,6 +441,13 @@ func (b Builder) WithBarrierLatency(latency int) Builder {
 // penalty in cycles.
 func (b Builder) WithMaxCoalescingPenalty(penalty int) Builder {
 	b.maxCoalescingPenalty = penalty
+	return b
+}
+
+// WithMaxPrivateSegmentCoalescingPenalty sets the low-utilization cap for
+// private-segment MUBUF transactions. Zero retains the ordinary cap.
+func (b Builder) WithMaxPrivateSegmentCoalescingPenalty(penalty int) Builder {
+	b.maxPrivateSegmentCoalescingPenalty = penalty
 	return b
 }
 
@@ -980,6 +988,11 @@ func (b *Builder) buildSAs() {
 	if b.maxCoalescingPenalty > 0 {
 		saBuilder = saBuilder.WithMaxCoalescingPenalty(
 			b.maxCoalescingPenalty,
+		)
+	}
+	if b.maxPrivateSegmentCoalescingPenalty > 0 {
+		saBuilder = saBuilder.WithMaxPrivateSegmentCoalescingPenalty(
+			b.maxPrivateSegmentCoalescingPenalty,
 		)
 	}
 	if b.splitLineLoadPenalty > 0 {

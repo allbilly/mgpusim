@@ -2,6 +2,20 @@ package shaderarray
 
 import "testing"
 
+func TestPrivateSegmentCoalescingPenaltyPropagation(t *testing.T) {
+	builder := MakeBuilder().
+		WithMaxCoalescingPenalty(13).
+		WithMaxPrivateSegmentCoalescingPenalty(29)
+	spec := builder.cuSpec()
+
+	if spec.MaxPrivateSegmentCoalescingPenalty != 29 {
+		t.Fatalf(
+			"expected private-segment coalescing penalty 29, got %d",
+			spec.MaxPrivateSegmentCoalescingPenalty,
+		)
+	}
+}
+
 func TestVMemReturnFanoutBandwidthPropagation(t *testing.T) {
 	builder := MakeBuilder().WithVMemReturnFanoutLaneDwordsPerCycle(7)
 

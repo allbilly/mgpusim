@@ -28,6 +28,7 @@ type VectorMemoryUnit struct {
 	maxInstructionsInFlight uint64
 
 	maxCoalescingPenalty                  int
+	maxPrivateSegmentCoalescingPenalty    int
 	splitLineLoadPenalty                  int
 	splitLineLoadMaxDwords                int
 	maxWriteCoalescingPenalty             int
@@ -183,9 +184,13 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 	txn VectorMemAccessInfo,
 ) int {
 	penaltyCap := u.maxCoalescingPenalty
+	if isPrivateSegmentMUBUF(txn) &&
+		u.maxPrivateSegmentCoalescingPenalty > 0 {
+		penaltyCap = u.maxPrivateSegmentCoalescingPenalty
+	}
 	// Private-segment MUBUF traffic is lane-swizzled by the scratch path and
 	// does not incur the FLAT path's partial-line write-combine/RMW cost.
-	// It still pays the ordinary cache-line utilization cost.
+	// It pays its private cap when configured, otherwise the ordinary cap.
 	if txn.Write != nil &&
 		u.maxWriteCoalescingPenalty > 0 &&
 		(txn.Inst == nil || txn.Inst.FormatType != insts.MUBUF) {
@@ -208,6 +213,12 @@ func (u *VectorMemoryUnit) computeCoalescingPenalty(
 	}
 
 	return penalty
+}
+
+func isPrivateSegmentMUBUF(txn VectorMemAccessInfo) bool {
+	return txn.Inst != nil && txn.Inst.FormatType == insts.MUBUF &&
+		txn.Wavefront != nil && txn.Wavefront.CodeObject != nil &&
+		txn.Wavefront.CodeObject.PrivateSegmentByteSize > 0
 }
 
 func (u *VectorMemoryUnit) writeStridePenalty(

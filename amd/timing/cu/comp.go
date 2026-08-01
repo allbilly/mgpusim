@@ -107,6 +107,10 @@ type Spec struct {
 	// The optional far tier replaces, rather than adds to, this cost when the
 	// aligned-line distance reaches MaxWideWriteStrideFarMinDistanceLines.
 	MaxCoalescingPenalty int `json:"max_coalescing_penalty"`
+	// MaxPrivateSegmentCoalescingPenalty overrides MaxCoalescingPenalty for
+	// MUBUF traffic from kernels with a private segment. Zero preserves the
+	// ordinary coalescing cap.
+	MaxPrivateSegmentCoalescingPenalty int `json:"max_private_segment_coalescing_penalty"`
 	// SplitLineLoadPenalty is a calibrated alignment overhead for contiguous,
 	// unaligned vector loads spanning multiple cache lines. It is not an
 	// extra-transaction counter.

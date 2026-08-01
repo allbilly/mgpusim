@@ -77,6 +77,7 @@ type Builder struct {
 	l1vBankLatency                        int
 	memPipelineBufferSize                 int
 	maxCoalescingPenalty                  int
+	maxPrivateSegmentCoalescingPenalty    int
 	splitLineLoadPenalty                  int
 	splitLineLoadMaxDwords                int
 	dependentLoadIssuePenalty             int
@@ -269,6 +270,13 @@ func (b Builder) WithMemPipelineBufferSize(size int) Builder {
 // transaction penalty in cycles for each CU.
 func (b Builder) WithMaxCoalescingPenalty(n int) Builder {
 	b.maxCoalescingPenalty = n
+	return b
+}
+
+// WithMaxPrivateSegmentCoalescingPenalty sets the low-utilization cap for
+// private-segment MUBUF transactions. Zero retains the ordinary cap.
+func (b Builder) WithMaxPrivateSegmentCoalescingPenalty(n int) Builder {
+	b.maxPrivateSegmentCoalescingPenalty = n
 	return b
 }
 
@@ -629,6 +637,10 @@ func (b *Builder) cuSpec() cu.Spec {
 
 	if b.maxCoalescingPenalty > 0 {
 		spec.MaxCoalescingPenalty = b.maxCoalescingPenalty
+	}
+	if b.maxPrivateSegmentCoalescingPenalty > 0 {
+		spec.MaxPrivateSegmentCoalescingPenalty =
+			b.maxPrivateSegmentCoalescingPenalty
 	}
 	if b.splitLineLoadPenalty > 0 {
 		spec.SplitLineLoadPenalty = b.splitLineLoadPenalty

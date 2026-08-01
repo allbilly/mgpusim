@@ -106,6 +106,34 @@ var _ = Describe("Vector Memory Unit", func() {
 		Expect(vecMemUnit.computeCoalescingPenalty(writeTxn)).To(Equal(12))
 	})
 
+	It("uses the private-segment cap only for private MUBUF traffic", func() {
+		vecMemUnit.maxCoalescingPenalty = 16
+		vecMemUnit.maxPrivateSegmentCoalescingPenalty = 32
+
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.MUBUF
+		rawWave := kernels.NewWavefront()
+		rawWave.CodeObject = &insts.KernelCodeObject{
+			KernelCodeObjectMeta: &insts.KernelCodeObjectMeta{
+				PrivateSegmentByteSize: 20,
+			},
+		}
+		privateWave := wavefront.NewWavefront(rawWave)
+		txn := VectorMemAccessInfo{
+			Read:      &memprotocol.ReadReq{AccessByteSize: 64},
+			Inst:      inst,
+			Wavefront: privateWave,
+			laneInfo: []vectorMemAccessLaneInfo{
+				{addrOffsetInCacheLine: 0},
+				{addrOffsetInCacheLine: 4},
+			},
+		}
+
+		Expect(vecMemUnit.computeCoalescingPenalty(txn)).To(Equal(28))
+		txn.Wavefront.CodeObject.PrivateSegmentByteSize = 0
+		Expect(vecMemUnit.computeCoalescingPenalty(txn)).To(Equal(14))
+	})
+
 	It("does not penalize same-word broadcasts across lanes", func() {
 		vecMemUnit.maxCoalescingPenalty = 16
 		readTxn := VectorMemAccessInfo{

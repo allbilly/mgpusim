@@ -25,6 +25,7 @@ var defaultSpec = Spec{
 	VecMemTransPipelineWidth:              1,
 	MemPipelineBufferSize:                 8,
 	MaxCoalescingPenalty:                  0,
+	MaxPrivateSegmentCoalescingPenalty:    0,
 	SplitLineLoadPenalty:                  0,
 	SplitLineLoadMaxDwords:                0,
 	DependentLoadIssuePenalty:             0,
@@ -452,6 +453,8 @@ func (b *Builder) equipVectorMemoryUnit(cu *ComputeUnit, name string) {
 	}
 	vectorMemoryUnit := NewVectorMemoryUnit(cu, coalescer)
 	vectorMemoryUnit.maxCoalescingPenalty = b.spec.MaxCoalescingPenalty
+	vectorMemoryUnit.maxPrivateSegmentCoalescingPenalty =
+		b.spec.MaxPrivateSegmentCoalescingPenalty
 	vectorMemoryUnit.splitLineLoadPenalty = b.spec.SplitLineLoadPenalty
 	vectorMemoryUnit.splitLineLoadMaxDwords = b.spec.SplitLineLoadMaxDwords
 	vectorMemoryUnit.maxWriteCoalescingPenalty =

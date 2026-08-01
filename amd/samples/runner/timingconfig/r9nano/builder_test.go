@@ -2,6 +2,17 @@ package r9nano
 
 import "testing"
 
+func TestPrivateSegmentCoalescingPenaltyConfiguration(t *testing.T) {
+	builder := MakeBuilder().WithMaxPrivateSegmentCoalescingPenalty(29)
+
+	if builder.maxPrivateSegmentCoalescingPenalty != 29 {
+		t.Fatalf(
+			"expected private-segment coalescing penalty 29, got %d",
+			builder.maxPrivateSegmentCoalescingPenalty,
+		)
+	}
+}
+
 func TestVMemLoadReturnBandwidthConfiguration(t *testing.T) {
 	builder := MakeBuilder().WithVMemLoadReturnLaneDwordsPerCycle(9)
 
