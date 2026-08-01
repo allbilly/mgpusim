@@ -51,11 +51,13 @@ type ComputeUnit struct {
 	vmemReturnFanoutLaneDwordsPerCycle   int
 	vmemLoadReturnLaneDwordsPerCycle     int
 	vmemWideLoadReturnLaneDwordsPerCycle int
+	vmemCUWideReturnUnitsPerCycle        int
 
 	// Return assemblies accumulate the selected lane-dword accounting mode
 	// across all cache-line response siblings of one dynamic vector load. The
-	// wide-only model services a FIFO per wave; the older models service each
-	// pending instruction independently.
+	// wave-wide model services a FIFO per wave, while the CU-wide model uses
+	// one work-conserving FIFO. The two older models service each pending
+	// instruction independently.
 	vmemReturnAssemblies     map[uint64]int
 	vmemWideReturnAssemblies map[uint64]*vmemWideReturnAssembly
 	pendingVMemRetirements   []pendingVMemLoadRetirement
@@ -86,8 +88,10 @@ type ComputeUnit struct {
 }
 
 type pendingVMemLoadRetirement struct {
-	wf              *wavefront.Wavefront
-	inst            *wavefront.Inst
+	wf   *wavefront.Wavefront
+	inst *wavefront.Inst
+	// remainingCycles stores cycles for the three older models and work units
+	// for the CU-wide work-conserving model.
 	remainingCycles int
 }
 
@@ -793,7 +797,7 @@ func (cu *ComputeUnit) handleVectorDataLoadReturn(
 			cu.vmemReturnAssemblies[inst.ID] += laneDwords
 		}
 	}
-	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+	if cu.wideVMemReturnAssemblyEnabled() {
 		cu.accumulateWideVMemReturn(inst.ID, info.laneInfo)
 	}
 
@@ -869,7 +873,7 @@ func countTotalVMemLaneDwords(lanes []vectorMemAccessLaneInfo) int {
 func (cu *ComputeUnit) countVMemReturnLaneDwords(
 	lanes []vectorMemAccessLaneInfo,
 ) int {
-	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+	if cu.wideVMemReturnAssemblyEnabled() {
 		return 0
 	}
 	if cu.vmemLoadReturnLaneDwordsPerCycle > 0 {
@@ -879,6 +883,9 @@ func (cu *ComputeUnit) countVMemReturnLaneDwords(
 }
 
 func (cu *ComputeUnit) vmemReturnBandwidth() int {
+	if cu.vmemCUWideReturnUnitsPerCycle > 0 {
+		return cu.vmemCUWideReturnUnitsPerCycle
+	}
 	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
 		return cu.vmemWideLoadReturnLaneDwordsPerCycle
 	}
@@ -886,6 +893,26 @@ func (cu *ComputeUnit) vmemReturnBandwidth() int {
 		return cu.vmemLoadReturnLaneDwordsPerCycle
 	}
 	return cu.vmemReturnFanoutLaneDwordsPerCycle
+}
+
+func (cu *ComputeUnit) wideVMemReturnAssemblyEnabled() bool {
+	return cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 ||
+		cu.vmemCUWideReturnUnitsPerCycle > 0
+}
+
+func countCUWideReturnWork(assembly *vmemWideReturnAssembly) int {
+	if assembly == nil || len(assembly.activeLanes) == 0 {
+		return 0
+	}
+
+	activeLanes := len(assembly.activeLanes)
+	width := assembly.laneDwords / activeLanes
+	if width <= 1 {
+		return 0
+	}
+
+	numerator := 2 * activeLanes * (width - 1)
+	return (numerator + width - 1) / width
 }
 
 func (cu *ComputeUnit) accumulateWideVMemReturn(
@@ -920,10 +947,12 @@ func (cu *ComputeUnit) finishVectorMemLoadReturn(
 	}
 
 	laneDwords := 0
-	if cu.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+	if cu.wideVMemReturnAssemblyEnabled() {
 		assembly := cu.vmemWideReturnAssemblies[inst.ID]
 		delete(cu.vmemWideReturnAssemblies, inst.ID)
-		if assembly != nil {
+		if cu.vmemCUWideReturnUnitsPerCycle > 0 {
+			laneDwords = countCUWideReturnWork(assembly)
+		} else if assembly != nil {
 			laneDwords = assembly.laneDwords - len(assembly.activeLanes)
 		}
 	} else {
@@ -935,16 +964,19 @@ func (cu *ComputeUnit) finishVectorMemLoadReturn(
 		return
 	}
 
-	cycles := laneDwords / bandwidth
-	if laneDwords%bandwidth != 0 {
-		cycles++
+	remaining := laneDwords
+	if cu.vmemCUWideReturnUnitsPerCycle == 0 {
+		remaining = laneDwords / bandwidth
+		if laneDwords%bandwidth != 0 {
+			remaining++
+		}
 	}
 	cu.pendingVMemRetirements = append(
 		cu.pendingVMemRetirements,
 		pendingVMemLoadRetirement{
 			wf:              wf,
 			inst:            inst,
-			remainingCycles: cycles,
+			remainingCycles: remaining,
 		},
 	)
 }
@@ -952,6 +984,9 @@ func (cu *ComputeUnit) finishVectorMemLoadReturn(
 func (cu *ComputeUnit) advanceVMemLoadRetirements() bool {
 	if len(cu.pendingVMemRetirements) == 0 {
 		return false
+	}
+	if cu.vmemCUWideReturnUnitsPerCycle > 0 {
+		return cu.advanceCUWideVMemLoadRetirements()
 	}
 
 	remaining := cu.pendingVMemRetirements[:0]
@@ -980,6 +1015,29 @@ func (cu *ComputeUnit) advanceVMemLoadRetirements() bool {
 	}
 	clear(cu.pendingVMemRetirements[len(remaining):])
 	cu.pendingVMemRetirements = remaining
+
+	return true
+}
+
+func (cu *ComputeUnit) advanceCUWideVMemLoadRetirements() bool {
+	budget := cu.vmemCUWideReturnUnitsPerCycle
+	for budget > 0 && len(cu.pendingVMemRetirements) > 0 {
+		head := &cu.pendingVMemRetirements[0]
+		consumed := head.remainingCycles
+		if consumed > budget {
+			consumed = budget
+		}
+		head.remainingCycles -= consumed
+		budget -= consumed
+		if head.remainingCycles > 0 {
+			break
+		}
+
+		retirement := *head
+		cu.pendingVMemRetirements[0] = pendingVMemLoadRetirement{}
+		cu.pendingVMemRetirements = cu.pendingVMemRetirements[1:]
+		cu.retireVectorMemLoad(retirement.wf, retirement.inst)
+	}
 
 	return true
 }

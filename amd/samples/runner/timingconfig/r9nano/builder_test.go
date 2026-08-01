@@ -23,3 +23,14 @@ func TestVMemWideLoadReturnBandwidthConfiguration(t *testing.T) {
 		)
 	}
 }
+
+func TestVMemCUWideReturnBudgetConfiguration(t *testing.T) {
+	builder := MakeBuilder().WithVMemCUWideReturnUnitsPerCycle(13)
+
+	if builder.vmemCUWideReturnUnitsPerCycle != 13 {
+		t.Fatalf(
+			"expected CU-wide vector-memory return budget 13, got %d",
+			builder.vmemCUWideReturnUnitsPerCycle,
+		)
+	}
+}

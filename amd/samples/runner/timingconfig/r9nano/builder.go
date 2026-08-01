@@ -112,6 +112,7 @@ type Builder struct {
 	vmemReturnFanoutLaneDwordsPerCycle    int
 	vmemLoadReturnLaneDwordsPerCycle      int
 	vmemWideLoadReturnLaneDwordsPerCycle  int
+	vmemCUWideReturnUnitsPerCycle         int
 	vecMemTransPipelineWidth              int
 	numSinglePrecisionUnits               int
 	dmaThroughL2                          bool
@@ -458,6 +459,13 @@ func (b Builder) WithVMemLoadReturnLaneDwordsPerCycle(n int) Builder {
 // retiring lane-dwords beyond one dword per active lane. Zero disables it.
 func (b Builder) WithVMemWideLoadReturnLaneDwordsPerCycle(n int) Builder {
 	b.vmemWideLoadReturnLaneDwordsPerCycle = n
+	return b
+}
+
+// WithVMemCUWideReturnUnitsPerCycle sets the work budget of the CU-wide
+// work-conserving wide-load return FIFO. Zero disables it.
+func (b Builder) WithVMemCUWideReturnUnitsPerCycle(n int) Builder {
+	b.vmemCUWideReturnUnitsPerCycle = n
 	return b
 }
 
@@ -980,6 +988,9 @@ func (b *Builder) buildSAs() {
 	)
 	saBuilder = saBuilder.WithVMemWideLoadReturnLaneDwordsPerCycle(
 		b.vmemWideLoadReturnLaneDwordsPerCycle,
+	)
+	saBuilder = saBuilder.WithVMemCUWideReturnUnitsPerCycle(
+		b.vmemCUWideReturnUnitsPerCycle,
 	)
 	if b.vecMemTransPipelineWidth > 0 {
 		saBuilder = saBuilder.WithVecMemTransPipelineWidth(

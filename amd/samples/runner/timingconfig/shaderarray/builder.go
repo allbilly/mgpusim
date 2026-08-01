@@ -91,6 +91,7 @@ type Builder struct {
 	vmemReturnFanoutLaneDwordsPerCycle    int
 	vmemLoadReturnLaneDwordsPerCycle      int
 	vmemWideLoadReturnLaneDwordsPerCycle  int
+	vmemCUWideReturnUnitsPerCycle         int
 	registerScoreboard                    bool
 	scoreboardVALULatency                 int
 	valuTiming                            cu.VALUTiming
@@ -287,6 +288,13 @@ func (b Builder) WithVMemLoadReturnLaneDwordsPerCycle(n int) Builder {
 // retiring lane-dwords beyond one dword per active lane. Zero disables it.
 func (b Builder) WithVMemWideLoadReturnLaneDwordsPerCycle(n int) Builder {
 	b.vmemWideLoadReturnLaneDwordsPerCycle = n
+	return b
+}
+
+// WithVMemCUWideReturnUnitsPerCycle sets the work budget of the CU-wide
+// work-conserving wide-load return FIFO. Zero disables it.
+func (b Builder) WithVMemCUWideReturnUnitsPerCycle(n int) Builder {
+	b.vmemCUWideReturnUnitsPerCycle = n
 	return b
 }
 
@@ -619,6 +627,8 @@ func (b *Builder) cuSpec() cu.Spec {
 		b.vmemLoadReturnLaneDwordsPerCycle
 	spec.VMemWideLoadReturnLaneDwordsPerCycle =
 		b.vmemWideLoadReturnLaneDwordsPerCycle
+	spec.VMemCUWideReturnUnitsPerCycle =
+		b.vmemCUWideReturnUnitsPerCycle
 
 	spec.RegisterScoreboard = b.registerScoreboard
 

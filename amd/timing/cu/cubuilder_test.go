@@ -38,6 +38,7 @@ var _ = Describe("Builder", func() {
 
 		Expect(comp.Resources().Decoder).NotTo(BeNil())
 		Expect(comp.Resources().ALU).NotTo(BeNil())
+		Expect(comp.Spec().VMemCUWideReturnUnitsPerCycle).To(Equal(0))
 
 		// All five ports must be declared so external code can assign them.
 		for _, portName := range []string{
@@ -224,6 +225,33 @@ var _ = Describe("Builder", func() {
 		))
 	})
 
+	It("propagates the CU-wide vector-memory return budget", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		comp := MakeBuilder().
+			WithRegistrar(reg).
+			WithVMemCUWideReturnUnitsPerCycle(13).
+			Build("GPU.CU")
+
+		Expect(comp.Spec().VMemCUWideReturnUnitsPerCycle).To(Equal(13))
+		Expect(MiddlewareOf(comp).vmemCUWideReturnUnitsPerCycle).To(Equal(13))
+	})
+
+	It("rejects a negative CU-wide vector-memory return budget", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		Expect(func() {
+			MakeBuilder().
+				WithRegistrar(reg).
+				WithVMemCUWideReturnUnitsPerCycle(-1).
+				Build("GPU.CU")
+		}).To(PanicWith(
+			"cu: VMemCUWideReturnUnitsPerCycle cannot be negative",
+		))
+	})
+
 	It("rejects simultaneous vector-memory return bandwidth models", func() {
 		engine := timing.NewSerialEngine()
 		reg := modeling.NewStandaloneRegistrar(engine)
@@ -255,6 +283,32 @@ var _ = Describe("Builder", func() {
 				configure(MakeBuilder()).
 					WithRegistrar(reg).
 					WithVMemWideLoadReturnLaneDwordsPerCycle(11).
+					Build("GPU.CU")
+			}).To(PanicWith(
+				"cu: vector-memory return bandwidth models are mutually exclusive",
+			))
+		}
+	})
+
+	It("rejects the CU-wide model with every existing return model", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		for _, configure := range []func(Builder) Builder{
+			func(b Builder) Builder {
+				return b.WithVMemReturnFanoutLaneDwordsPerCycle(7)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemLoadReturnLaneDwordsPerCycle(9)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemWideLoadReturnLaneDwordsPerCycle(11)
+			},
+		} {
+			Expect(func() {
+				configure(MakeBuilder()).
+					WithRegistrar(reg).
+					WithVMemCUWideReturnUnitsPerCycle(13).
 					Build("GPU.CU")
 			}).To(PanicWith(
 				"cu: vector-memory return bandwidth models are mutually exclusive",

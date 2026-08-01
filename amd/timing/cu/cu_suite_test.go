@@ -156,6 +156,8 @@ func newTestComputeUnitWithSpec(
 		spec.VMemLoadReturnLaneDwordsPerCycle
 	cuMW.vmemWideLoadReturnLaneDwordsPerCycle =
 		spec.VMemWideLoadReturnLaneDwordsPerCycle
+	cuMW.vmemCUWideReturnUnitsPerCycle =
+		spec.VMemCUWideReturnUnitsPerCycle
 
 	return cuMW
 }

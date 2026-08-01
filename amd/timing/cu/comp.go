@@ -135,6 +135,11 @@ type Spec struct {
 	// mutually exclusive with the other vector-memory return models.
 	VMemWideLoadReturnLaneDwordsPerCycle int `json:"vmem_wide_load_return_lane_dwords_per_cycle"`
 
+	// VMemCUWideReturnUnitsPerCycle models a single work-conserving wide-load
+	// return path shared by every wave and SIMD in a CU. Zero disables it. It
+	// is mutually exclusive with all other vector-memory return models.
+	VMemCUWideReturnUnitsPerCycle int `json:"vmem_cu_wide_return_units_per_cycle"`
+
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`

@@ -39,6 +39,7 @@ var defaultSpec = Spec{
 	VMemReturnFanoutLaneDwordsPerCycle:    0,
 	VMemLoadReturnLaneDwordsPerCycle:      0,
 	VMemWideLoadReturnLaneDwordsPerCycle:  0,
+	VMemCUWideReturnUnitsPerCycle:         0,
 	RegisterScoreboard:                    false,
 	LDSPipelineLatency:                    14,
 	LDSIssueInterval:                      0,
@@ -114,6 +115,13 @@ func (b Builder) WithVMemWideLoadReturnLaneDwordsPerCycle(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnUnitsPerCycle sets the work budget of the CU-wide
+// work-conserving wide-load return FIFO. Zero disables it.
+func (b Builder) WithVMemCUWideReturnUnitsPerCycle(n int) Builder {
+	b.spec.VMemCUWideReturnUnitsPerCycle = n
+	return b
+}
+
 // WithResources sets the shared references of the compute unit. Decoder and
 // ALU default to insts.NewDisassembler() and gcn3.NewALU(nil) when left nil.
 func (b Builder) WithResources(resources Resources) Builder {
@@ -154,6 +162,8 @@ func (b Builder) Build(name string) *Comp {
 		b.spec.VMemLoadReturnLaneDwordsPerCycle
 	cuMW.vmemWideLoadReturnLaneDwordsPerCycle =
 		b.spec.VMemWideLoadReturnLaneDwordsPerCycle
+	cuMW.vmemCUWideReturnUnitsPerCycle =
+		b.spec.VMemCUWideReturnUnitsPerCycle
 
 	wfDispatcher := NewWfDispatcher(cuMW)
 	wfDispatcher.scoreboardEnabled = b.spec.RegisterScoreboard
@@ -236,11 +246,15 @@ func (b *Builder) mustHaveValidSpec() {
 	if b.spec.VMemWideLoadReturnLaneDwordsPerCycle < 0 {
 		panic("cu: VMemWideLoadReturnLaneDwordsPerCycle cannot be negative")
 	}
+	if b.spec.VMemCUWideReturnUnitsPerCycle < 0 {
+		panic("cu: VMemCUWideReturnUnitsPerCycle cannot be negative")
+	}
 	configuredReturnModels := 0
 	for _, bandwidth := range []int{
 		b.spec.VMemReturnFanoutLaneDwordsPerCycle,
 		b.spec.VMemLoadReturnLaneDwordsPerCycle,
 		b.spec.VMemWideLoadReturnLaneDwordsPerCycle,
+		b.spec.VMemCUWideReturnUnitsPerCycle,
 	} {
 		if bandwidth > 0 {
 			configuredReturnModels++
