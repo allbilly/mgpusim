@@ -29,6 +29,11 @@ ROOT = HERE.parents[2]
 DEFAULT_IMAGE = "docker.io/rocm/dev-ubuntu-24.04:7.1.1"
 REQUIRED_POLICY = "high"
 REQUIRED_CLOCK_MHZ = 1600
+TIMED_WINDOW_MARKER = "MGPUSIM_TIMED_WINDOW_V1"
+TIMED_WINDOW_PATTERN = re.compile(
+    rf"^{TIMED_WINDOW_MARKER} "
+    r"start_monotonic_ns=(\d+) end_monotonic_ns=(\d+)$"
+)
 
 BENCHMARK_HSACO = {
     "vectoradd": "amd/benchmarks/amdappsdk/vectoradd/kernels_gfx90c.hsaco",
@@ -96,6 +101,17 @@ class BatchAssessment:
     active_samples: int
     active_interval_samples: int
     maximum_temperature_millidegrees: int | None
+    timed_window_marker: str | None
+    timed_window_start_monotonic_ns: int | None
+    timed_window_end_monotonic_ns: int | None
+    timed_window_samples: int
+
+
+@dataclass(frozen=True)
+class TimedWindow:
+    marker: str
+    start_monotonic_ns: int
+    end_monotonic_ns: int
 
 
 @dataclass(frozen=True)
@@ -240,6 +256,36 @@ def parse_metric(output: str, metric_name: str) -> float:
     return values[0]
 
 
+def parse_timed_window(output: str) -> TimedWindow:
+    marker_lines = [
+        line.strip()
+        for line in output.splitlines()
+        if TIMED_WINDOW_MARKER in line
+    ]
+    if not marker_lines:
+        raise ValueError("timed-window marker was not found")
+    if len(marker_lines) != 1:
+        raise ValueError(
+            "expected exactly one timed-window marker, found "
+            f"{len(marker_lines)}"
+        )
+    marker = marker_lines[0]
+    match = TIMED_WINDOW_PATTERN.fullmatch(marker)
+    if match is None:
+        raise ValueError(f"malformed timed-window marker: {marker!r}")
+    start_ns, end_ns = (int(value) for value in match.groups())
+    if end_ns <= start_ns:
+        raise ValueError(
+            "timed-window marker is not an ordered positive interval: "
+            f"start={start_ns}, end={end_ns}"
+        )
+    return TimedWindow(
+        marker=marker,
+        start_monotonic_ns=start_ns,
+        end_monotonic_ns=end_ns,
+    )
+
+
 def percentile(sorted_values: Sequence[float], probability: float) -> float:
     if not sorted_values:
         raise ValueError("cannot take a percentile of an empty sequence")
@@ -349,33 +395,66 @@ def assess_batch(
             f"{maximum_temperature_millidegrees / 1000:.1f} C)"
         )
 
+    combined_output = stdout + "\n" + stderr
+    timed_window: TimedWindow | None = None
+    try:
+        timed_window = parse_timed_window(combined_output)
+    except ValueError as error:
+        reasons.append(str(error))
+
+    timed_trace: Sequence[TraceSample] = ()
+    if timed_window is not None and trace:
+        monotonic_ns = [
+            round(sample.monotonic_seconds * 1_000_000_000)
+            for sample in trace
+        ]
+        if any(
+            current < previous
+            for previous, current in zip(monotonic_ns, monotonic_ns[1:])
+        ):
+            reasons.append("telemetry trace monotonic timestamps are not ordered")
+        elif (
+            timed_window.start_monotonic_ns < monotonic_ns[0]
+            or timed_window.end_monotonic_ns > monotonic_ns[-1]
+        ):
+            reasons.append(
+                "timed-window marker lies outside the telemetry trace: "
+                f"window=[{timed_window.start_monotonic_ns}, "
+                f"{timed_window.end_monotonic_ns}], "
+                f"trace=[{monotonic_ns[0]}, {monotonic_ns[-1]}]"
+            )
+        else:
+            timed_trace = [
+                sample
+                for sample, timestamp_ns in zip(trace, monotonic_ns)
+                if timed_window.start_monotonic_ns
+                <= timestamp_ns
+                <= timed_window.end_monotonic_ns
+            ]
+
     active_indices = [
         index
-        for index, sample in enumerate(trace)
+        for index, sample in enumerate(timed_trace)
         if sample.selected_clock_mhz == REQUIRED_CLOCK_MHZ
     ]
     active_count = len(active_indices)
-    active_interval_count = 0
+    active_interval_count = len(timed_trace)
     if active_count < minimum_active_samples:
         reasons.append(
             f"captured only {active_count} active {REQUIRED_CLOCK_MHZ} MHz "
             f"samples (minimum {minimum_active_samples})"
         )
-    if active_indices:
-        first, last = active_indices[0], active_indices[-1]
-        active_interval = trace[first : last + 1]
-        active_interval_count = len(active_interval)
+    if timed_trace:
         unstable = [
             sample.selected_clock_mhz
-            for sample in active_interval
+            for sample in timed_trace
             if sample.selected_clock_mhz != REQUIRED_CLOCK_MHZ
         ]
         if unstable:
             reasons.append(
-                "selected clock left 1600 MHz inside the observed active interval"
+                "selected clock left 1600 MHz inside the timed window"
             )
 
-    combined_output = stdout + "\n" + stderr
     if verification_mode == "marker":
         if not verification_pattern or not re.search(
             verification_pattern, combined_output
@@ -390,6 +469,16 @@ def assess_batch(
         active_samples=active_count,
         active_interval_samples=active_interval_count,
         maximum_temperature_millidegrees=observed_maximum,
+        timed_window_marker=(
+            None if timed_window is None else timed_window.marker
+        ),
+        timed_window_start_monotonic_ns=(
+            None if timed_window is None else timed_window.start_monotonic_ns
+        ),
+        timed_window_end_monotonic_ns=(
+            None if timed_window is None else timed_window.end_monotonic_ns
+        ),
+        timed_window_samples=len(timed_trace),
     )
 
 
@@ -869,6 +958,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         "minimum_active_samples": args.min_active_samples,
         "required_policy": REQUIRED_POLICY,
         "required_active_clock_mhz": REQUIRED_CLOCK_MHZ,
+        "timed_window_marker": TIMED_WINDOW_MARKER,
         "verification_mode": verification_mode,
         "verification_pattern": verification_pattern,
         "forbidden_process_patterns": list(process_guard.patterns),
@@ -1068,6 +1158,18 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
                     sampling_error = telemetry_monitor.sampling_error
                     thermal_abort = telemetry_monitor.thermal_abort
                     returncode = process.wait()
+                    try:
+                        # Bound the recorded trace after the harness marker even
+                        # when the process exits between periodic samples.
+                        record_sample(
+                            read_trace_sample(
+                                policy_file, clock_file, temperature_file
+                            )
+                        )
+                    except (OSError, ValueError) as error:
+                        sampling_error = sampling_error or (
+                            f"terminal in-run sample: {error}"
+                        )
                     # A final scan closes the interval after the last in-run
                     # scan, including short runs that finish during that scan.
                     if match := process_guard.check():
@@ -1145,6 +1247,24 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
                 else asdict(forbidden_process_match)
             ),
             "assessment": asdict(assessment),
+            "timed_window": (
+                None
+                if assessment.timed_window_marker is None
+                else {
+                    "marker": assessment.timed_window_marker,
+                    "start_monotonic_ns": (
+                        assessment.timed_window_start_monotonic_ns
+                    ),
+                    "end_monotonic_ns": (
+                        assessment.timed_window_end_monotonic_ns
+                    ),
+                    "duration_ns": (
+                        assessment.timed_window_end_monotonic_ns
+                        - assessment.timed_window_start_monotonic_ns
+                    ),
+                    "trace_samples": assessment.timed_window_samples,
+                }
+            ),
             "pre_sample": asdict(pre_sample),
             "post_sample": None if post_sample is None else asdict(post_sample),
             "stdout_sha256": sha256_file(stdout_path),

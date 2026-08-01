@@ -10,14 +10,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import acquire_pinned as acquire
 
 
-def sample(clock=1600, policy="high", temperature=50_000):
+def sample(clock=1600, policy="high", temperature=50_000, monotonic=1.0):
     return acquire.TraceSample(
-        monotonic_seconds=1.0,
+        monotonic_seconds=monotonic,
         epoch_ns=1,
         policy=policy,
         selected_clock_mhz=clock,
         temperature_millidegrees=temperature,
         raw_sclk=f"2: {clock}Mhz *",
+    )
+
+
+def timed_marker(start_seconds, end_seconds):
+    return (
+        f"{acquire.TIMED_WINDOW_MARKER} "
+        f"start_monotonic_ns={round(start_seconds * 1_000_000_000)} "
+        f"end_monotonic_ns={round(end_seconds * 1_000_000_000)}"
     )
 
 
@@ -59,6 +67,34 @@ class ParsingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             acquire.parse_metric("matrixmult nan\n", "matrixmult")
 
+    def test_parse_timed_window_requires_one_exact_ordered_marker(self):
+        marker = timed_marker(1.25, 1.5)
+        self.assertEqual(
+            acquire.parse_timed_window(f"noise\n{marker}\nmore noise"),
+            acquire.TimedWindow(
+                marker=marker,
+                start_monotonic_ns=1_250_000_000,
+                end_monotonic_ns=1_500_000_000,
+            ),
+        )
+        invalid_outputs = [
+            "no marker",
+            f"{marker}\n{marker}",
+            f"prefix {marker}",
+            (
+                f"{acquire.TIMED_WINDOW_MARKER} "
+                "start_monotonic_ns=2 end_monotonic_ns=1"
+            ),
+            (
+                f"{acquire.TIMED_WINDOW_MARKER} "
+                "start_monotonic_ns=-1 end_monotonic_ns=2"
+            ),
+        ]
+        for output in invalid_outputs:
+            with self.subTest(output=output):
+                with self.assertRaises(ValueError):
+                    acquire.parse_timed_window(output)
+
     def test_reserved_passthrough_arguments_are_rejected(self):
         self.assertEqual(
             acquire.validate_passthrough_args(["--", "--matrix-size", "64"]),
@@ -91,13 +127,20 @@ class ParsingTests(unittest.TestCase):
 
 class AcceptanceTests(unittest.TestCase):
     def assess(self, trace, **overrides):
+        window = overrides.pop("window", None)
+        if window is None and trace:
+            window = (
+                trace[0].monotonic_seconds,
+                trace[-1].monotonic_seconds,
+            )
+        marker = "" if window is None else timed_marker(*window)
         arguments = {
             "returncode": 0,
             "trace": trace,
             "verification_mode": "marker",
             "verification_pattern": r"verification Passed!",
             "stdout": "matrixmult 42.0\n",
-            "stderr": "matrixmult verification Passed!\n",
+            "stderr": f"matrixmult verification Passed!\n{marker}\n",
             "maximum_temperature_millidegrees": 75_000,
             "minimum_active_samples": 3,
         }
@@ -106,21 +149,67 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_accepts_idle_edges_around_contiguous_active_interval(self):
         result = self.assess(
-            [sample(200), sample(), sample(), sample(), sample(0)]
+            [
+                sample(200, monotonic=0.0),
+                sample(monotonic=1.0),
+                sample(monotonic=2.0),
+                sample(monotonic=3.0),
+                sample(0, monotonic=4.0),
+            ],
+            window=(1.0, 3.0),
         )
         self.assertTrue(result.accepted, result.reasons)
         self.assertEqual(result.active_samples, 3)
+        self.assertEqual(result.timed_window_samples, 3)
 
     def test_rejects_clock_drop_inside_active_interval(self):
         result = self.assess(
-            [sample(), sample(700), sample(), sample()]
+            [
+                sample(monotonic=0.0),
+                sample(700, monotonic=1.0),
+                sample(monotonic=2.0),
+                sample(monotonic=3.0),
+            ]
         )
         self.assertFalse(result.accepted)
-        self.assertTrue(any("left 1600" in reason for reason in result.reasons))
+        self.assertTrue(any("timed window" in reason for reason in result.reasons))
+
+    def test_rejects_missing_multiple_malformed_and_out_of_trace_markers(self):
+        trace = [
+            sample(monotonic=1.0),
+            sample(monotonic=2.0),
+            sample(monotonic=3.0),
+        ]
+        cases = {
+            "missing": "matrixmult verification Passed!\n",
+            "multiple": (
+                "matrixmult verification Passed!\n"
+                f"{timed_marker(1.0, 3.0)}\n{timed_marker(1.0, 3.0)}\n"
+            ),
+            "malformed": (
+                "matrixmult verification Passed!\n"
+                f"{acquire.TIMED_WINDOW_MARKER} start=1 end=3\n"
+            ),
+            "outside": (
+                "matrixmult verification Passed!\n"
+                f"{timed_marker(0.0, 4.0)}\n"
+            ),
+        }
+        for name, stderr in cases.items():
+            with self.subTest(name=name):
+                result = self.assess(trace, stderr=stderr)
+                self.assertFalse(result.accepted)
+                self.assertTrue(
+                    any("timed-window" in reason for reason in result.reasons),
+                    result.reasons,
+                )
 
     def test_rejects_policy_thermal_rc_and_verification_failures(self):
         result = self.assess(
-            [sample(policy="auto", temperature=76_000)] * 3,
+            [
+                sample(policy="auto", temperature=76_000, monotonic=index)
+                for index in range(3)
+            ],
             returncode=3,
             stderr="mismatch\n",
         )
@@ -136,7 +225,8 @@ class AcceptanceTests(unittest.TestCase):
             pattern="verilator", pid=4321, command="/opt/bin/verilator --build"
         )
         result = self.assess(
-            [sample(), sample(), sample()], forbidden_process_match=match
+            [sample(monotonic=index) for index in range(3)],
+            forbidden_process_match=match,
         )
         self.assertFalse(result.accepted)
         self.assertIn("pid=4321", " ".join(result.reasons))

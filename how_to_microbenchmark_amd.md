@@ -391,8 +391,13 @@ a 58 C abort limit, and at least 30 seconds between batches. It also rejects
 any concurrent `Vgfx9_compute_unit_tb`, `verilator_bin`, `pytest`, or
 `miaow_gcn4` command. Telemetry sampling is independently paced, so a slow
 `/proc` guard scan cannot reduce the requested sample density; policy, thermal,
-and telemetry failures still abort the container directly. The default is a
-one-batch directional plan and does not touch hardware or create directories:
+and telemetry failures still abort the container directly. The harness emits
+one `CLOCK_MONOTONIC` start/end marker around the primary timed iteration loop;
+the collector requires that marker and applies the 1600 MHz/sample-count check
+only to its bounded interval. This excludes HIP initialization and verification
+activity without weakening whole-run thermal, policy, or process guards. The
+default is a one-batch directional plan and does not touch hardware or create
+directories:
 
 ```bash
 python3 gpu_perf_scripts/calibration/gfx90c/run_vmem_dependency_sweep.py

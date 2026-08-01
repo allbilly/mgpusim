@@ -1470,6 +1470,15 @@ thread independently aborts on policy, temperature, read, or write failure.
 This removes the sample-density/protocol conflict without relaxing either
 guard.
 
+The first high-rate pilot captured 715 whole-process samples and correctly
+reported two GPU activity episodes, but the legacy first-active-to-last-active
+heuristic rejected the expected idle gap between HIP initialization and the
+timed loop. No batch from that attempt was accepted. The harness now emits an
+authoritative `CLOCK_MONOTONIC` interval around the primary timed loop, and the
+collector rejects missing, duplicate, malformed, unordered, or out-of-trace
+markers. Clock stability and minimum active samples use only that interval;
+whole-run thermal/policy monitoring and the process guard remain unchanged.
+
 The I=6 application gate remains selective:
 
 | Application size | Default (us) | B1/Q1/I6 (us) |

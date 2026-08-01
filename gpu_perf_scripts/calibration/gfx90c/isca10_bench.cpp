@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -123,9 +124,19 @@ static int kmeans_nclusters = 5;
 static int pagerank_nodes = 512;
 static int nw_length = 128;
 static bool kmeans_preinitialize_swap = false;
+static bool timed_window_emitted = false;
+
+static uint64_t monotonic_nanoseconds() {
+  struct timespec now {};
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+    perror("clock_gettime(CLOCK_MONOTONIC)");
+    std::exit(1);
+  }
+  return uint64_t(now.tv_sec) * 1000000000ULL + uint64_t(now.tv_nsec);
+}
 
 template <typename F>
-static float time_iters(int iters, F &&launch) {
+static float time_iters(int iters, F &&launch, bool emit_window = true) {
   hipEvent_t start, stop;
   HIP_CHECK(hipEventCreate(&start));
   HIP_CHECK(hipEventCreate(&stop));
@@ -133,11 +144,22 @@ static float time_iters(int iters, F &&launch) {
     launch();
   if (warmup_iters > 0)
     HIP_CHECK(hipDeviceSynchronize());
+  const uint64_t timed_window_start_ns = monotonic_nanoseconds();
   HIP_CHECK(hipEventRecord(start));
   for (int i = 0; i < iters; i++)
     launch();
   HIP_CHECK(hipEventRecord(stop));
   HIP_CHECK(hipEventSynchronize(stop));
+  const uint64_t timed_window_end_ns = monotonic_nanoseconds();
+  if (emit_window && !timed_window_emitted) {
+    fprintf(stderr,
+            "MGPUSIM_TIMED_WINDOW_V1 start_monotonic_ns=%llu "
+            "end_monotonic_ns=%llu\n",
+            static_cast<unsigned long long>(timed_window_start_ns),
+            static_cast<unsigned long long>(timed_window_end_ns));
+    fflush(stderr);
+    timed_window_emitted = true;
+  }
   float us = elapsed_us(start, stop) / float(iters);
   HIP_CHECK(hipEventDestroy(start));
   HIP_CHECK(hipEventDestroy(stop));
@@ -1006,8 +1028,8 @@ static void bench_kmeans(int iters) {
   });
   printf("kmeans %.3f\n", us);
   if (report_components) {
-    printf("kmeans_swap %.3f\n", time_iters(iters, launch_swap));
-    printf("kmeans_compute %.3f\n", time_iters(iters, launch_compute));
+    printf("kmeans_swap %.3f\n", time_iters(iters, launch_swap, false));
+    printf("kmeans_compute %.3f\n", time_iters(iters, launch_compute, false));
   }
   verify_results();
   HIP_CHECK(hipFree(feat));
