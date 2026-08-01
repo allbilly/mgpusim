@@ -174,6 +174,27 @@ class AcceptanceTests(unittest.TestCase):
         self.assertFalse(result.accepted)
         self.assertTrue(any("timed window" in reason for reason in result.reasons))
 
+    def test_policy_and_temperature_assessment_use_timed_window(self):
+        trace = [
+            sample(policy="auto", temperature=80_000, monotonic=0.0),
+            sample(monotonic=1.0),
+            sample(monotonic=2.0),
+            sample(monotonic=3.0),
+            sample(policy="auto", temperature=80_000, monotonic=4.0),
+        ]
+        result = self.assess(trace, window=(1.0, 3.0))
+        self.assertTrue(result.accepted, result.reasons)
+        self.assertEqual(result.maximum_temperature_millidegrees, 50_000)
+
+        # The live monitor still reports and rejects a whole-run violation.
+        result = self.assess(
+            trace,
+            window=(1.0, 3.0),
+            sampling_error="performance policy left high",
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("sampling failed", " ".join(result.reasons))
+
     def test_rejects_missing_multiple_malformed_and_out_of_trace_markers(self):
         trace = [
             sample(monotonic=1.0),
@@ -211,6 +232,7 @@ class AcceptanceTests(unittest.TestCase):
                 for index in range(3)
             ],
             returncode=3,
+            stdout=f"matrixmult 42.0\n{timed_marker(0.0, 2.0)}\n",
             stderr="mismatch\n",
         )
         self.assertFalse(result.accepted)

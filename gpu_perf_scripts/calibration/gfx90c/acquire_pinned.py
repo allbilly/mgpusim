@@ -379,22 +379,6 @@ def assess_batch(
     if not trace:
         reasons.append("no policy/clock/temperature samples were captured")
 
-    if any(sample.policy != REQUIRED_POLICY for sample in trace):
-        reasons.append("performance policy was not high for every sample")
-
-    observed_maximum = max(
-        (sample.temperature_millidegrees for sample in trace), default=None
-    )
-    if (
-        observed_maximum is not None
-        and observed_maximum >= maximum_temperature_millidegrees
-    ):
-        reasons.append(
-            "temperature reached "
-            f"{observed_maximum / 1000:.1f} C (limit "
-            f"{maximum_temperature_millidegrees / 1000:.1f} C)"
-        )
-
     combined_output = stdout + "\n" + stderr
     timed_window: TimedWindow | None = None
     try:
@@ -431,6 +415,23 @@ def assess_batch(
                 <= timestamp_ns
                 <= timed_window.end_monotonic_ns
             ]
+
+    if any(sample.policy != REQUIRED_POLICY for sample in timed_trace):
+        reasons.append("performance policy was not high inside the timed window")
+
+    observed_maximum = max(
+        (sample.temperature_millidegrees for sample in timed_trace),
+        default=None,
+    )
+    if (
+        observed_maximum is not None
+        and observed_maximum >= maximum_temperature_millidegrees
+    ):
+        reasons.append(
+            "temperature reached "
+            f"{observed_maximum / 1000:.1f} C inside the timed window (limit "
+            f"{maximum_temperature_millidegrees / 1000:.1f} C)"
+        )
 
     active_indices = [
         index
