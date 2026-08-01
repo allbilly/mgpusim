@@ -115,6 +115,32 @@ func TestBuildGfx90cPlatformWithVMemWideLoadReturnBandwidth(t *testing.T) {
 	}
 }
 
+func TestBuildGfx90cPlatformWithVMemCUWideReturnBudget(t *testing.T) {
+	s := simulation.MakeBuilder().
+		WithoutMonitoring().
+		WithOutputFileName(t.TempDir() + "/sim").
+		Build()
+	defer s.Terminate()
+
+	MakeBuilder().
+		WithSimulation(s).
+		WithGPUType("gfx90c").
+		WithVMemCUWideReturnUnitsPerCycle(13).
+		Build()
+
+	component := s.GetComponentByName("GPU[1].SA[0].CU[0]")
+	computeUnit, ok := component.(*cu.Comp)
+	if !ok {
+		t.Fatalf("expected gfx90c compute unit, got %T", component)
+	}
+	if computeUnit.Spec().VMemCUWideReturnUnitsPerCycle != 13 {
+		t.Fatalf(
+			"expected CU-wide vector-memory return budget 13, got %d",
+			computeUnit.Spec().VMemCUWideReturnUnitsPerCycle,
+		)
+	}
+}
+
 func TestRejectSimultaneousVMemLoadReturnBandwidthModels(t *testing.T) {
 	defer func() {
 		if recover() == nil {
@@ -139,6 +165,56 @@ func TestRejectVMemLoadReturnBandwidthForOtherGPUs(t *testing.T) {
 	MakeBuilder().
 		WithGPUType("vega64").
 		WithVMemLoadReturnLaneDwordsPerCycle(9).
+		Build()
+}
+
+func TestRejectVMemCUWideReturnBudgetWithOtherReturnModels(t *testing.T) {
+	for name, configureOldModel := range map[string]func(Builder) Builder{
+		"per-instruction": func(b Builder) Builder {
+			return b.WithVMemLoadReturnLaneDwordsPerCycle(9)
+		},
+		"per-wave": func(b Builder) Builder {
+			return b.WithVMemWideLoadReturnLaneDwordsPerCycle(11)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected simultaneous return models to panic")
+				}
+			}()
+
+			configureOldModel(MakeBuilder()).
+				WithGPUType("gfx90c").
+				WithVMemCUWideReturnUnitsPerCycle(13).
+				Build()
+		})
+	}
+}
+
+func TestRejectNegativeVMemCUWideReturnBudget(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected negative CU-wide return budget to panic")
+		}
+	}()
+
+	MakeBuilder().
+		WithGPUType("gfx90c").
+		WithVMemCUWideReturnUnitsPerCycle(-1).
+		Build()
+}
+
+func TestRejectVMemCUWideReturnBudgetForOtherGPUs(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected unsupported GPU configuration to panic")
+		}
+	}()
+
+	MakeBuilder().
+		WithGPUType("vega64").
+		WithVMemCUWideReturnUnitsPerCycle(13).
 		Build()
 }
 

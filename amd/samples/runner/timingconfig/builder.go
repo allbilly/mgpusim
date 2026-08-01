@@ -47,6 +47,7 @@ type Builder struct {
 	h2dCycles                            int
 	vmemLoadReturnLaneDwordsPerCycle     int
 	vmemWideLoadReturnLaneDwordsPerCycle int
+	vmemCUWideReturnUnitsPerCycle        int
 
 	globalStorage     *mem.Storage
 	rdmaAddressMapper *mem.BankedAddressPortMapper
@@ -110,6 +111,14 @@ func (b Builder) WithVMemWideLoadReturnLaneDwordsPerCycle(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnUnitsPerCycle sets an experimental gfx90c work budget
+// for the CU-wide, work-conserving wide-load return FIFO. Zero disables the
+// model.
+func (b Builder) WithVMemCUWideReturnUnitsPerCycle(n int) Builder {
+	b.vmemCUWideReturnUnitsPerCycle = n
+	return b
+}
+
 // Build builds the hardware platform and returns the driver. The driver, the
 // GPUs, and all the connections register themselves with the simulation.
 func (b Builder) Build() *driver.Driver {
@@ -119,8 +128,20 @@ func (b Builder) Build() *driver.Driver {
 	if b.vmemWideLoadReturnLaneDwordsPerCycle < 0 {
 		panic("timingconfig: wave-wide vector-memory load return bandwidth cannot be negative")
 	}
-	if b.vmemLoadReturnLaneDwordsPerCycle > 0 &&
-		b.vmemWideLoadReturnLaneDwordsPerCycle > 0 {
+	if b.vmemCUWideReturnUnitsPerCycle < 0 {
+		panic("timingconfig: CU-wide vector-memory load return budget cannot be negative")
+	}
+	configuredReturnModels := 0
+	for _, bandwidth := range []int{
+		b.vmemLoadReturnLaneDwordsPerCycle,
+		b.vmemWideLoadReturnLaneDwordsPerCycle,
+		b.vmemCUWideReturnUnitsPerCycle,
+	} {
+		if bandwidth > 0 {
+			configuredReturnModels++
+		}
+	}
+	if configuredReturnModels > 1 {
 		panic("timingconfig: vector-memory load return bandwidth models are mutually exclusive")
 	}
 	if b.vmemLoadReturnLaneDwordsPerCycle > 0 && b.gpuType != "gfx90c" {
@@ -128,6 +149,9 @@ func (b Builder) Build() *driver.Driver {
 	}
 	if b.vmemWideLoadReturnLaneDwordsPerCycle > 0 && b.gpuType != "gfx90c" {
 		panic("timingconfig: wave-wide vector-memory load return bandwidth is only supported for gfx90c")
+	}
+	if b.vmemCUWideReturnUnitsPerCycle > 0 && b.gpuType != "gfx90c" {
+		panic("timingconfig: CU-wide vector-memory load return budget is only supported for gfx90c")
 	}
 
 	b.adjustConfigForGPUType()
@@ -294,6 +318,9 @@ func (b *Builder) createGPUBuilder(
 			).
 			WithVMemWideLoadReturnLaneDwordsPerCycle(
 				b.vmemWideLoadReturnLaneDwordsPerCycle,
+			).
+			WithVMemCUWideReturnUnitsPerCycle(
+				b.vmemCUWideReturnUnitsPerCycle,
 			).
 			WithDriverPort(driverPort)
 	default:

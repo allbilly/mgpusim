@@ -38,6 +38,7 @@ type Runner struct {
 	GPUType                              string
 	VMemLoadReturnLaneDwordsPerCycle     int
 	VMemWideLoadReturnLaneDwordsPerCycle int
+	VMemCUWideReturnUnitsPerCycle        int
 
 	GPUIDs     []int
 	benchmarks []benchmarks.Benchmark
@@ -114,6 +115,9 @@ func (r *Runner) buildTimingPlatform() {
 		).
 		WithVMemWideLoadReturnLaneDwordsPerCycle(
 			r.VMemWideLoadReturnLaneDwordsPerCycle,
+		).
+		WithVMemCUWideReturnUnitsPerCycle(
+			r.VMemCUWideReturnUnitsPerCycle,
 		)
 
 	if *magicMemoryCopy {

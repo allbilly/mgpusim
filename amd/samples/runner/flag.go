@@ -28,6 +28,11 @@ var vmemWideLoadReturnLaneDwordsPerCycleFlag = flag.Int(
 	0,
 	"Experimental gfx90c wave-wide vector-load return bandwidth; zero disables the model.",
 )
+var vmemCUWideReturnUnitsPerCycleFlag = flag.Int(
+	"vmem-cu-wide-return-units-per-cycle",
+	0,
+	"Experimental gfx90c CU-wide vector-load return budget; zero disables the model.",
+)
 
 var verifyFlag = flag.Bool("verify", false, "Verify the emulation result.")
 var memTracing = flag.Bool("trace-mem", false, "Generate memory trace")
@@ -135,14 +140,28 @@ func (r *Runner) parseSimulationFlags() {
 		*vmemLoadReturnLaneDwordsPerCycleFlag
 	r.VMemWideLoadReturnLaneDwordsPerCycle =
 		*vmemWideLoadReturnLaneDwordsPerCycleFlag
+	r.VMemCUWideReturnUnitsPerCycle =
+		*vmemCUWideReturnUnitsPerCycleFlag
 	if r.VMemLoadReturnLaneDwordsPerCycle < 0 {
 		panic("vector-memory load return bandwidth cannot be negative")
 	}
 	if r.VMemWideLoadReturnLaneDwordsPerCycle < 0 {
 		panic("wave-wide vector-memory load return bandwidth cannot be negative")
 	}
-	if r.VMemLoadReturnLaneDwordsPerCycle > 0 &&
-		r.VMemWideLoadReturnLaneDwordsPerCycle > 0 {
+	if r.VMemCUWideReturnUnitsPerCycle < 0 {
+		panic("CU-wide vector-memory load return budget cannot be negative")
+	}
+	configuredReturnModels := 0
+	for _, bandwidth := range []int{
+		r.VMemLoadReturnLaneDwordsPerCycle,
+		r.VMemWideLoadReturnLaneDwordsPerCycle,
+		r.VMemCUWideReturnUnitsPerCycle,
+	} {
+		if bandwidth > 0 {
+			configuredReturnModels++
+		}
+	}
+	if configuredReturnModels > 1 {
 		panic("vector-memory load return bandwidth models are mutually exclusive")
 	}
 	if r.VMemLoadReturnLaneDwordsPerCycle > 0 &&
@@ -152,6 +171,10 @@ func (r *Runner) parseSimulationFlags() {
 	if r.VMemWideLoadReturnLaneDwordsPerCycle > 0 &&
 		(!r.Timing || r.GPUType != "gfx90c") {
 		panic("wave-wide vector-memory load return bandwidth requires -timing -gpu gfx90c")
+	}
+	if r.VMemCUWideReturnUnitsPerCycle > 0 &&
+		(!r.Timing || r.GPUType != "gfx90c") {
+		panic("CU-wide vector-memory load return budget requires -timing -gpu gfx90c")
 	}
 	if r.Timing && r.GPUType == "r9nano" {
 		switch r.ArchType {
