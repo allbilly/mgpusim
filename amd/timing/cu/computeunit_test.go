@@ -110,6 +110,39 @@ func trackPendingVMemRetirements(
 	}
 }
 
+func runBurstReturnTrace(
+	cu *ComputeUnit,
+	burstWaves, assistInterval, ticks int,
+) [][]int {
+	cu.vmemCUWideReturnUnitsPerCycle = 1
+	cu.vmemCUWideReturnBurstConcurrentWaves = burstWaves
+	cu.vmemCUWideReturnBurstAssistInterval = assistInterval
+	cu.vmemCUWideReturnBurstAssistCountdown = 0
+	cu.vmemCUWideOutstanding = nil
+	cu.vmemCUWideTrackedInstIDs = nil
+	cu.vmemCUWideWaveOrder = nil
+	cu.vmemCUWideBurstNextWave = nil
+	cu.pendingVMemRetirements = nil
+
+	for simd := 0; simd < 3; simd++ {
+		wf, retirements := makePendingVMemWave(simd, 20, 20)
+		trackPendingVMemRetirements(cu, wf, retirements)
+		cu.pendingVMemRetirements = append(
+			cu.pendingVMemRetirements, retirements[0])
+	}
+
+	trace := make([][]int, 0, ticks)
+	for tick := 0; tick < ticks; tick++ {
+		cu.advanceVMemLoadRetirements()
+		remaining := make([]int, len(cu.pendingVMemRetirements))
+		for i := range cu.pendingVMemRetirements {
+			remaining[i] = cu.pendingVMemRetirements[i].remainingCycles
+		}
+		trace = append(trace, remaining)
+	}
+	return trace
+}
+
 var _ = DescribeTable(
 	"counts duplicate vector-memory return lane-dwords",
 	func(alias, width int) {
@@ -1214,6 +1247,118 @@ var _ = Describe("ComputeUnit", func() {
 			}).To(Equal([]int{1, 2, 2}))
 		})
 
+		It("preserves the exact Q1 trace when burst assist is disabled", func() {
+			Expect(runBurstReturnTrace(cu, 1, 0, 4)).To(Equal([][]int{
+				{19, 20, 20},
+				{19, 19, 20},
+				{19, 19, 19},
+				{18, 19, 19},
+			}))
+		})
+
+		It("matches the exact Q2 trace with assist interval one", func() {
+			q2Trace := runBurstReturnTrace(cu, 2, 0, 5)
+			assistTrace := runBurstReturnTrace(cu, 1, 1, 5)
+
+			Expect(assistTrace).To(Equal(q2Trace))
+		})
+
+		It("applies interval-two cadence with two burst waves", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 1
+			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			cu.vmemCUWideReturnBurstAssistInterval = 2
+			firstWf, first := makePendingVMemWave(0, 20, 20)
+			secondWf, second := makePendingVMemWave(1, 20, 20)
+			trackPendingVMemRetirements(cu, firstWf, first)
+			trackPendingVMemRetirements(cu, secondWf, second)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				first[0], second[0],
+			}
+
+			trace := make([][]int, 0, 4)
+			for tick := 0; tick < 4; tick++ {
+				cu.advanceVMemLoadRetirements()
+				trace = append(trace, []int{
+					cu.pendingVMemRetirements[0].remainingCycles,
+					cu.pendingVMemRetirements[1].remainingCycles,
+				})
+			}
+
+			Expect(trace).To(Equal([][]int{
+				{19, 19},
+				{18, 19},
+				{17, 18},
+				{17, 17},
+			}))
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(0))
+		})
+
+		It("applies interval-two cadence fairly with three burst waves", func() {
+			Expect(runBurstReturnTrace(cu, 1, 2, 4)).To(Equal([][]int{
+				{19, 19, 20},
+				{19, 19, 19},
+				{18, 18, 19},
+				{18, 18, 18},
+			}))
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(0))
+		})
+
+		It("preserves assist cadence across gaps in burst contention", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 1
+			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			cu.vmemCUWideReturnBurstAssistInterval = 2
+			firstWf, first := makePendingVMemWave(0, 20, 20)
+			secondWf, second := makePendingVMemWave(1, 20, 20)
+			trackPendingVMemRetirements(cu, firstWf, first)
+			trackPendingVMemRetirements(cu, secondWf, second)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				first[0], second[0],
+			}
+
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(1))
+
+			cu.vmemCUWideOutstanding[secondWf] = 1
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(1))
+
+			cu.vmemCUWideOutstanding[secondWf] = 2
+			before := cu.pendingVMemRetirements[1].remainingCycles
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(0))
+			Expect(cu.pendingVMemRetirements[1].remainingCycles).To(Equal(before))
+
+			cu.vmemCUWideOutstanding[secondWf] = 1
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(0))
+			cu.vmemCUWideOutstanding[secondWf] = 2
+			cu.advanceVMemLoadRetirements()
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(1))
+		})
+
+		It("services singleton waves concurrently without double granting", func() {
+			cu.vmemCUWideReturnUnitsPerCycle = 1
+			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			cu.vmemCUWideReturnBurstAssistInterval = 2
+			singleWf, singleton := makePendingVMemWave(0, 5)
+			firstWf, first := makePendingVMemWave(1, 5, 5)
+			secondWf, second := makePendingVMemWave(2, 5, 5)
+			trackPendingVMemRetirements(cu, singleWf, singleton)
+			trackPendingVMemRetirements(cu, firstWf, first)
+			trackPendingVMemRetirements(cu, secondWf, second)
+			cu.pendingVMemRetirements = []pendingVMemLoadRetirement{
+				singleton[0], first[0], second[0],
+			}
+
+			cu.advanceVMemLoadRetirements()
+
+			Expect([]int{
+				cu.pendingVMemRetirements[0].remainingCycles,
+				cu.pendingVMemRetirements[1].remainingCycles,
+				cu.pendingVMemRetirements[2].remainingCycles,
+			}).To(Equal([]int{4, 4, 4}))
+		})
+
 		It("does not carry a burst grant into the newly exposed head", func() {
 			cu.vmemCUWideReturnUnitsPerCycle = 3
 			cu.vmemCUWideReturnBurstConcurrentWaves = 1
@@ -1607,6 +1752,8 @@ var _ = Describe("ComputeUnit", func() {
 		It("preserves burst counts, tracked IDs, FIFO, and cursor through pause and restart", func() {
 			cu.vmemCUWideReturnUnitsPerCycle = 1
 			cu.vmemCUWideReturnBurstConcurrentWaves = 1
+			cu.vmemCUWideReturnBurstAssistInterval = 2
+			cu.vmemCUWideReturnBurstAssistCountdown = 1
 			wf, retirements := makePendingVMemWave(2, 2, 2)
 			trackPendingVMemRetirements(cu, wf, retirements)
 			cu.pendingVMemRetirements = retirements
@@ -1622,7 +1769,9 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(cu.vmemCUWideOutstanding[wf]).To(Equal(2))
 			Expect(cu.vmemCUWideTrackedInstIDs).To(HaveLen(2))
 			Expect(cu.vmemCUWideBurstNextWave).To(BeIdenticalTo(wf))
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(1))
 			Expect(cu.runPipeline()).To(BeFalse())
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(1))
 
 			Expect(cu.sendToCP()).To(BeTrue())
 			restartReq := protocol.CUPipelineRestartReq{
@@ -1636,11 +1785,13 @@ var _ = Describe("ComputeUnit", func() {
 			Expect(cu.processInputFromCP()).To(BeTrue())
 			Expect(cu.checkShadowBuffers()).To(BeTrue())
 			Expect(cu.comp.State.IsPaused).To(BeFalse())
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(1))
 
 			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
 			Expect(cu.pendingVMemRetirements[0].remainingCycles).To(Equal(1))
 			Expect(cu.vmemCUWideOutstanding[wf]).To(Equal(2))
 			Expect(cu.vmemCUWideTrackedInstIDs).To(HaveLen(2))
+			Expect(cu.vmemCUWideReturnBurstAssistCountdown).To(Equal(1))
 
 			Expect(cu.advanceVMemLoadRetirements()).To(BeTrue())
 			Expect(cu.pendingVMemRetirements).To(HaveLen(1))

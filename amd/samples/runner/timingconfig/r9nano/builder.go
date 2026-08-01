@@ -115,6 +115,7 @@ type Builder struct {
 	vmemCUWideReturnUnitsPerCycle         int
 	vmemCUWideReturnConcurrentWaves       int
 	vmemCUWideReturnBurstConcurrentWaves  int
+	vmemCUWideReturnBurstAssistInterval   int
 	vecMemTransPipelineWidth              int
 	numSinglePrecisionUnits               int
 	dmaThroughL2                          bool
@@ -482,6 +483,13 @@ func (b Builder) WithVMemCUWideReturnConcurrentWaves(n int) Builder {
 // return service and sets the number of burst wave queues selected per cycle.
 func (b Builder) WithVMemCUWideReturnBurstConcurrentWaves(n int) Builder {
 	b.vmemCUWideReturnBurstConcurrentWaves = n
+	return b
+}
+
+// WithVMemCUWideReturnBurstAssistInterval sets the cadence for intermittently
+// servicing a second burst wave. Zero disables the assist.
+func (b Builder) WithVMemCUWideReturnBurstAssistInterval(n int) Builder {
+	b.vmemCUWideReturnBurstAssistInterval = n
 	return b
 }
 
@@ -1013,6 +1021,9 @@ func (b *Builder) buildSAs() {
 	)
 	saBuilder = saBuilder.WithVMemCUWideReturnBurstConcurrentWaves(
 		b.vmemCUWideReturnBurstConcurrentWaves,
+	)
+	saBuilder = saBuilder.WithVMemCUWideReturnBurstAssistInterval(
+		b.vmemCUWideReturnBurstAssistInterval,
 	)
 	if b.vecMemTransPipelineWidth > 0 {
 		saBuilder = saBuilder.WithVecMemTransPipelineWidth(

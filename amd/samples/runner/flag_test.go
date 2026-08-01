@@ -11,6 +11,7 @@ func setVMemReturnFlags(
 	timing bool,
 	gpuType string,
 	loadReturn, wideLoadReturn, cuWideReturn, cuWideWaves, cuWideBurstWaves int,
+	cuWideBurstAssist int,
 ) {
 	t.Helper()
 
@@ -22,6 +23,7 @@ func setVMemReturnFlags(
 	oldCUWideReturn := *vmemCUWideReturnUnitsPerCycleFlag
 	oldCUWideWaves := *vmemCUWideReturnConcurrentWavesFlag
 	oldCUWideBurstWaves := *vmemCUWideReturnBurstConcurrentWavesFlag
+	oldCUWideBurstAssist := *vmemCUWideReturnBurstAssistIntervalFlag
 	t.Cleanup(func() {
 		*timingFlag = oldTiming
 		*archFlag = oldArch
@@ -31,6 +33,7 @@ func setVMemReturnFlags(
 		*vmemCUWideReturnUnitsPerCycleFlag = oldCUWideReturn
 		*vmemCUWideReturnConcurrentWavesFlag = oldCUWideWaves
 		*vmemCUWideReturnBurstConcurrentWavesFlag = oldCUWideBurstWaves
+		*vmemCUWideReturnBurstAssistIntervalFlag = oldCUWideBurstAssist
 	})
 
 	*timingFlag = timing
@@ -41,6 +44,7 @@ func setVMemReturnFlags(
 	*vmemCUWideReturnUnitsPerCycleFlag = cuWideReturn
 	*vmemCUWideReturnConcurrentWavesFlag = cuWideWaves
 	*vmemCUWideReturnBurstConcurrentWavesFlag = cuWideBurstWaves
+	*vmemCUWideReturnBurstAssistIntervalFlag = cuWideBurstAssist
 }
 
 func requireParseSimulationFlagsPanic(t *testing.T, want string) {
@@ -69,10 +73,13 @@ func TestVMemCUWideReturnFlagIsRegistered(t *testing.T) {
 	if flag.Lookup("vmem-cu-wide-return-burst-concurrent-waves") == nil {
 		t.Fatal("expected CU-wide vector-memory burst flag to be registered")
 	}
+	if flag.Lookup("vmem-cu-wide-return-burst-assist-interval") == nil {
+		t.Fatal("expected CU-wide vector-memory burst assist flag to be registered")
+	}
 }
 
 func TestParseVMemCUWideReturnBudget(t *testing.T) {
-	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 3, 0)
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 3, 0, 0)
 
 	runner := new(Runner)
 	runner.parseSimulationFlags()
@@ -92,7 +99,7 @@ func TestParseVMemCUWideReturnBudget(t *testing.T) {
 }
 
 func TestDefaultVMemCUWideReturnConcurrentWavesToOne(t *testing.T) {
-	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0, 0)
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0, 0, 0)
 
 	runner := new(Runner)
 	runner.parseSimulationFlags()
@@ -106,7 +113,7 @@ func TestDefaultVMemCUWideReturnConcurrentWavesToOne(t *testing.T) {
 }
 
 func TestParseVMemCUWideBurstConcurrentWaves(t *testing.T) {
-	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0, 2)
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0, 2, 0)
 
 	runner := new(Runner)
 	runner.parseSimulationFlags()
@@ -125,6 +132,20 @@ func TestParseVMemCUWideBurstConcurrentWaves(t *testing.T) {
 	}
 }
 
+func TestParseVMemCUWideBurstAssistInterval(t *testing.T) {
+	setVMemReturnFlags(t, true, "gfx90c", 0, 0, 13, 0, 1, 3)
+
+	runner := new(Runner)
+	runner.parseSimulationFlags()
+
+	if runner.VMemCUWideReturnBurstAssistInterval != 3 {
+		t.Fatalf(
+			"expected burst assist interval 3, got %d",
+			runner.VMemCUWideReturnBurstAssistInterval,
+		)
+	}
+}
+
 func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -135,6 +156,7 @@ func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 		cuWide      int
 		cuWideWaves int
 		burstWaves  int
+		burstAssist int
 		want        string
 	}{
 		{
@@ -184,6 +206,42 @@ func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 			want:        "static and burst CU-wide concurrent-wave controls are mutually exclusive",
 		},
 		{
+			name:        "negative burst assist",
+			timing:      true,
+			gpuType:     "gfx90c",
+			cuWide:      13,
+			burstWaves:  1,
+			burstAssist: -1,
+			want:        "CU-wide vector-memory burst assist interval cannot be negative",
+		},
+		{
+			name:        "burst assist without model",
+			timing:      true,
+			gpuType:     "gfx90c",
+			burstWaves:  1,
+			burstAssist: 2,
+			want:        "CU-wide vector-memory burst assist interval requires the CU-wide return model",
+		},
+		{
+			name:        "burst assist with Q2",
+			timing:      true,
+			gpuType:     "gfx90c",
+			cuWide:      13,
+			burstWaves:  2,
+			burstAssist: 2,
+			want:        "CU-wide vector-memory burst assist interval requires burst concurrency one",
+		},
+		{
+			name:        "burst assist with static control",
+			timing:      true,
+			gpuType:     "gfx90c",
+			cuWide:      13,
+			cuWideWaves: 1,
+			burstWaves:  1,
+			burstAssist: 2,
+			want:        "CU-wide vector-memory burst assist interval requires static concurrency zero",
+		},
+		{
 			name:    "without timing",
 			gpuType: "gfx90c",
 			cuWide:  13,
@@ -225,6 +283,7 @@ func TestRejectInvalidVMemCUWideReturnFlags(t *testing.T) {
 				test.cuWide,
 				test.cuWideWaves,
 				test.burstWaves,
+				test.burstAssist,
 			)
 			requireParseSimulationFlagsPanic(t, test.want)
 		})

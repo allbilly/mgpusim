@@ -61,13 +61,20 @@ func TestVMemCUWideReturnBudgetPropagation(t *testing.T) {
 func TestVMemCUWideBurstConcurrentWavesPropagation(t *testing.T) {
 	builder := MakeBuilder().
 		WithVMemCUWideReturnUnitsPerCycle(13).
-		WithVMemCUWideReturnBurstConcurrentWaves(2)
+		WithVMemCUWideReturnBurstConcurrentWaves(1).
+		WithVMemCUWideReturnBurstAssistInterval(3)
 
 	spec := builder.cuSpec()
-	if spec.VMemCUWideReturnBurstConcurrentWaves != 2 {
+	if spec.VMemCUWideReturnBurstConcurrentWaves != 1 {
 		t.Fatalf(
-			"expected CU-wide burst concurrent waves 2, got %d",
+			"expected CU-wide burst concurrent waves 1, got %d",
 			spec.VMemCUWideReturnBurstConcurrentWaves,
+		)
+	}
+	if spec.VMemCUWideReturnBurstAssistInterval != 3 {
+		t.Fatalf(
+			"expected CU-wide burst assist interval 3, got %d",
+			spec.VMemCUWideReturnBurstAssistInterval,
 		)
 	}
 }

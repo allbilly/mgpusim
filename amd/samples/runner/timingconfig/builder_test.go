@@ -262,7 +262,8 @@ func TestBuildGfx90cPlatformWithVMemCUWideBurstConcurrentWaves(t *testing.T) {
 		WithSimulation(s).
 		WithGPUType("gfx90c").
 		WithVMemCUWideReturnUnitsPerCycle(13).
-		WithVMemCUWideReturnBurstConcurrentWaves(2).
+		WithVMemCUWideReturnBurstConcurrentWaves(1).
+		WithVMemCUWideReturnBurstAssistInterval(3).
 		Build()
 
 	component := s.GetComponentByName("GPU[1].SA[0].CU[0]")
@@ -276,10 +277,16 @@ func TestBuildGfx90cPlatformWithVMemCUWideBurstConcurrentWaves(t *testing.T) {
 			computeUnit.Spec().VMemCUWideReturnConcurrentWaves,
 		)
 	}
-	if computeUnit.Spec().VMemCUWideReturnBurstConcurrentWaves != 2 {
+	if computeUnit.Spec().VMemCUWideReturnBurstConcurrentWaves != 1 {
 		t.Fatalf(
-			"expected CU-wide burst concurrent waves 2, got %d",
+			"expected CU-wide burst concurrent waves 1, got %d",
 			computeUnit.Spec().VMemCUWideReturnBurstConcurrentWaves,
+		)
+	}
+	if computeUnit.Spec().VMemCUWideReturnBurstAssistInterval != 3 {
+		t.Fatalf(
+			"expected CU-wide burst assist interval 3, got %d",
+			computeUnit.Spec().VMemCUWideReturnBurstAssistInterval,
 		)
 	}
 }
@@ -336,6 +343,39 @@ func TestRejectInvalidVMemCUWideBurstConcurrentWaves(t *testing.T) {
 				WithVMemCUWideReturnUnitsPerCycle(test.units).
 				WithVMemCUWideReturnConcurrentWaves(test.static).
 				WithVMemCUWideReturnBurstConcurrentWaves(test.burst).
+				Build()
+		})
+	}
+}
+
+func TestRejectInvalidVMemCUWideBurstAssistInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		units    int
+		static   int
+		burst    int
+		interval int
+	}{
+		{name: "negative", units: 13, burst: 1, interval: -1},
+		{name: "without CU-wide model", burst: 1, interval: 2},
+		{name: "without Q1", units: 13, burst: 2, interval: 2},
+		{name: "with static control", units: 13, static: 1, burst: 1, interval: 2},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("expected invalid burst assist configuration to panic")
+				}
+			}()
+
+			MakeBuilder().
+				WithGPUType("gfx90c").
+				WithVMemCUWideReturnUnitsPerCycle(test.units).
+				WithVMemCUWideReturnConcurrentWaves(test.static).
+				WithVMemCUWideReturnBurstConcurrentWaves(test.burst).
+				WithVMemCUWideReturnBurstAssistInterval(test.interval).
 				Build()
 		})
 	}

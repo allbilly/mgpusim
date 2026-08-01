@@ -54,6 +54,8 @@ type ComputeUnit struct {
 	vmemCUWideReturnUnitsPerCycle        int
 	vmemCUWideReturnConcurrentWaves      int
 	vmemCUWideReturnBurstConcurrentWaves int
+	vmemCUWideReturnBurstAssistInterval  int
+	vmemCUWideReturnBurstAssistCountdown int
 
 	// Return assemblies accumulate the selected lane-dword accounting mode
 	// across all cache-line response siblings of one dynamic vector load. The
@@ -1130,6 +1132,16 @@ func (cu *ComputeUnit) advanceBurstCUWideVMemLoadRetirements() bool {
 	selectedBurstCount := cu.vmemCUWideReturnBurstConcurrentWaves
 	if selectedBurstCount > len(burstWaves) {
 		selectedBurstCount = len(burstWaves)
+	}
+	if cu.vmemCUWideReturnBurstAssistInterval > 0 &&
+		len(burstWaves) >= 2 {
+		if cu.vmemCUWideReturnBurstAssistCountdown == 0 {
+			selectedBurstCount = 2
+			cu.vmemCUWideReturnBurstAssistCountdown =
+				cu.vmemCUWideReturnBurstAssistInterval - 1
+		} else {
+			cu.vmemCUWideReturnBurstAssistCountdown--
+		}
 	}
 
 	for _, wf := range readyWaves {

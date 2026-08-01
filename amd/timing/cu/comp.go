@@ -151,6 +151,10 @@ type Spec struct {
 	// preserves the static concurrent-wave scheduler.
 	VMemCUWideReturnBurstConcurrentWaves int `json:"vmem_cu_wide_return_burst_concurrent_waves"`
 
+	// VMemCUWideReturnBurstAssistInterval intermittently grants a second burst
+	// wave when burst concurrency is exactly one. Zero disables the assist.
+	VMemCUWideReturnBurstAssistInterval int `json:"vmem_cu_wide_return_burst_assist_interval"`
+
 	// RegisterScoreboard enables the register scoreboard and SIMD pipelining
 	// feature.
 	RegisterScoreboard bool `json:"register_scoreboard"`

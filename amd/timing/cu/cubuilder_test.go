@@ -41,6 +41,7 @@ var _ = Describe("Builder", func() {
 		Expect(comp.Spec().VMemCUWideReturnUnitsPerCycle).To(Equal(0))
 		Expect(comp.Spec().VMemCUWideReturnConcurrentWaves).To(Equal(0))
 		Expect(comp.Spec().VMemCUWideReturnBurstConcurrentWaves).To(Equal(0))
+		Expect(comp.Spec().VMemCUWideReturnBurstAssistInterval).To(Equal(0))
 
 		// All five ports must be declared so external code can assign them.
 		for _, portName := range []string{
@@ -270,6 +271,53 @@ var _ = Describe("Builder", func() {
 		Expect(comp.Spec().VMemCUWideReturnBurstConcurrentWaves).To(Equal(2))
 		Expect(MiddlewareOf(comp).vmemCUWideReturnBurstConcurrentWaves).
 			To(Equal(2))
+	})
+
+	It("propagates the burst assist interval", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		comp := MakeBuilder().
+			WithRegistrar(reg).
+			WithVMemCUWideReturnUnitsPerCycle(13).
+			WithVMemCUWideReturnBurstConcurrentWaves(1).
+			WithVMemCUWideReturnBurstAssistInterval(3).
+			Build("GPU.CU")
+
+		Expect(comp.Spec().VMemCUWideReturnBurstAssistInterval).To(Equal(3))
+		Expect(MiddlewareOf(comp).vmemCUWideReturnBurstAssistInterval).
+			To(Equal(3))
+	})
+
+	It("rejects invalid burst assist controls", func() {
+		engine := timing.NewSerialEngine()
+		reg := modeling.NewStandaloneRegistrar(engine)
+
+		for _, configure := range []func(Builder) Builder{
+			func(b Builder) Builder {
+				return b.WithVMemCUWideReturnBurstAssistInterval(-1)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemCUWideReturnBurstAssistInterval(2)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemCUWideReturnUnitsPerCycle(13).
+					WithVMemCUWideReturnBurstConcurrentWaves(2).
+					WithVMemCUWideReturnBurstAssistInterval(2)
+			},
+			func(b Builder) Builder {
+				return b.WithVMemCUWideReturnUnitsPerCycle(13).
+					WithVMemCUWideReturnConcurrentWaves(1).
+					WithVMemCUWideReturnBurstConcurrentWaves(1).
+					WithVMemCUWideReturnBurstAssistInterval(2)
+			},
+		} {
+			Expect(func() {
+				configure(MakeBuilder()).
+					WithRegistrar(reg).
+					Build("GPU.CU")
+			}).To(Panic())
+		}
 	})
 
 	It("rejects a negative CU-wide vector-memory return budget", func() {

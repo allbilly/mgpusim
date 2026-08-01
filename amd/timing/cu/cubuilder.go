@@ -42,6 +42,7 @@ var defaultSpec = Spec{
 	VMemCUWideReturnUnitsPerCycle:         0,
 	VMemCUWideReturnConcurrentWaves:       0,
 	VMemCUWideReturnBurstConcurrentWaves:  0,
+	VMemCUWideReturnBurstAssistInterval:   0,
 	RegisterScoreboard:                    false,
 	LDSPipelineLatency:                    14,
 	LDSIssueInterval:                      0,
@@ -140,6 +141,13 @@ func (b Builder) WithVMemCUWideReturnBurstConcurrentWaves(n int) Builder {
 	return b
 }
 
+// WithVMemCUWideReturnBurstAssistInterval sets the contended-tick cadence for
+// intermittently servicing a second burst wave. Zero disables the assist.
+func (b Builder) WithVMemCUWideReturnBurstAssistInterval(n int) Builder {
+	b.spec.VMemCUWideReturnBurstAssistInterval = n
+	return b
+}
+
 // WithResources sets the shared references of the compute unit. Decoder and
 // ALU default to insts.NewDisassembler() and gcn3.NewALU(nil) when left nil.
 func (b Builder) WithResources(resources Resources) Builder {
@@ -186,6 +194,8 @@ func (b Builder) Build(name string) *Comp {
 		b.spec.VMemCUWideReturnConcurrentWaves
 	cuMW.vmemCUWideReturnBurstConcurrentWaves =
 		b.spec.VMemCUWideReturnBurstConcurrentWaves
+	cuMW.vmemCUWideReturnBurstAssistInterval =
+		b.spec.VMemCUWideReturnBurstAssistInterval
 
 	wfDispatcher := NewWfDispatcher(cuMW)
 	wfDispatcher.scoreboardEnabled = b.spec.RegisterScoreboard
@@ -276,6 +286,21 @@ func (b *Builder) mustHaveValidSpec() {
 	}
 	if b.spec.VMemCUWideReturnBurstConcurrentWaves < 0 {
 		panic("cu: VMemCUWideReturnBurstConcurrentWaves cannot be negative")
+	}
+	if b.spec.VMemCUWideReturnBurstAssistInterval < 0 {
+		panic("cu: VMemCUWideReturnBurstAssistInterval cannot be negative")
+	}
+	if b.spec.VMemCUWideReturnBurstAssistInterval > 0 &&
+		b.spec.VMemCUWideReturnUnitsPerCycle == 0 {
+		panic("cu: VMemCUWideReturnBurstAssistInterval requires the CU-wide return model")
+	}
+	if b.spec.VMemCUWideReturnBurstAssistInterval > 0 &&
+		b.spec.VMemCUWideReturnBurstConcurrentWaves != 1 {
+		panic("cu: VMemCUWideReturnBurstAssistInterval requires burst concurrency one")
+	}
+	if b.spec.VMemCUWideReturnBurstAssistInterval > 0 &&
+		b.spec.VMemCUWideReturnConcurrentWaves > 0 {
+		panic("cu: VMemCUWideReturnBurstAssistInterval requires static concurrency zero")
 	}
 	if b.spec.VMemCUWideReturnBurstConcurrentWaves > 0 &&
 		b.spec.VMemCUWideReturnUnitsPerCycle == 0 {
