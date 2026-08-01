@@ -206,6 +206,10 @@ type Spec struct {
 	LDSIssueInterval int `json:"lds_issue_interval"`
 	LDSMaxInFlight   int `json:"lds_max_in_flight"`
 
+	// LDSB128ServiceExtraCycles adds width-specific service time to both the
+	// issue interval and result latency of DS_READ_B128/DS_WRITE_B128.
+	LDSB128ServiceExtraCycles int `json:"lds_b128_service_extra_cycles"`
+
 	// LDSBankCount and LDSBankWidth describe the physical LDS banking.
 	// LDSBankConflictPenalty is charged for each additional distinct address
 	// mapped to the busiest bank in either half-wave.

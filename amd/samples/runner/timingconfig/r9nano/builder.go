@@ -93,6 +93,7 @@ type Builder struct {
 	ldsPipelineLatency                    int
 	ldsIssueInterval                      int
 	ldsMaxInFlight                        int
+	ldsB128ServiceExtraCycles             int
 	ldsBankCount                          int
 	ldsBankWidth                          int
 	ldsBankConflictPenalty                int
@@ -420,6 +421,13 @@ func (b Builder) WithLDSPipelineLatency(latency int) Builder {
 func (b Builder) WithLDSThroughput(issueInterval, maxInFlight int) Builder {
 	b.ldsIssueInterval = issueInterval
 	b.ldsMaxInFlight = maxInFlight
+	return b
+}
+
+// WithLDSB128ServiceExtraCycles adds width-specific service time to 128-bit
+// LDS reads and writes.
+func (b Builder) WithLDSB128ServiceExtraCycles(cycles int) Builder {
+	b.ldsB128ServiceExtraCycles = cycles
 	return b
 }
 
@@ -975,6 +983,9 @@ func (b *Builder) buildSAs() {
 			b.ldsMaxInFlight,
 		)
 	}
+	saBuilder = saBuilder.WithLDSB128ServiceExtraCycles(
+		b.ldsB128ServiceExtraCycles,
+	)
 	if b.ldsBankCount > 0 {
 		saBuilder = saBuilder.WithLDSBanking(
 			b.ldsBankCount,

@@ -2,6 +2,22 @@ package cu
 
 import "github.com/sarchlab/mgpusim/v5/amd/insts"
 
+// LDSB128ServiceExtraCycles returns the configured width-specific service
+// cost for 128-bit LDS reads and writes. Other LDS widths retain their
+// existing timing.
+func LDSB128ServiceExtraCycles(inst *insts.Inst, extraCycles int) int {
+	if inst == nil || extraCycles <= 0 {
+		return 0
+	}
+
+	switch inst.Opcode {
+	case 223, 255: // DS_{WRITE,READ}_B128
+		return extraCycles
+	default:
+		return 0
+	}
+}
+
 // LDSBankConflictCycles returns the additional execution cycles caused by
 // LDS bank conflicts. GCN services the two 32-lane halves of a wave64
 // independently, so the slower half determines the instruction latency.

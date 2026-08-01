@@ -107,10 +107,13 @@ func (u *LDSUnit) issue() bool {
 		spec.LDSBankWidth,
 		spec.LDSBankConflictPenalty,
 	)
+	b128ExtraCycles := LDSB128ServiceExtraCycles(
+		wave.Inst(), spec.LDSB128ServiceExtraCycles)
 	u.alu.SetLDS(wave.WG.LDS)
 	u.alu.Run(wave)
 
-	resultLatency := spec.LDSPipelineLatency + conflictCycles
+	resultLatency := spec.LDSPipelineLatency + conflictCycles +
+		b128ExtraCycles
 	if resultLatency < 1 {
 		resultLatency = 1
 	}
@@ -123,7 +126,7 @@ func (u *LDSUnit) issue() bool {
 	if issueInterval <= 0 {
 		issueInterval = spec.LDSPipelineLatency
 	}
-	u.issueIntervalLeft = issueInterval + conflictCycles
+	u.issueIntervalLeft = issueInterval + conflictCycles + b128ExtraCycles
 	u.toRead = nil
 	return true
 }

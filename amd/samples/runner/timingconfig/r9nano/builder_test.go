@@ -2,6 +2,17 @@ package r9nano
 
 import "testing"
 
+func TestLDSB128ServiceExtraCyclesConfiguration(t *testing.T) {
+	builder := MakeBuilder().WithLDSB128ServiceExtraCycles(17)
+
+	if builder.ldsB128ServiceExtraCycles != 17 {
+		t.Fatalf(
+			"expected LDS B128 service extra cycles 17, got %d",
+			builder.ldsB128ServiceExtraCycles,
+		)
+	}
+}
+
 func TestPrivateSegmentCoalescingPenaltyConfiguration(t *testing.T) {
 	builder := MakeBuilder().WithMaxPrivateSegmentCoalescingPenalty(29)
 

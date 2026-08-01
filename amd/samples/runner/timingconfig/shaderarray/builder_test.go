@@ -2,6 +2,18 @@ package shaderarray
 
 import "testing"
 
+func TestLDSB128ServiceExtraCyclesPropagation(t *testing.T) {
+	builder := MakeBuilder().WithLDSB128ServiceExtraCycles(17)
+	spec := builder.cuSpec()
+
+	if spec.LDSB128ServiceExtraCycles != 17 {
+		t.Fatalf(
+			"expected LDS B128 service extra cycles 17, got %d",
+			spec.LDSB128ServiceExtraCycles,
+		)
+	}
+}
+
 func TestPrivateSegmentCoalescingPenaltyPropagation(t *testing.T) {
 	builder := MakeBuilder().
 		WithMaxCoalescingPenalty(13).

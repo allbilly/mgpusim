@@ -99,6 +99,33 @@ var _ = Describe("LDS Unit", func() {
 		Expect(bu.inFlight).To(HaveLen(2))
 	})
 
+	It("adds B128 service cycles to issue occupancy and result latency", func() {
+		spec := DefaultSpec()
+		spec.LDSPipelineLatency = 14
+		spec.LDSIssueInterval = 4
+		spec.LDSMaxInFlight = 4
+		spec.LDSB128ServiceExtraCycles = 7
+		cu = newTestComputeUnitWithSpec("B128CU", nil, spec)
+		bu = NewLDSUnit(cu, alu)
+
+		wave := new(wavefront.Wavefront)
+		wave.WG = wavefront.NewWorkGroup(nil, protocol.MapWGReq{})
+		wave.WG.LDS = make([]byte, 1024)
+		inst := wavefront.NewInst(insts.NewInst())
+		inst.FormatType = insts.DS
+		inst.Opcode = 255 // DS_READ_B128
+		inst.Addr = insts.NewVRegOperand(0, 0, 1)
+		inst.Dst = insts.NewVRegOperand(4, 7, 4)
+		wave.SetDynamicInst(inst)
+		bu.toRead = wave
+
+		bu.Run()
+
+		Expect(bu.issueIntervalLeft).To(Equal(11))
+		Expect(bu.inFlight).To(HaveLen(1))
+		Expect(bu.inFlight[0].cyclesLeft).To(Equal(21))
+	})
+
 	It("should flush the LDS", func() {
 
 		wave1 := new(wavefront.Wavefront)
