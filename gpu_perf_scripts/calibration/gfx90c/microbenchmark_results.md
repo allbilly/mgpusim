@@ -1249,6 +1249,81 @@ zero-trip control, equal-repeat width points, and G1/G7/G16/G28 scaling remain
 mandatory before enabling any nonzero value. Simulator artifacts are under
 `/tmp/mgpusim-wide-sweep.VwfrQO`.
 
+### Matched width and occupancy pilots
+
+A later quiet interval completed the missing one-batch width and work-group
+grid under the same 1,600-MHz, thermal, process-guard, full-verification, and
+exact-HSACO protocol. These remain directional pilots, not nine-batch
+production measurements.
+
+The matched G1/R64 width bodies are:
+
+| Mode | Width | Hardware raw | Hardware zero | Hardware body |
+|------|------:|-------------:|--------------:|--------------:|
+| serial | 1 | 14.711 | 9.079 | 5.632 |
+| serial | 2 | 18.862 | 8.264 | 10.598 |
+| serial | 4 | 20.282 | 8.267 | 12.015 |
+| independent4 | 1 | 10.751 | 9.465 | 1.286 |
+| independent4 | 2 | 13.596 | 8.502 | 5.094 |
+| independent4 | 4 | 15.961 | 8.179 | 7.782 |
+
+The exact simulator zero trips are invariant under the wave-wide flag:
+serial is 3.800 us at widths 1 and 2 (and 3.800 us at width 4), while
+independent4 is 3.847/3.883/3.848 us at widths 1/2/4. Matched subtraction
+selects different settings at different widths:
+
+| Mode | Width | Default sim body | B=1 body | B=2 body | Closest setting |
+|------|------:|-----------------:|---------:|---------:|-----------------|
+| serial | 1 | 5.543 | 5.543 | 5.543 | default, 1.6% fast |
+| serial | 2 | 7.103 | 9.623 | 8.343 | B=1, 9.2% fast |
+| serial | 4 | 7.650 | 15.290 | 11.450 | B=2, 4.7% fast |
+| independent4 | 1 | 2.848 | 2.848 | 2.848 | default, 121% slow |
+| independent4 | 2 | 3.092 | 5.228 | 3.948 | B=1, 2.6% slow |
+| independent4 | 4 | 3.620 | 10.897 | 7.057 | B=2, 9.3% fast |
+
+Thus the extra width cost is strongly sublinear: x2 prefers the current
+64-unit/B=1 cost, while x4 prefers its 192-unit/B=2 cost, equivalent to about
+96 units. A single linear `extra lane-dwords / B` parameter cannot represent
+both. The dword independent body also exposes a separate baseline overlap
+error that no wide-only term can repair.
+
+The x4/R64 work-group bodies locate a second missing mechanism:
+
+| Mode | WGs | Hardware body | Default sim body | Wave-wide B=2 body |
+|------|----:|--------------:|-----------------:|--------------------:|
+| serial | 1 | 12.015 | 7.650 | 11.450 |
+| serial | 7 | 11.928 | 7.546 | 11.346 |
+| serial | 16 | 11.390 | 7.532 | 11.331 |
+| serial | 28 | 11.146 | 7.412 | 11.213 |
+| independent4 | 1 | 7.782 | 3.620 | 7.057 |
+| independent4 | 7 | 7.899 | 3.541 | 6.948 |
+| independent4 | 16 | 9.782 | 3.523 | 6.409 |
+| independent4 | 28 | 11.149 | 3.505 | 6.317 |
+
+Wave-wide B=2 closely tracks serial through G28, confirming that serialized
+loads do not encounter a shared-return knee. Independent hardware, however,
+rises after G7 as four-load bursts from multiple waves contend; the per-wave
+simulator model predicts the opposite because unrelated waves overlap freely.
+This rejects the current per-wave FIFO as the gfx90c candidate. Its default-off
+implementation and CLI remain useful as a falsified control and must not be
+enabled.
+
+The smallest next hypothesis is a mutually exclusive, wide-only CU-shared
+work-conserving FIFO with packed-width work
+`ceil(2 * active_lanes * (width-1) / width)`. A full wave then contributes
+0/64/96 units at x1/x2/x4: the observed sublinear width law with one bandwidth
+parameter. Same-CU independent bursts share the server and can produce the
+post-G7 knee, while spaced serial returns remain below saturation. Dword
+K-means, PageRank, and FIR stay outside the queue. This formula and CU ownership
+are phenomenological and are not production values until repeated hardware
+batches confirm the pilots.
+
+The nine-batch serial-zero production attempt accepted one batch, then stopped
+at batch 2 when external `pytest` restarted. The run is rejected as a whole;
+its single batch is not promoted or combined. Its failure artifact is
+`/tmp/gfx90c-prod-vmem-zero-w4-s-a8-b8-g1-94c2e8cd`. Accepted pilot artifacts
+use `/tmp/gfx90c-pilot-vmem-{zero,r64}-w{1,2,4}-{s,i}-a8-b8-g*-94c2e8cd*`.
+
 ## Remaining validation
 
 The vector and producer/consumer probes rule out broad, uniform full-wave L1V
