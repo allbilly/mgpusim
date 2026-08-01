@@ -109,6 +109,9 @@ func (u *LDSUnit) issue() bool {
 	)
 	b128ExtraCycles := LDSB128ServiceExtraCycles(
 		wave.Inst(), spec.LDSB128ServiceExtraCycles)
+	b128ExtraCycles += LDSB128ContentionExtraCycles(
+		wave.Inst(), spec.LDSB128ContentionExtraCycles,
+		len(u.inFlight) > 0)
 	u.alu.SetLDS(wave.WG.LDS)
 	u.alu.Run(wave)
 

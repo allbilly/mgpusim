@@ -209,6 +209,9 @@ type Spec struct {
 	// LDSB128ServiceExtraCycles adds width-specific service time to both the
 	// issue interval and result latency of DS_READ_B128/DS_WRITE_B128.
 	LDSB128ServiceExtraCycles int `json:"lds_b128_service_extra_cycles"`
+	// LDSB128ContentionExtraCycles adds turnaround only when another LDS
+	// instruction is already in flight on the CU-wide LDS unit.
+	LDSB128ContentionExtraCycles int `json:"lds_b128_contention_extra_cycles"`
 
 	// LDSBankCount and LDSBankWidth describe the physical LDS banking.
 	// LDSBankConflictPenalty is charged for each additional distinct address

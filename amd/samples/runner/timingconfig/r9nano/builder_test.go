@@ -13,6 +13,17 @@ func TestLDSB128ServiceExtraCyclesConfiguration(t *testing.T) {
 	}
 }
 
+func TestLDSB128ContentionExtraCyclesConfiguration(t *testing.T) {
+	builder := MakeBuilder().WithLDSB128ContentionExtraCycles(19)
+
+	if builder.ldsB128ContentionExtraCycles != 19 {
+		t.Fatalf(
+			"expected LDS B128 contention extra cycles 19, got %d",
+			builder.ldsB128ContentionExtraCycles,
+		)
+	}
+}
+
 func TestPrivateSegmentCoalescingPenaltyConfiguration(t *testing.T) {
 	builder := MakeBuilder().WithMaxPrivateSegmentCoalescingPenalty(29)
 

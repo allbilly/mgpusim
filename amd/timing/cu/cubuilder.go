@@ -50,6 +50,7 @@ var defaultSpec = Spec{
 	LDSIssueInterval:                      0,
 	LDSMaxInFlight:                        1,
 	LDSB128ServiceExtraCycles:             0,
+	LDSB128ContentionExtraCycles:          0,
 	LDSBankCount:                          0,
 	LDSBankWidth:                          4,
 	LDSBankConflictPenalty:                0,
@@ -268,6 +269,9 @@ func (b *Builder) mustHaveValidSpec() {
 	}
 	if b.spec.LDSB128ServiceExtraCycles < 0 {
 		panic("cu: LDSB128ServiceExtraCycles cannot be negative")
+	}
+	if b.spec.LDSB128ContentionExtraCycles < 0 {
+		panic("cu: LDSB128ContentionExtraCycles cannot be negative")
 	}
 	if b.spec.MaxWideWriteStridePenalty < 0 ||
 		b.spec.MaxWideWriteStrideFarPenalty < 0 {

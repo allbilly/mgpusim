@@ -33,6 +33,21 @@ func TestLDSB128ServiceExtraCycles(t *testing.T) {
 	}
 }
 
+func TestLDSB128ContentionExtraCycles(t *testing.T) {
+	inst := ldsInstWithOpcode(255)
+	if got := LDSB128ContentionExtraCycles(inst, 9, false); got != 0 {
+		t.Fatalf("uncontended got %d cycles, want 0", got)
+	}
+	if got := LDSB128ContentionExtraCycles(inst, 9, true); got != 9 {
+		t.Fatalf("contended got %d cycles, want 9", got)
+	}
+	if got := LDSB128ContentionExtraCycles(
+		ldsInstWithOpcode(118), 9, true,
+	); got != 0 {
+		t.Fatalf("B64 got %d cycles, want 0", got)
+	}
+}
+
 func ldsInstWithOpcode(opcode insts.Opcode) *insts.Inst {
 	inst := insts.NewInst()
 	inst.Opcode = opcode

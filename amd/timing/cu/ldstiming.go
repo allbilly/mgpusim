@@ -18,6 +18,19 @@ func LDSB128ServiceExtraCycles(inst *insts.Inst, extraCycles int) int {
 	}
 }
 
+// LDSB128ContentionExtraCycles returns a B128 turnaround cost only while the
+// CU-wide LDS service path is already occupied by another instruction.
+func LDSB128ContentionExtraCycles(
+	inst *insts.Inst,
+	extraCycles int,
+	contended bool,
+) int {
+	if !contended {
+		return 0
+	}
+	return LDSB128ServiceExtraCycles(inst, extraCycles)
+}
+
 // LDSBankConflictCycles returns the additional execution cycles caused by
 // LDS bank conflicts. GCN services the two 32-lane halves of a wave64
 // independently, so the slower half determines the instruction latency.
