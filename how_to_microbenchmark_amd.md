@@ -988,9 +988,12 @@ than a one-off timing number.
 A default-size match is not enough. In the gfx90c matrix case, a fixed private
 scratch penalty improved N=128 but made N=32 more than 10% slow. Guarded
 hardware targets at N=32/64/128 exposed that overfit immediately. The accepted
-model separates one-wave DS_READ/WRITE_B128 service from extra turnaround only
+profile separates one-wave DS_READ/WRITE_B128 service from extra turnaround only
 when another LDS instruction is already in flight on the CU; that mechanism
 passes all three sizes and the matrix-transpose cross-check.
+The 32/40-cycle terms are empirical application fits. A dedicated B128 width
+and contender probe must confirm them before attributing them to physical LDS
+service costs. Passing three fitted sizes does not supply independent evidence.
 
 For a proposed resource penalty, choose sizes that independently change:
 
@@ -1002,3 +1005,15 @@ For a proposed resource penalty, choose sizes that independently change:
 Record unsupported sizes as rejected attempts rather than silently changing
 the immutable harness. Score only completed, verified, provenance-preserving
 targets.
+
+The repository provides a repeatable verified sweep after building the suite:
+
+```bash
+python3 gpu_perf_scripts/calibration/gfx90c/run_size_sweep.py \
+  --bin-dir /tmp/gfx90c-suite --output /tmp/gfx90c-size-sweep
+```
+
+Use a new output directory. The runner checks matrix N=32/64/128 against matched
+targets and records k-means P=1024/2048/4096/8192 as unscored until equivalent
+hardware targets exist. It retains logs, metrics, binary hashes, target hash,
+and repository provenance.
