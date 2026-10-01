@@ -1722,3 +1722,63 @@ narrow gate margins; a pinned-clock repetition of the full-line store-stride
 probe, a dedicated B128 LDS width/contender microbenchmark, and
 protocol-equivalent simulator warm-state handling remain high-priority
 robustness follow-ups rather than blockers for the current strict gate.
+
+## Review and verified repetition, 2026-10-02
+
+The timing profile was reviewed without changing fitted timing values. The
+comparison tool previously exited zero even for failed or missing benchmarks;
+it now fails for missing, nonfinite, nonpositive, or out-of-range simulator
+results. Four regression tests cover the gate. Printed values retain enough
+precision to show near-threshold margins.
+
+The serialized, output-verified full suite under
+`/tmp/gfx90c-review-ebdb0bb5` reproduced every timing in the preceding ten-row
+table. All ten simulator exit markers and ten wrapper exit markers were zero.
+The enforced comparison gate passed all ten, with 7.7% mean absolute error.
+This is a fresh simulator repetition against existing references, not a new
+hardware acquisition. Only matrix uses the matched production reference in
+that table; the other nine references retain the legacy protocol limitation.
+
+The new `run_size_sweep.py` records binary SHA256 values, target SHA256,
+repository provenance, commands, logs, metrics, and incremental results. Its
+matrix N=32/64/128 repetition under `/tmp/gfx90c-review-size-94978f56`
+reproduced 19.995/31.206/70.356 us and passed all three strict gates.
+N=32 remains only about 0.01 us below its slow-side threshold, so this
+repetition demonstrates deterministic reproduction rather than a robust
+hardware uncertainty margin.
+
+Propagating each target's recorded 95% bootstrap interval for the hardware
+median through `100 * (HW / Sim - 1)` gives:
+
+| Matrix N | Error at hardware median | Error range from median interval |
+|---------:|-------------------------:|---------------------------------:|
+| 32 | -9.957% | -10.073% to -9.937% |
+| 64 | +7.547% | +7.162% to +7.755% |
+| 128 | +7.688% | +7.421% to +8.258% |
+
+Thus N=32 passes the point-estimate gate but its hardware median interval
+crosses the failure boundary. Do not describe it as a robust sub-10% result.
+These intervals describe the stored hardware acquisition and do not cover
+protocol mismatch or longer-term clock/thermal variation.
+
+Relevant Go timing/profile/FP32 tests, `go vet`, all 45 Python calibration
+tests, and all recorded HSACO digest/export/ISA checks passed. The guide now
+explicitly identifies the B128 32/40-cycle terms as empirical application fits
+awaiting independent LDS width/contender measurements.
+
+The final-profile k-means point sweep completed all four one-iteration output
+checks (features=16, clusters=5):
+
+| Points | Simulator (us) | Accuracy status |
+|-------:|---------------:|-----------------|
+| 1,024 | 22.018 | Unscored: no matched production target |
+| 2,048 | 30.563 | Unscored: no matched production target |
+| 4,096 | 43.271 | Legacy suite gate passes; matched target absent |
+| 8,192 | 88.906 | Unscored: no matched production target |
+
+These replace the older 21.975/29.538/40.439/82.660 us values when discussing
+the final profile. The 4K-to-8K growth remains about 2.05x, so the size knee is
+still present. The sweep process exited zero, all seven simulations exited
+zero, and the JSON records deliberately avoid assigning accuracy to unmatched
+k-means references. No new hardware targets or timing parameter changes were
+introduced in this review.
