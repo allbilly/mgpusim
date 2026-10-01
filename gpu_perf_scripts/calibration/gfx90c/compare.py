@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Print sim vs HW table for gfx90c ISCA-10 calibration."""
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -46,15 +47,22 @@ def main():
     )
     ratios = []
     absolute_errors = []
+    failed = False
     for k in names:
         if k not in sim:
-            print(f"{k:<18} {'—':>10} {hw[k]:10.1f} {'—':>8} {'—':>8}")
+            print(f"{k:<18} {'—':>10} {hw[k]:10.1f} {'—':>8} {'—':>8}  MISSING")
+            failed = True
+            continue
+        if not math.isfinite(sim[k]) or sim[k] <= 0:
+            print(f"{k:<18} {sim[k]:10.1f} {hw[k]:10.1f} {'—':>8} {'—':>8}  INVALID")
+            failed = True
             continue
         r = hw[k] / sim[k]
         err = (r - 1.0) * 100
         ratios.append(r)
         absolute_errors.append(abs(err))
         status = "pass" if abs(err) < 10.0 else "FAIL"
+        failed |= status == "FAIL"
         print(
             f"{k:<18} {sim[k]:10.1f} {hw[k]:10.1f} "
             f"{r:8.2f} {err:7.1f}%  {status}"
@@ -69,7 +77,8 @@ def main():
             "scored mean absolute relative error = "
             f"{sum(absolute_errors) / len(absolute_errors):.1f}%"
         )
+    return int(failed)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
