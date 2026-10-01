@@ -64,8 +64,8 @@ def main():
         status = "pass" if abs(err) < 10.0 else "FAIL"
         failed |= status == "FAIL"
         print(
-            f"{k:<18} {sim[k]:10.1f} {hw[k]:10.1f} "
-            f"{r:8.2f} {err:7.1f}%  {status}"
+            f"{k:<18} {sim[k]:10.3f} {hw[k]:10.3f} "
+            f"{r:8.3f} {err:7.2f}%  {status}"
         )
     if ratios:
         geo = 1.0

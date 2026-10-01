@@ -288,6 +288,21 @@ SIM_JOBS=1 ./run_sim.sh sim_out | tee sim_results.txt
 ./compare.py sim_results.txt
 ```
 
+After the verified suite, rerun the supported matrix and k-means sizes:
+
+```bash
+python3 run_size_sweep.py --bin-dir sim_out --output /tmp/gfx90c-size-review
+python3 compare.py sim_results.txt
+```
+
+The sweep output directory must be new. It records binary and target hashes,
+logs, metric databases, and incremental JSON results. Matrix N=32/64/128 uses
+matched production targets; k-means P=1024/2048/4096/8192 verifies correctness
+and reports timing without assigning accuracy to unmatched references.
+The comparison command exits nonzero for missing, invalid, or failing suite
+measurements. Printed errors use `100 * (HW / Sim - 1)` and must be strictly
+below 10% in magnitude.
+
 `SIM_JOBS` controls independent benchmark processes, not simulated GPU
 parallelism. Use one job for an authoritative calibration record; higher
 values are useful for throughput smoke tests, but a rare vector-add timing
